@@ -4,9 +4,9 @@ header: "Regression, GP, AC"
 metadata-files:
   - _metadata.yml
 keyword: |
-	Keywords - MVN, Gaussian Process, Linear regression, GLM, Principle components analysis, eigen-analysis, probabilisitc PCA, Householder transform in Julia
+  Keywords - MVN, Gaussian Process, Linear regression, GLM, Principle components analysis, eigen-analysis, probabilisitc PCA, Householder transform in Julia
 abstract: |
-	Compare MVN/Gaussian Processes using simple data. Principle components analysis, eigen-analysis, probabilistic PCA, Householder transform in Julia. Principal Components Analysis and Householder transform and probabilistic variations
+  Compare MVN/Gaussian Processes using simple data. Principle components analysis, eigen-analysis, probabilistic PCA, Householder transform in Julia. Principal Components Analysis and Householder transform and probabilistic variations
 params:
   todo: [julia,r]
 ---
