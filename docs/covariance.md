@@ -34,8 +34,22 @@ These are notes from a non-statistician's perspective on learning to use statist
 
 The concept of *Covariance* is foundational to much of practical numerical analysis, modelling and parameter estimation. However, its importance was never really clearly expressed in numerous foundational courses. Instead, derived components such as correlation and sums of squares, variance, etc., were the focus as they are usually *simpler* to understand. Covariance was always some abstract quantity that lurked in the background and referenced but never directly treated. Understanding of it's importance only gradually seeping after many years. A better intuition of covariance at the very beginning of my career would have likely made my progress that much more efficient.  
 
-Here we focus upon using [Julia](https://julialang.org/), as in my experience, it is a clear didactic tool and better for long-term learning and use in large projects due to maintainability of the code-base. It is an open-source platform created by mathematicians, engineers, natural scientists, statisticians, computer scientists and machine learning specialists, each bringing the best from their respective fields and lessons learned from domain-specific software platforms in a coherent and performative fashion. At the time of this writing, there still remain some lingering issues (start up speed, recompilation of code and incompatibility creep when there are updates to any library, most already being addressed rapidly), but the speed that is offered and code clarity in exchange is worth it in any serious data manipulation efforts. Your mileage will vary, but the lessons learned are also easily transportable to R, python, matlab, octave, etc. if you are forced to use those platforms. They each have their own quirks and challenges, but until their eventual convergence, Julia is a great platform to learn, teach and operate/develop cutting edge work.
-
+Here I focus upon using [Julia](https://julialang.org/), as in my experience,
+it is a clear didactic tool and better for long-term learning and use in large
+projects due to maintainability of the code-base. It is an open-source platform
+created by mathematicians, engineers, natural scientists, statisticians,
+computer scientists and machine learning specialists, each bringing the best
+from their respective fields and lessons learned from domain-specific software
+platforms in a coherent and performative fashion. At the time of this writing,
+there still remain some lingering issues (start up speed, recompilation of code
+and incompatibility creep when there are updates to any library, most already
+being addressed rapidly), but the speed that is offered and code clarity in
+exchange is worth it in any serious data manipulation efforts. Your mileage
+will vary, but the lessons learned are also easily transportable to R, python,
+matlab, octave, etc. if you are forced to use those platforms. They each have
+their own quirks and challenges, but until their eventual convergence, Julia is
+a great platform to learn, teach and operate/develop cutting edge work. Many
+learning tools exist. [Have a look here for a curated list](https://julialang.org/learning/).
  
 # Covariance-based models
 
@@ -75,7 +89,8 @@ Most functions used here that are not part of a standard library are collected t
 
 using DrWatson
 
-project_directory = joinpath( homedir(), "projects", "model_covariance"  )
+project_directory = joinpath( homedir(), "projects", "model_covariance"
+) # change to location where you stored the project
 
 quickactivate(project_directory)
 
@@ -97,7 +112,7 @@ Random.seed!(1234)
 
 ### Basic test data  
 
-Some basic data useful for comparisons can be loaded.  These are for simple regressions, etc.
+Here are some basic data, useful for comparisons of computational methods to help build intuition.
 
 
 ```{julia}
@@ -188,7 +203,9 @@ Covariance can also be computed as an inner product, or, from simpler intermedia
 $$Cov(X, Y) = \frac{1}{n} (X-\bar{X}) (Y-\bar{Y})^T$$
  
 
-The following follows a traditional (didactic) calculations usually used in introductory statistics.
+The next few steps uses a traditional (didactic) approach to calculations,
+usually found in introductory statistics to help build intuition.
+
 
 ```{julia}
   Xmean = sum(X)/n;
@@ -237,7 +254,7 @@ Covariance is, where $a,b,c,d$ are constants and $v,w, x, y$ are random variable
 
 - Positive definite: $Var(x) = Cov(x,x) \ge 0$
 
-Other useful identities:
+Other useful identities include:
 
 - $Cov(ax, by) = ab Cov(x,y)$   
 
@@ -271,7 +288,7 @@ $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 *Correlation* is similar to *Covariance* in that it describes the relationship between variables. When two variables are completely random, there would be no relationship and when they are completely dependent, functionally or mechanistically, they would be completely correlated and given a value of 1 or -1. 
 
-The most frequently used form of correlation is the Pearson product moment correlation coefficient ($\rho$) where this scaling is accomplished by dividing by their respective standard deviations. In other words, the covariance between two variables $x$ and $y$ scaled by the standard deviation of each variable:
+The most frequently used form of correlation is the Pearson product moment correlation coefficient ($\rho$) where this scaling is accomplished by dividing the covariance by their respective standard deviations. In other words, the covariance between two variables $x$ and $y$ scaled by the standard deviation of each variable:
 
 $$\begin{align*}
 \rho_{xy} &= \frac{Cov(x, y)}{\sqrt{Var(x) \cdot Var(y)}} \\
