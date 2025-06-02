@@ -411,6 +411,7 @@ and so an exercise in estimating partial correlations. In this tri-variate linea
 $$
 \rho_{yx.z}=\frac{\rho_{yx}-\rho_{yz}\rho_{xz}}{\sqrt{1-\rho_{\smash[b]{yz}}^{2}}\sqrt{1-\rho_{xz}^{2}}}
 $$ 
+
 {#eq-a}
 
 where for example, $(1-\rho_{yz}^{2}),$ represents the proportion of unexplained variance (i.e., residual variability) in a model of the dependent variable $y$ with the independent variable $z$. The scaled regression coefficient has a similar form to the partial correlation:
@@ -418,6 +419,7 @@ where for example, $(1-\rho_{yz}^{2}),$ represents the proportion of unexplained
 $$\begin{align*}
 \beta_{1} &= \frac{\rho_{yx}-\rho_{yz}\rho_{xz}}{1-\rho_{xz}^{2}} \\ &= \frac{\rho_{yx}-\rho_{yz}\rho_{xz}}{\sqrt{1-\rho_{xz}^{2}}\sqrt{1-\rho_{xz}^{2}}}
 \end{align*}$$ 
+
 {#eq-b}
 
 
