@@ -193,7 +193,7 @@ Turing.@model function snowcrab_full_model(; Ymodel="poisson", Y, nData=length(Y
     
     # likelihood
     # observation model: Y = q X + qc ; X = (Y - qc) / q
-    # m = abundance (prefishery) 
+    # m = abundance (Spring) 
     PM.S[i] ~ Normal( q * ( m[i] - PM.removed[i]/K )+ qc, bosd )  ; # fall survey
 =#
 
