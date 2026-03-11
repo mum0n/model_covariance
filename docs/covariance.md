@@ -92,7 +92,10 @@ Most functions used here that are not part of a standard library are collected t
 
 using DrWatson
 
-project_directory = joinpath( homedir(), "projects", "model_covariance"
+basedirectory = homedir()
+# basedirectory = "C:\\home\\jae"  # windows
+
+project_directory = joinpath( basedirectory, "projects", "model_covariance"
 ) # change to location where you stored the project
 
 quickactivate(project_directory)

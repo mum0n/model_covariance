@@ -22,7 +22,7 @@ pkgs = [
     "MKL", "PDMats", "Optim", 
     "ADTypes",  "ForwardDiff",
     "AdvancedVI",  "Turing", "Bijectors",
-    "Stheno", "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions"
+    "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions"
 ]
 
 # using ApproximateGPs, Random, "CodeTracking",   "Setfield", "ParameterHandling" 
