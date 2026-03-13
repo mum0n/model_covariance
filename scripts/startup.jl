@@ -21,14 +21,19 @@ pkgs = [
     "PlotThemes", "Colors", "ColorSchemes", "Plots", "StatsPlots",
     "MKL", "PDMats", "Optim", 
     "ADTypes",  "ForwardDiff",
-    "AdvancedVI",  "Turing", "Bijectors",
-    "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions"
+    "AdvancedVI",  "Turing", "Bijectors", "ArchGDAL",
+    "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions", "TemporalGPs"
 ]
 
 # using ApproximateGPs, Random, "CodeTracking",   "Setfield", "ParameterHandling" 
 #   "AdvancedHMC", "DynamicHMC", "DistributionsAD", "Bijectors", "Libtask", "ReverseDiff", 
-    # "Symbolics", "Logging", 
-   
+    # "Symbolics", "Logging",  
+
+ 
+
+# Set a seed for reproducibility.
+Random.seed!(42) # Fix seed for reproducibility
+
 # load directly can cause conflicts due to same function names 
 pkgtoskipload = [  "RCall",   "CairoMakie", "PlotlyJS",  "PlotlyBase",  "PlotlyKaleido", "LazyArrays" ]
  
@@ -42,13 +47,9 @@ for pk in pkgs;
     end
 end
 
-include( srcdir( "shared_functions.jl") )
-
 
 print( "\nTo (re)-install required packages, run:  install_required_packages() or Pkg.instantiate() \n\n" ) 
- 
-
-
+  
 DEBUG = Ref{Any}()
 
 # add this inside of a function to track vars

@@ -55,57 +55,6 @@ function normalize_from_quantiles(X; cindices=missing, vns=missing, prob_limits=
     return X
 end
   
-function iris_data(; nonlinear=false, subset_data=0, center=true, scale=true, obs="rows" )
-
-    # from R: data("iris")
-    # write.csv( iris, file=file.path("~", "projects", "model_covariance" , "data", "iris.csv") )
-    # Xdata = CSV.read( joinpath( project_directory, "data", "iris.csv"), DataFrame )
-    Xdata = RDatasets.dataset("datasets", "iris")
-    sps = Xdata.Species
-
-    if subset_data > 0
-        index = shuffle(1:size(Xdata,1))[1:subset_data]
-        Xdata = Xdata[index,:]
-        sps = sps[index]
-    end
-
-    X = Xdata[:, 1:4]
-    vn = names(X)
-
-    if nonlinear
-        # non-linearize data to demonstrate ability of GPs to deal with non-linearity
-        X[:, 1] = 0.5 * X[:, 1] .^ 2 + 0.1 * X[:, 1] .^ 3
-        X[:, 2] = X[:, 2] .^ 3 + 0.2 * X[:, 2] .^ 4
-        X[:, 3] = 0.1 * exp.(X[:, 3]) - 0.2 * X[:, 3] .^ 2
-        X[:, 4] = 0.5 * (X[:, 4]).^ 2 + 0.01 * X[:, 4].^ 5
-    end
-    
-    X = Matrix(X)
-    nData = size(X, 1)
-
-    if center
-        X = X .- mean(X, dims=1)
-    end
- 
-    if scale
-        X = X ./ std(X, dims=1)
-    end
-
-    # fake covariates
-    G = zeros(nData, 2)
-    G[:,1] = rand(Poisson(10), nData)
-    G[:,2] = rand(Poisson(20), nData)
-    
-    id = recode(unwrap.( sps ), "setosa"=>1, "versicolor"=>2, "virginica"=>3)
-    
-    if obs=="cols"
-        X = X'  # [[NOTE:: X is transposed relative to ecology]]
-        G = G'
-    end
-    
-    return id, sps, X, G, vn 
-end
-
  
  
 function pca_standard(X; model="cor", C=0, G=0, obs="rows", center=true, scale=false, cthreshold = 0.005)

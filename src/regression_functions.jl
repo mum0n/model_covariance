@@ -33,51 +33,6 @@ function posterior_summary(ps; sym=:none, stat=:all, dims=:none, perm=:none)
 end 
 
 
-function example_data(; N=1000,  cov2lev = ("1"=>1, "2"=>1.25, "3"=>2, "4"=>1.5), alpha=0.1 )
-    # make random data for analysis
-    # NOTE: utility in terms of creating model matrix using schemas, etc
-    
-    xvar = vec(randn(N)*3.0  )
-    
-    df = DataFrame(
-        xvar = xvar,
-        covar1 = string.(rand( [1, 2, 3, 4], N)  ),  # factorial
-        covar2 = vec(randn(N)),
-        covar3 = vec(trunc.( Int, randn(N)*3 ) )
-    )
-
-    cov2 = replace(df.covar1, cov2lev[1], cov2lev[2], cov2lev[3], cov2lev[4] ) 
-    df.yvar = sin.(vec(xvar)) + df.covar2 .* alpha .+ rand.(Normal.(cov2, 0.1))
-    schm = StatsModels.schema(df, Dict(:covar1 => EffectsCoding()) )
-    dm = StatsModels.apply_schema(StatsModels.term.((:xvar, :covar1, :covar2)), schm ) 
-    modelcols = StatsModels.modelcols(StatsModels.MatrixTerm( dm ), df)
-    coefnames = StatsModels.coefnames( dm )   # coef names of design matrix 
-    termnames = StatsModels.termnames( dm)  # coef names of model data
-    
-    # alternative access:
-    # fm = StatsModels.@formula( yvar ~ 1 + xvar + covar1 + covar2)
-    # resp = response(fm, df)  # response
-    # cols = modelcols(z, df)
-    # o = reduce(hcat, cols)
-    
-    return df, modelcols, coefnames, termnames, cov2lev
-end
-
-
-function example_nonlinear_data(Xlatent = -7:0.1:7, Xobs = -7:0.5:7  ) 
-    
-    # function that describes latent process
-    Y(x) = (x + 4) * (x + 1) * (x - 1) * (x - 3)  
-
-    # Latent data ("truth")
-    # Xlatent = -7:0.1:7
-    Ylatent = Y.(Xlatent)
-
-    # "Observations" with noise
-    Yobs = Y.(Xobs) .+ rand(Uniform(-100, 100), size(Xobs,1))
-    
-    return Xlatent, Ylatent, Xobs, Yobs
-end
 
 
 function featurize_poly(Xin, degree=1)
@@ -148,6 +103,22 @@ sqexp_cov_fn(D, phi, eps=1e-3) = exp.(-D^2 / phi) + LinearAlgebra.I * eps
 
 # Exponential covariance function
 exp_cov_fn(D, phi) = exp.(-D / phi)
+
+
+
+# generic kernel functions 
+
+# lenscale = -1 / log(ρ)
+# σ_ar1^2 / (1 - ρ^2) = marginal variance
+# kernel_ar1(σ, ρ) = σ^2 * with_lengthscale(Matern12Kernel(), -1/log(ρ)) 
+# the softplus should not be necessary ... 
+
+kernel_ar1(σ, ρ) = σ^2 / softplus(1 - ρ^2) * with_lengthscale(Matern12Kernel(), softplus(-1 / log(ρ)) )
+
+# RW2 is equivalent to a Spline kernel or an Integrated Wiener Process
+# For simplicity, we often use a high-order Matern or a custom structure
+
+kernel_rw2(σ) = σ^2 * Matern52Kernel() # Matern32 is a common smooth approximation for RW2
 
 
 Turing.@model function gaussian_process_basic(; Y, D, cov_fn=exp_cov_fn, nData=length(Y) )

@@ -31,7 +31,7 @@ make quarto FN=covariance.md DOCTYPE=html PARAMS="-P todo:[nothing,add,more,here
 :::
 -->
 
-# Preface
+## Preface
 
 These are notes from a non-statistician's perspective on learning to use statistics. They are offered here as an aide for others that are beginning a similar journey trying to make sense of data through the lens of personal interests. 
 
@@ -53,35 +53,11 @@ matlab, octave, etc. if you are forced to use those platforms. They each have
 their own quirks and challenges, but until their eventual convergence, Julia is
 a great platform to learn, teach and operate/develop cutting edge work. Many
 learning tools exist. [Have a look here for a curated list](https://julialang.org/learning/).
- 
-# Covariance-based models
 
-*Covariance* is a measure of the relationship between two variables. Of course it one of many that can be expressed, but this measure comes up repeatedly in almost every statistical endeavour. It is computed as the average of the product of two variables after they are each centered to their respective means. As intuition on this quantity is not immediately apparent, most introductions to modelling ignore it and instead focus upon some component of it that is simpler to intuit. However, as covariance is the basis for almost every form of parameter estimation, from Regression, and Gaussian Process to Kalman Filters and Bayesian HMM, etc, it is worthwhile be-labouring our focus upon this quantity a little longer.
-
-More explicitly, *covariance* is:
-
-$$\begin{align*}
-Cov(X, Y) & = E[(X − \bar{X})(Y − \bar{Y})]  \\ 
- & = E[xy]   \\ 
- & = Cov(x,y),  
-\end{align*}$$
-
-where, $E[\cdot]$ means "expected value", $\bar{X}$ means the mean value of $X$, $x=X-\bar{X}$ and $y=Y-\bar{Y}$.
-
-How does multiplying two variables together represent a relationship between them? The intuition is that when two such centered variables are completely random (i.e., each observation of $x$ and $y$ is completely independent), then each variable has a mean expected value of 0, and consequently, their product would also have a mean expected value of 0. However, if they are related or dependent (linearly), their product would result in a value that deviates from 0; the greater this deviation from zero, the more they "covary". Geometrically, each $(x, y)$ pair represents the opposing corner of a rectangle with the origin $(0, 0)$ and so the product, $x y$ is simply the surface area. When completely random, the rectangles would be completely random with overall average surface area of 0; when non-random, they would represent rectangles of maximal size predominantly in either the 1st and 3rd quadrants (positive covariance) or 2nd and 4th quadrants (negative covariance).  
-
-The suffix, "variance" in co-variance identifies the connection to the concept of variance as the mean of the squared differences of a variance from its average value. And indeed, when $X=Y$, then the covariance of $X$ with itself is the variance of $X$.
-
-$$\begin{align*}
-Cov(X,X) &= E[ (X - \bar{X})(X - \bar{X}) ] \\ 
-& = Var(X)
-\end{align*}$$
-
-$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 ## Preliminaries in Julia
 
-Most functions used here that are not part of a standard library are collected together in [Julia](https://julialang.org/) functions in [src](../src/). They can be loaded with supporting standard libraries, as follows:
+Most functions used here that are not part of a standard library are collected together in [Julia](https://julialang.org/) functions at [src](../src/). They can be loaded with supporting standard libraries, as follows:
 
 
 ```{julia}
@@ -93,7 +69,7 @@ Most functions used here that are not part of a standard library are collected t
 using DrWatson
 
 basedirectory = homedir()
-# basedirectory = "C:\\home\\jae"  # windows
+basedirectory = "C:\\home\\jae"  # windows
 
 project_directory = joinpath( basedirectory, "projects", "model_covariance"
 ) # change to location where you stored the project
@@ -101,67 +77,17 @@ project_directory = joinpath( basedirectory, "projects", "model_covariance"
 quickactivate(project_directory)
 
 include( scriptsdir( "startup.jl" ))     # env and data
+
+include( srcdir( "shared_functions.jl") )
 include( srcdir( "simple_linear_regression.jl") )
 include( srcdir( "regression_functions.jl" ))   # support functions  
 
 include( srcdir( "car_functions.jl" ))   # support functions  
-
-# additional libraries
-using Random, RDatasets, Plots, CSV, DataFrames 
-using Distributions, StatsBase, Statistics, LinearAlgebra, GLM 
+include( srcdir( "example_data.jl" ))     
 
 # Set a seed for reproducibility.
-Random.seed!(1234)
+Random.seed!(42)
 
-```
-
-
-### Basic test data  
-
-Here are some basic data, useful for comparisons of computational methods to help build intuition.
-
-
-```{julia}
-#| label: partial-corr-julia
-#| eval: true
-#| echo: false
-#| output: false
-
-example_data_source = "random"
-
-if example_data_source=="random"
-  n = 100
-  cormat = random_correlation_matrix(3, 0.1)
-  o = rand( MvNormal( cormat^2 ), n )
-  X = o[1,:]
-  Y = o[2,:]
-  Z = o[3,:]
-
-elseif example_data_source=="peltzer"
-
-  fn = joinpath( project_directory, "reference", "data.txt" )
-  testdata = CSV.read(fn, DataFrame, delim=",", ignorerepeated=true )
-  X = testdata[!, "X"] 
-  Y = testdata[!, "Y"] 
-  n = length(X)
-
-elseif example_data_source == "iris"
-
-  iris = RDatasets.dataset("datasets", "iris")
-  X = iris[!,:PetalWidth]
-  Y = iris[!,:PetalLength]
-  Z = iris[!,:SepalLength]
-  n = length(Y)
-
-end
-
-
-# We want centered and standardized versions for some calculations:
-  x = (X .- mean(X)) ./ std(X)
-  y = (Y .- mean(Y)) ./ std(Y)
-  z = (Z .- mean(Z)) ./ std(Z)
- 
- 
 ```
 
  
@@ -204,6 +130,31 @@ det(M)   # same as cross(a,b)
 
 ```
  
+# Covariance-based models
+
+*Covariance* is a measure of the relationship between two variables. Of course it one of many that can be expressed, but this measure comes up repeatedly in almost every statistical endeavour. It is computed as the average of the product of two variables after they are each centered to their respective means. As intuition on this quantity is not immediately apparent, most introductions to modelling ignore it and instead focus upon some component of it that is simpler to intuit. However, as covariance is the basis for almost every form of parameter estimation, from Regression, and Gaussian Process to Kalman Filters and Bayesian HMM, etc, it is worthwhile be-labouring our focus upon this quantity a little longer.
+
+More explicitly, *covariance* is:
+
+$$\begin{align*}
+Cov(X, Y) & = E[(X − \bar{X})(Y − \bar{Y})]  \\ 
+ & = E[xy]   \\ 
+ & = Cov(x,y),  
+\end{align*}$$
+
+where, $E[\cdot]$ means "expected value", $\bar{X}$ means the mean value of $X$, $x=X-\bar{X}$ and $y=Y-\bar{Y}$.
+
+How does multiplying two variables together represent a relationship between them? The intuition is that when two such centered variables are completely random (i.e., each observation of $x$ and $y$ is completely independent), then each variable has a mean expected value of 0, and consequently, their product would also have a mean expected value of 0. However, if they are related or dependent (linearly), their product would result in a value that deviates from 0; the greater this deviation from zero, the more they "covary". Geometrically, each $(x, y)$ pair represents the opposing corner of a rectangle with the origin $(0, 0)$ and so the product, $x y$ is simply the surface area. When completely random, the rectangles would be completely random with overall average surface area of 0; when non-random, they would represent rectangles of maximal size predominantly in either the 1st and 3rd quadrants (positive covariance) or 2nd and 4th quadrants (negative covariance).  
+
+The suffix, "variance" in co-variance identifies the connection to the concept of variance as the mean of the squared differences of a variance from its average value. And indeed, when $X=Y$, then the covariance of $X$ with itself is the variance of $X$.
+
+$$\begin{align*}
+Cov(X,X) &= E[ (X - \bar{X})(X - \bar{X}) ] \\ 
+& = Var(X)
+\end{align*}$$
+
+$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
+
 Covariance can also be computed as an inner product, or, from simpler intermediate quantities (used when calculating resources were limiting). 
 
 $$Cov(X, Y) = \frac{1}{n} (X-\bar{X}) (Y-\bar{Y})^T$$
@@ -214,6 +165,9 @@ usually found in introductory statistics to help build intuition.
 
 
 ```{julia}
+  
+  x, y, z, u, X, Y, Z = example_data("iris")
+
   Xmean = sum(X)/n;
   Ymean = sum(Y)/n;
   
@@ -221,6 +175,7 @@ usually found in introductory statistics to help build intuition.
 
   cov_pop = SXY/(n)    # average covariance (population)
   cov_sample = SXY/(n-1)  # average covariance (sample)
+
 ```
 
 It is really as simple as that. The sample estimate uses n-1 as the divisor as, 1 degree of freedom is being used for the mean estimate itself. The equivalent statements using Julia are as follows:
@@ -229,6 +184,8 @@ It is really as simple as that. The sample estimate uses n-1 as the divisor as, 
 ```{julia}
   # equivalent statements for (sample) covariance:
   # NOTE julia uses corrected=true as default which means use n-1 to compute means (with loss of 1 df for the point estimate of var or cov) 
+
+  x, y, z, u, X, Y, Z = example_data("iris")
 
   cov_julia = cov(X, Y)
   cov_definition = sum(X.*Y)/(n-1) − sum(X) / (n-1) * sum(Y) / (n-1)
@@ -252,7 +209,7 @@ It is really as simple as that. The sample estimate uses n-1 as the divisor as, 
 
 ```
  
-Covariance is, where $a,b,c,d$ are constants and $v,w, x, y$ are random variables:
+Covariance is, where $a, b, c, d$ are constants and $v, w, x, y$ are random variables:
 
 - Bilinear: $Cov(ax + by, u) = a Cov(x,u) + b Cov(y,u)$ 
 
@@ -308,6 +265,8 @@ To belabour the point, intuition in an algebraic sense is similar to covariance.
 
 # didactic: using above computations of cov and SS
 
+  x, y, z, u, X, Y, Z = example_data("iris")
+
   SSX = sum( (X .- Xmean).^2 )
   SSY = sum( (Y .- Ymean).^2 )
 
@@ -353,6 +312,9 @@ $$\begin{align*}
 
  
 ```{julia}
+
+x, y, z, u, X, Y, Z = example_data("iris")
+
 rho_xy = cor(X,Y)
 rho_yz = cor(Y,Z)
 rho_xz = cor(X,Z)
@@ -530,6 +492,9 @@ We repeat the above using Julia.
 Random.seed!(1234)
 
 # basic approach
+
+  x, y, z, u, X, Y, Z = example_data("iris")
+
   cor_XY = cor(X,Y)
   cor_YX = cor(Y,X) 
   cor_YX == cor_XY  # same
@@ -565,6 +530,7 @@ Random.seed!(1234)
   isapprox( b.r, cor_xy)  # ok
   isapprox( b.beta[2], cor_xy)  # ok  
 
+
   # using MCMC/Turing
   using Turing, Distributions
   n = length(y)
@@ -587,13 +553,7 @@ Random.seed!(1234)
   model = linear_regression_nointercept(x, y)
   res = sample(model, Turing.NUTS(0.65), 3_000)
   showall(res)
-
-  parameters      mean       std      mcse    ess_bulk    ess_tail      rhat   ess_per_sec 
-        yvar    0.3040    0.0221    0.0003   4699.3708   2419.0914    0.9997      431.3328
-   beta_x[1]   -0.9538    0.0307    0.0004   5282.5847   2554.9165    1.0000      484.8632
-        xvar    0.3038    0.0214    0.0003   5015.1167   1832.3955    1.0021      460.3136
-   beta_y[1]   -0.9535    0.0320    0.0004   5409.3544   2310.5897    1.0004      496.4988
-
+ 
   corrs = generated_quantities( linear_regression_nointercept(x,y), res)
   summarystats(corrs)
 
@@ -612,6 +572,8 @@ Now we turn to a regression with three variables. Here we are essentially trying
 
 
 ```{julia}
+
+  x, y, z, u, X, Y, Z = example_data("iris")
 
   # these are the partial correlations between x and y, controlling for z
   r_xy_z = partialcor(x,y,z)  # -0.18396101222357 
@@ -653,15 +615,7 @@ Now we turn to a regression with three variables. Here we are essentially trying
   chain_xyz = sample(model, Turing.NUTS(0.65), 3_000)
 
   showall(chain_xyz)
-
-  parameters      mean       std      mcse    ess_bulk    ess_tail      rhat   ess_per_sec 
-        yvar    0.2910    0.0211    0.0004   2810.2221   1925.8563    1.0025      383.9101
-  beta_xz[1]   -0.7861    0.0610    0.0012   2385.3107   1735.1998    1.0009      325.8621
-  beta_xz[2]   -0.1908    0.0611    0.0012   2451.2246   1931.6370    1.0014      334.8667
-        xvar    0.2954    0.0218    0.0004   3086.9207   1933.4088    1.0012      421.7105
-  beta_yz[1]   -0.8126    0.0645    0.0014   2152.8606   1799.9549    1.0020      294.1066
-  beta_yz[2]    0.1604    0.0633    0.0013   2219.7180   1789.0834    1.0011      303.2402
-
+ 
   # fast estimate from geometric mean of coefficient means
   r_partial_turing = - sqrt(-0.7861 * -0.8126) # -0.7992401766678149
   
@@ -716,7 +670,7 @@ York (1966) Canad. J. Phys. 44: 1079-1086;
 
 $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
-## Linear regression 
+## Linear Regression 
 
 ### Ordinary Linear Regression (OLS) 
 
@@ -741,6 +695,8 @@ Notice the dot product $X^T X^T$, is our covariance matrix. As this is a common 
 
 ```{julia} 
 # didactic form of linear regression:
+
+  x, y, z, u, X, Y, Z = example_data("iris")
 
   SSR = SXY^2 / SSX  # of regression == cov(x,y)^2 / var(x)
   SSE = SSY - SSR
@@ -861,6 +817,7 @@ m = (ssy - ssx + sqrt( (ssy - ssx)^2 + 4 * cov_xy^2) ) / (2 * cov_xy)
 This is also known as: Orthogonal Regression or [Total Least Squares](https://en.wikipedia.org/wiki/Total_least_squares#Scale_invariant_methods) where the solution is approached from an SVD and solution is derived from the right matrix V and then multiplying by -1/V[2,2]  
 
 ```julia
+
 function Total_Least_Squares( X, Y )
   # this is copied verbatim (almost) from https://en.wikipedia.org/wiki/Total_least_squares
   n    = size(X,2);             # n is the width of X (X is m by n)
@@ -924,174 +881,10 @@ Of course using Turing, the form of the model can be made more explicitly:
 
 ```
 
-
-$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
-
-## Generalized Linear Models
-
-Generalized Linear Models (GLMs) essentially use the infrastructure of Linear Models for an invertable family of distributions through a link function to a Multivariate Normal internal distribution. The form of a GLM is (Banerjee et al. 2004):
-
-$$\begin{gathered}
-y \sim f(\mu,{}^{\varepsilon}\!\sigma^{2}),\nonumber \\
-g(\mu)=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\varepsilon}
-\end{gathered}$$
-
-{eq:basic_glm}
-
-with constant offsets $\boldsymbol{O=}(o_{1},...,o_{S}\boldsymbol{)}$,
-if any; a $S\times V$ matrix of covariates
-$\boldsymbol{X}=(x_{sv})\in\Re^{S\times V}$; the $V$ covariate
-parameters $\boldsymbol{\boldsymbol{\beta}}$ with a multivariate normal
-prior with mean $\mu$ and diagonal variance matrix $\Sigma$; and
-$\boldsymbol{\varepsilon}=(\varepsilon_{1},...,\varepsilon_{S})$
-residual error. (Notationally, we are using left superscripts to denote
-variable types and reserve right subscripts for indexing). The
-$f(\cdot)$ indicates an exponential family (Binomial, Normal, Poisson)
-and $\text{E}(Y)=\mu$ with an invertible link function
-$g(\cdot)= f^{-1}(\cdot)$. 
-
-- In the Normal case:
-
-$$Y\sim\text{Normal}(\mu,{}^{\varepsilon}\!\sigma^{2})$$
-
-$$\mu=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\psi}$$ 
-
-with standard deviation $^{\varepsilon}\!\sigma$ associated with the residual error $\varepsilon$. 
-
-- In the Binomial case:
-
-$$Y\sim\text{Binomial}(\eta,\theta)$$
-$$\text{ln}(\theta/(1-\theta))=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\psi},$$
-
-where $\eta$ is the vector of number of trials and $\theta$ the vector
-of probabilities of success in each trial. 
-
-In the Poisson case:
-
-$$Y\sim\text{Poisson}(\mu)$$
-
-$$\text{ln}(\mu)=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\varepsilon}.$$
-
-It is worthwhile emphasizing that there is a strong assumption that
-*residuals are independent and identically distributed*, that is:
-
-$$\boldsymbol{\varepsilon}\overset{iid}{\sim}f(\cdot).$$
-
-Therefore, if any autocorrelation exists, such as when there is spatial or temporal, or spatiotemporal autocorrelation, then model parameter estimation can become biased as $\boldsymbol{\varepsilon}$ would be mis-specified.
- 
-
-### Convenience functions for GLM in Julia 
-
-See [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/)
+## Nonlinear Regression 
 
 
-```{julia}
-# most libraries and functions are already preloaded
-
-using LinearAlgebra, Distributions
-using TuringGLM
-using MixedModels
-using CSV
-using StatsModels
-using DataFrames 
-
-iris = RDatasets.dataset("datasets", "iris")
-
-# Species as fixed effects
-fm = @formula(SepalLength ~ SepalWidth * Species )
-model = turing_model(fm, iris);
-
-n_samples = 1_000;
-chns = sample(model, Turing.NUTS(), n_samples);
-
-showall(chns)
-
-  parameters      mean       std      mcse   ess_bulk   ess_tail      rhat   ess_per_sec 
-           α    3.1994    0.4659    0.0251   341.5986   560.6737    0.9994       40.2639
-        β[1]    0.5287    0.1351    0.0073   342.4059   536.0780    0.9995       40.3590
-        β[2]    0.3045    0.5878    0.0382   236.0464   428.7305    1.0026       27.8225
-        β[3]    0.6130    0.6106    0.0296   429.7671   426.0716    1.0032       50.6562
-        β[4]    0.3481    0.1940    0.0122   253.2514   408.7015    1.0080       29.8505
-        β[5]    0.4040    0.1953    0.0091   459.0698   451.3189    1.0016       54.1101
-           σ    0.4434    0.0259    0.0010   708.2505   619.4640    1.0112       83.4807
-
-# Species as fixed effects (random intercept)
-fm = @formula(SepalLength ~ SepalWidth + (1|Species) )
-model = turing_model(fm, iris);
-
-n_samples = 1_000;
-chns = sample(model, Turing.NUTS(), n_samples);
- 
-showall(chns)
-
-  parameters      mean       std      mcse   ess_bulk   ess_tail      rhat   ess_per_sec 
-           α    3.9826    0.7447    0.0661   124.3730   102.1071    1.0339       15.0719
-        β[1]    0.7444    0.1045    0.0045   536.8562   593.3069    1.0037       65.0577
-           σ    0.4407    0.0240    0.0009   680.7274   330.5873    1.0140       82.4924
-           τ    1.2776    0.5847    0.0474   220.8048    96.3477    1.0064       26.7577
-       zⱼ[1]   -1.3302    0.6247    0.0384   266.9425   425.1358    1.0025       32.3488
-       zⱼ[2]   -0.0123    0.5619    0.0429   162.4311   332.5250    1.0205       19.6838
-       zⱼ[3]    0.4546    0.6536    0.0490   158.3097   380.1932    1.0214       19.1844
-
-
-
-# low level access to TuringGLM data structures and methods, etc:
-
-  y = TuringGLM.data_response(fm, iris) # independent variable
-  X = TuringGLM.data_fixed_effects(fm, iris)  # design matrix
-
-  Z = TuringGLM.data_random_effects(fm, iris) # random effects, if any
-  
-  raneffects = TuringGLM.ranef(fm)
-
-  if false
-
-    # Formulaic interaction with model and data (like brms) is possible but not necessary. 
-    # See examples in: https://github.com/TuringLang/TuringGLM.jl/blob/main/src/data_constructors.jl
-    # to modify priors ... need to look at current version of TuringGLM code
-
-    showall(model)
-
-    prior = TuringGLM._prior(priors, y, T)
-    m = median(y)
-    prior.predictors = TDist(3)
-    α = 2.5 * TDist(3)
-    y ~ MvNormal(α .+ X * β, σ^2 * I)  # example Normal model likelihood
-    y ~ arraydist(LazyArray(@~ BernoulliLogit.(α .+ X * β))) # example Bernoulli likelihood
-    y ~ arraydist(LazyArray(@~ LogPoisson.(α .+ X * β))) # example Poisson likelihood
-    prior.auxiliary = Gamma(0.01, 0.01) # only for neg binomial
-    y ~ arraydist(LazyArray(@~ NegativeBinomial2.(exp.(α .+ X * β), ϕ))) # example NegativeBinomial likelihood
-    α ~ prior.intercept
-    β ~ filldist( prior.predictors, predictors)
-    σ ~ Exponential(residual)
-  end
-  
-
-# Possibly useful:
-# source: https://stackoverflow.com/questions/77639403/in-distributions-jl-package-for-julia-how-to-define-mvnormal-distributions-with
-
-# -  Get the covariance matrix by accessing the field \Sigma instead of using function "cov",
-# -  Create the covariance matrix from constructed cholesky C by doing Cholesky(C) .. can reduce computation/inversion
-
-using Distributions
-using PDMats
-
-g1 = MvNormal([1,2], [2 1; 1 2])
-c1 = cholesky(cov(g1))
-c2 = cholesky(g1.Σ)
-
-g2 = MvNormal([1,2], PDMat(c1))
-
-isapprox(g1, g2)
-
-```
-
-
-$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
-
-
-
-## Gaussian Process Models
+### Gaussian process (regression) 
  
 **NOTE:: Most of the variations in calculation methods (below) are similar in terms of overall speed ...**
 
@@ -1189,44 +982,15 @@ $$\Sigma(x^*, x^*) = k(x^*, x^*) - k(x^*, X) (k(X,X) + \sigma^2_n\bold(I))^{-1} 
    
 ### Data for 1D Curve fitting
 
-Create some fake data (truth) to model, a one-dimensional toy problem, a fourth-order polynomial:
+Create a fourth order polynomial data to model, a one-dimensional toy problem:
 
 $f(x)=(x+4)(x+1)(x−1)(x−3)f(x)=(x+4)(x+1)(x−1)(x−3)$
 
 
 ```{julia}
-
-# re-load functions
-
-using DrWatson
-
   
-# rootdir = joinpath("\\", "home", "jae" ) # windows
-rootdir = joinpath("/", "home", "jae" )  # linux
-
-
-project_directory = joinpath( rootdir, "projects", "model_covariance"  )
-
-quickactivate(project_directory)
-
-include( scriptsdir( "startup.jl" ))     # env and data
-include( srcdir( "regression_functions.jl" ))   # support functions  
-include( srcdir( "shared_functions.jl" ))   # support functions  
-include( srcdir( "car_functions.jl" ))   # support functions  
-
-using KernelFunctions
-using LinearAlgebra
-using Distributions
-using Turing 
-
-using Plots;
-
-# default(; lw=2.0, legendfontsize=11.0,   seriestype=:scatter);
-
-using Random: seed!
-seed!(42);
- 
-Xlatent, Ylatent, Xobs, Yobs = example_nonlinear_data() 
+# data
+Xlatent, Ylatent, Xobs, Yobs = example_data("nonlinear")
 
 # inducing_points for GP (for prediction)
 n_inducing = 10
@@ -1238,28 +1002,9 @@ plot(Xlatent, Ylatent; label=raw"$f(x)$ latent 'truth'", legend=:top, seriestype
 plot!(Xobs, Yobs; seriescolor=:orange, label="observations with error", seriestype=:scatter)
 
 
-# larger data set (to test speed): 
-if false
-  using Random: seed!
-  seed!(42);
-  
-  Xlatent, Ylatent, Xobs, Yobs = example_nonlinear_data( -10:0.01:10, -10:0.01:10 ) 
-
-  # inducing_points for GP (for prediction)
-  n_inducing = 10
-  Xinducing = quantile(vec(Xobs), LinRange(0.01, 0.99, n_inducing))
-  # Xinducing = reshape(Xinducing, 1, :)
-
-  plot(Xlatent, Ylatent; label=raw"$f(x)$ latent 'truth'", legend=:top, seriestype=:path)  # latent "truth"
-
-  plot!(Xobs, Yobs; seriescolor=:orange, label="observations with error", seriestype=:scatter)
-end
-
-
 ```
 
-
-### Linear regression 
+ 
 
 Building up to a GP and to show the relationship, first we start with Linear Regression (as discussed above). This is simply: 
 
@@ -1298,7 +1043,7 @@ plot!(Xinducing, yp; marker=(:circle,3), label="linear fit", seriestype=:path)
 
 ```
 
-### Nonlinear regression
+### Polynomial regression
 
 Next we can add higher order polynomial regression terms (aka, "features" in the Machine Learning literature):
 
@@ -1344,7 +1089,7 @@ function ridge_regression(X, y, Xstar, lambda)
     beta = (X' * X + lambda * I) \ (X' * y)
     return Xstar * beta
 end
- 
+
 degree = 3
 Xof = featurize_poly(Xobs, degree)
 Xpf = featurize_poly(Xinducing, degree)
@@ -1367,7 +1112,6 @@ yp = ridge_regression(Xof, Yobs, Xpf, lambda)
 plot!(Xinducing, yp; width=3, marker=(:triangle,3), label ="fit of order $degree and \$\\lambda=$lambda\$", legend=:top, seriestype=:path )
 
 ```
-
 
 ### Kernel-based ridge regression
 
@@ -1432,7 +1176,7 @@ Semantic note in Julia. If:
 then $A^{-1} B$  is ...  A\B == inv(A)*B 
 
 
-### Cholesky and covariance matrix  
+### Cholesky and covariance matrix-based regression 
 
 Matrix inversion of the covariance matrix $\Sigma$ is not required and repeated computations can be reduced by using the [Cholesky decomposition](https://math.stackexchange.com/questions/163470/generating-correlated-random-numbers-why-does-cholesky-decomposition-work). It is well understood, fast and memory efficient: 
 
@@ -1559,7 +1303,7 @@ plot!(Xinducing, yp;  marker=(:square,3),  label="functional cholesky \$\\lambda
   
 ```
 
-### Kernel (using a function) Gaussian process models
+### Kernel (using a function) -- Gaussian process models
 
 Same kernel function but use it as a function internal to computations rather than an upfront covariance realization.
 
@@ -1694,7 +1438,7 @@ plot!( Xobs, ys.Yobs_sample;  marker=(:square,3),   label="$GPmethod", seriestyp
 
 using AbstractGPs, Stheno
 
-Xlatent, Ylatent, Xobs, Yobs = example_nonlinear_data() 
+Xlatent, Ylatent, Xobs, Yobs = example_data("nonlinear") 
 
 # inducing_points for GP (for prediction)
 n_inducing = 10
@@ -2036,7 +1780,7 @@ After all the comparisons, the basic cholesky on a dense matrix is fastest ... t
 
 $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
-### Pseudo points regression (example)
+#### 8. Pseudo points regression (example)
 
 https://juliagaussianprocesses.github.io/Stheno.jl/stable/examples/gppp_and_pseudo_points/
 
@@ -2192,6 +1936,181 @@ https://juliagaussianprocesses.github.io/Stheno.jl/stable/examples/process_decom
 
 
 
+
+$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
+
+## Generalized Linear Models
+
+Generalized Linear Models (GLMs) essentially use the infrastructure of Linear Models for an invertable family of distributions through a link function to a Multivariate Normal internal distribution. The form of a GLM is (Banerjee et al. 2004):
+
+$$\begin{gathered}
+y \sim f(\mu,{}^{\varepsilon}\!\sigma^{2}),\nonumber \\
+g(\mu)=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\varepsilon}
+\end{gathered}$$
+
+{eq:basic_glm}
+
+with constant offsets $\boldsymbol{O=}(o_{1},...,o_{S}\boldsymbol{)}$,
+if any; a $S\times V$ matrix of covariates
+$\boldsymbol{X}=(x_{sv})\in\Re^{S\times V}$; the $V$ covariate
+parameters $\boldsymbol{\boldsymbol{\beta}}$ with a multivariate normal
+prior with mean $\mu$ and diagonal variance matrix $\Sigma$; and
+$\boldsymbol{\varepsilon}=(\varepsilon_{1},...,\varepsilon_{S})$
+residual error. (Notationally, we are using left superscripts to denote
+variable types and reserve right subscripts for indexing). The
+$f(\cdot)$ indicates an exponential family (Binomial, Normal, Poisson)
+and $\text{E}(Y)=\mu$ with an invertible link function
+$g(\cdot)= f^{-1}(\cdot)$. 
+
+- In the Normal case:
+
+$$Y\sim\text{Normal}(\mu,{}^{\varepsilon}\!\sigma^{2})$$
+
+$$\mu=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\psi}$$ 
+
+with standard deviation $^{\varepsilon}\!\sigma$ associated with the residual error $\varepsilon$. 
+
+- In the Binomial case:
+
+$$Y\sim\text{Binomial}(\eta,\theta)$$
+$$\text{ln}(\theta/(1-\theta))=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\psi},$$
+
+where $\eta$ is the vector of number of trials and $\theta$ the vector
+of probabilities of success in each trial. 
+
+In the Poisson case:
+
+$$Y\sim\text{Poisson}(\mu)$$
+
+$$\text{ln}(\mu)=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\varepsilon}.$$
+
+It is worthwhile emphasizing that there is a strong assumption that
+*residuals are independent and identically distributed*, that is:
+
+$$\boldsymbol{\varepsilon}\overset{iid}{\sim}f(\cdot).$$
+
+Therefore, if any autocorrelation exists, such as when there is spatial or temporal, or spatiotemporal autocorrelation, then model parameter estimation can become biased as $\boldsymbol{\varepsilon}$ would be mis-specified.
+ 
+
+### Convenience functions for GLM in Julia 
+
+See [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/)
+
+
+```{julia}
+# most libraries and functions are already preloaded
+
+using LinearAlgebra, Distributions
+using TuringGLM
+using MixedModels
+using CSV
+using StatsModels
+using DataFrames 
+
+iris = RDatasets.dataset("datasets", "iris")
+
+# Species as fixed effects
+fm = @formula(SepalLength ~ SepalWidth * Species )
+model = turing_model(fm, iris);
+
+n_samples = 1_000;
+chns = sample(model, Turing.NUTS(), n_samples);
+
+showall(chns)
+
+  parameters      mean       std      mcse   ess_bulk   ess_tail      rhat   ess_per_sec 
+           α    3.1994    0.4659    0.0251   341.5986   560.6737    0.9994       40.2639
+        β[1]    0.5287    0.1351    0.0073   342.4059   536.0780    0.9995       40.3590
+        β[2]    0.3045    0.5878    0.0382   236.0464   428.7305    1.0026       27.8225
+        β[3]    0.6130    0.6106    0.0296   429.7671   426.0716    1.0032       50.6562
+        β[4]    0.3481    0.1940    0.0122   253.2514   408.7015    1.0080       29.8505
+        β[5]    0.4040    0.1953    0.0091   459.0698   451.3189    1.0016       54.1101
+           σ    0.4434    0.0259    0.0010   708.2505   619.4640    1.0112       83.4807
+
+# Species as fixed effects (random intercept)
+fm = @formula(SepalLength ~ SepalWidth + (1|Species) )
+model = turing_model(fm, iris);
+
+n_samples = 1_000;
+chns = sample(model, Turing.NUTS(), n_samples);
+ 
+showall(chns)
+
+  parameters      mean       std      mcse   ess_bulk   ess_tail      rhat   ess_per_sec 
+           α    3.9826    0.7447    0.0661   124.3730   102.1071    1.0339       15.0719
+        β[1]    0.7444    0.1045    0.0045   536.8562   593.3069    1.0037       65.0577
+           σ    0.4407    0.0240    0.0009   680.7274   330.5873    1.0140       82.4924
+           τ    1.2776    0.5847    0.0474   220.8048    96.3477    1.0064       26.7577
+       zⱼ[1]   -1.3302    0.6247    0.0384   266.9425   425.1358    1.0025       32.3488
+       zⱼ[2]   -0.0123    0.5619    0.0429   162.4311   332.5250    1.0205       19.6838
+       zⱼ[3]    0.4546    0.6536    0.0490   158.3097   380.1932    1.0214       19.1844
+
+
+
+# low level access to TuringGLM data structures and methods, etc:
+
+  y = TuringGLM.data_response(fm, iris) # independent variable
+  X = TuringGLM.data_fixed_effects(fm, iris)  # design matrix
+
+  Z = TuringGLM.data_random_effects(fm, iris) # random effects, if any
+  
+  raneffects = TuringGLM.ranef(fm)
+
+  if false
+
+    # Formulaic interaction with model and data (like brms) is possible but not necessary. 
+    # See examples in: https://github.com/TuringLang/TuringGLM.jl/blob/main/src/data_constructors.jl
+    # to modify priors ... need to look at current version of TuringGLM code
+
+    showall(model)
+
+    prior = TuringGLM._prior(priors, y, T)
+    m = median(y)
+    prior.predictors = TDist(3)
+    α = 2.5 * TDist(3)
+    y ~ MvNormal(α .+ X * β, σ^2 * I)  # example Normal model likelihood
+    y ~ arraydist(LazyArray(@~ BernoulliLogit.(α .+ X * β))) # example Bernoulli likelihood
+    y ~ arraydist(LazyArray(@~ LogPoisson.(α .+ X * β))) # example Poisson likelihood
+    prior.auxiliary = Gamma(0.01, 0.01) # only for neg binomial
+    y ~ arraydist(LazyArray(@~ NegativeBinomial2.(exp.(α .+ X * β), ϕ))) # example NegativeBinomial likelihood
+    α ~ prior.intercept
+    β ~ filldist( prior.predictors, predictors)
+    σ ~ Exponential(residual)
+  end
+  
+
+# Possibly useful:
+# source: https://stackoverflow.com/questions/77639403/in-distributions-jl-package-for-julia-how-to-define-mvnormal-distributions-with
+
+# -  Get the covariance matrix by accessing the field \Sigma instead of using function "cov",
+# -  Create the covariance matrix from constructed cholesky C by doing Cholesky(C) .. can reduce computation/inversion
+
+using Distributions
+using PDMats
+
+g1 = MvNormal([1,2], [2 1; 1 2])
+c1 = cholesky(cov(g1))
+c2 = cholesky(g1.Σ)
+
+g2 = MvNormal([1,2], PDMat(c1))
+
+isapprox(g1, g2)
+
+```
+
+
+$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
+
+### Binomial regression
+
+
+
+### Hurdle regression
+
+
+
+
+
 ## Spectral (Eigen) decomposition 
 
 Spectral (Eigen) decomposition of rectangular data is also known as Principal components analysis (PCA). It is a form of Major Axis (aka, model 2, see Linear Regression above) regression if one focuses upon the first Principal Axis and is even related to Gaussian Process models (see above).
@@ -2248,26 +2167,14 @@ $$\mathbf{V}^*=\mathbf{V}^{-1}.$$
 
 Basic set up environment and test/toy data and helper files for PCA
 
-```{julia}
-using DrWatson
+```{julia} 
 
-project_directory = joinpath( homedir(), "projects", "model_covariance"  )
-
-quickactivate(project_directory)
- 
-include( scriptsdir( "startup.jl" ))     # env and data
-
-include( srcdir( "simple_linear_regression.jl") )
-include( srcdir( "regression_functions.jl" ))   # support functions  
-
-include( srcdir( "pca_functions.jl" ))   # support functions  
-
-Random.seed!(1); # Set a seed for reproducibility.
+# include( srcdir( "pca_functions.jl" ))   # support functions  
    
 # X has an embedded nonlinear pattern 
-# id, sps, X, G, vn = iris_data( nonlinear=true, scale=false )  
+# id, sps, X, G, vn = example_data( "iris_pca_nonlinear" )  
 
-id, sps, X, G, vn = iris_data(scale=false)
+id, sps, X, G, vn = example_data("iris_pca")
 nData, nvar = size(X)   
 nz = 2  # no latent factors to use
 
@@ -2869,7 +2776,7 @@ $$
     Random.seed!(1);
 
     # refresh data in case of changes:
-    id, sps, X, G, vn = iris_data()
+    id, sps, X, G, vn = example_data("iris_pca")
     nData, nvar =  size(X)
     nz = 2  # no latent factors to use
  
@@ -2967,7 +2874,7 @@ Get nonlinear data:
 
 ```{julia}
     # X has an embedded nonlinear pattern 
-    id, sps, X, G, vn = iris_data( nonlinear=true, scale=false )  
+    id, sps, X, G, vn = example_data("iris_pca_nonlinear")  
     nData, nvar =  size(X)
     nz = 2  # no latent factors to uses
 ```
@@ -3166,9 +3073,6 @@ $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 
 
-### Binomial regresssion
-
-
 ### Random Forest
 
 ### Discrete Functions Analysis
@@ -3179,7 +3083,6 @@ Using metrics of difference, distance or similarity, classify into groups ... nu
 
 ### K-means clustering
 
-### Kernel Mixture Models
 
 $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
@@ -3684,7 +3587,72 @@ This is an AR process of order 1, or **AR(1)**, because $Y_t$ only depends on $Y
 Commonly, inference is auto-regressive (i.e., conditional), which is also unfortunately slow. Using toy data to show approach.
 Solving this is relatively simple. 
 
-An example follows:
+
+#### AR1 Basic recursive form (aks, state space form)
+  
+The variable x needs to be quantized (assumption of ar1; this can be at regular intervals or at quantiles).  
+
+Here we use a latent form to permit missing intervals.
+
+```{julia}
+#| label: model-ar1-recursive
+#| eval: true
+#| echo: false
+#| output: false
+ 
+@model function model_ar1_recursive(y, xi, nx)
+  # input is y, xindex and number of xi total
+    σ_obs ~ Exponential(1.0)
+    σ_ar1 ~ Exponential(1.0)
+    ρ ~ Uniform(-1, 1) # AR1 coefficient
+    x = Vector{Real}(undef, nx)  # latent x
+    x[1] ~ Normal(0, σ_ar1 / sqrt(1 - ρ^2))
+    for g in 2:nx
+        x[g] ~ Normal(ρ * x[g-1], σ_ar1)
+    end
+    for i in 1:length(y)
+        y[i] ~ Normal(x[xi[i]], σ_obs)
+    end
+end
+
+ 
+# partially correlated data
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+
+# x variable needs to be quantized for the recursive methods 
+xd, xi, xd_mid, nx, dx = discretize_data(x, dx=0.5)
+# xd, xi, xd_mid, nx, dx = discretize_data(x, dx=0.5, method="quantile" )  # alternative
+  
+
+model = model_ar1_recursive(y, xi, nx)
+chain = sample(model, NUTS(), 1000)
+
+showall( summarize(chain) )
+ 
+res = Array(chain)
+nparams = 3 # σ_obs, σ_ar1,  ρ
+yi = (nparams+1):size(res)[2]
+
+res = res[:,yi] # trim  params
+
+# latent means -- ie. no obsrevation error 
+#   to add observation error and so get predictive error, 
+#   one must sample further from normal with σ_obs (as in the likelihood)
+yg = vec( mean(res, dims=1) )  
+
+ci = sample(1:size(res)[1], 100)  # samples to plot
+
+pl = scatter( x, y, label="obs" )
+for i in ci
+  pl = plot(pl, xd_mid, res[i,:], label=false, alpha=0.1, color="gray" ) # some samples
+end
+pl = plot(pl, xd_mid, yg, label="ar1-recursive", lwd=2, legend=true, color="blue" ) # mean
+pl
+
+```
+
+
+Another example follows:
 
 
 ```{julia}
@@ -3702,20 +3670,10 @@ include( srcdir( "regression_functions.jl" ))  # load support functions
 # Turing set up
 Tsampler = Turing.NUTS(0.65 )
  
-nN = 30
-nData  = 500
-
-# y data is a sine function with period 2pi and noise .. so phi should be close to 2pi or less
-# alpha is coefficient of covariate1 (beta5 in model output), 
-# cov2lev are levels of categorical covariate2 (beta1:4 in model output)
-# covar3 is integer from 1:10 . used as "time" / year for ar1 process
-
-data, modelcols, coefnames, termnames, cov2lev = example_data( 
-  N=nData, 
-  cov2lev = ("1"=>1, "2"=>1.25, "3"=>2, "4"=>1.5), 
-  alpha=0.1 
-)
-
+nN = 30 
+ 
+data, modelcols, coefnames, termnames, cov2lev = example_data( "regression" )
+  
 @df data plot(:xvar, :yvar;  marker=(:square,3), label="data", seriestype=:scatter, ylims=(-1.5,5))
 
  
@@ -3768,6 +3726,121 @@ out = DataFrame(
 
 Aside: If we treat X as a time variable then the following is like a kernel matrix approach via a GP ...
 
+
+### AR1 as a GP, O(N^3)
+
+- A GP is usually more efficient that a recursive form by using optimized covariance operations
+
+- Differences from the recursive form
+  - A GP is stationary (1st and 2nd order), as such, x[1] does not need to be separately defined  
+  - A GP is evaluated directly at the coordinates (x)  
+  - A GP use a lengthscale instead of rho.  
+  - Vectorization: a single multivariate normal distribution vs mulitple evaluations of the normal .. usually provides for faster for Automatic Differentiation (AD).
+  - Flexibility: Matern12Kernel() can be changed to other forms eg. Matern32Kernel() to model a process that is "smoother" than a standard AR1.
+  - AR1 is equivalent to a Matern-1/2 kernel on a discrete grid
+  - use lognormal for variance hyperpriors to help stabilize optimization
+
+
+```{julia}
+#| label: ar1-gp-simple
+#| eval: true
+#| echo: false
+#| output: false
+
+# using AbstractGPs, KernelFunctions, Turing, LinearAlgebra
+ 
+@model function model_ar1_gp(y, x)
+    σ_obs ~ LogNormal(-2, 1)  # use of lognormal to stabilize variances
+    σ_ar1 ~ LogNormal(0, 1)   # σ_ar1 aka "innovation" noise
+    l ~ LogNormal(0, 1)       # Lengthscale 
+    # l = -1 / log(ρ) ---> log(ρ) = -1/l
+    ρ = exp(-1/l)  
+    gp_ar1 = GP( kernel_ar1(σ_ar1, ρ) )  
+    y ~ gp_ar1(x, softplus(σ_obs^2 + 1e-5) )  # a lot of noise needed to keep PD
+end
+ 
+ 
+# partially correlated data
+x, y, z, u, X, Y, Z  = example_data("correlated_data")
+ 
+model = model_ar1_gp( y, x )  # note using actual x and not a quantized x ...
+chain = sample(model, NUTS(), 1000)
+showall( summarize(chain) )
+ 
+
+function get_latent_ar1_gp(chain, x, y)
+    # Generate latent samples for every MCMC draw
+    latent_samples = map(chain[:σ_ar1], chain[:σ_obs], chain[:l]) do s_ar1, s_obs, l
+        # 1. Reconstruct the kernel and GP
+        r = exp.(-1 ./ l)
+        f = GP( kernel_ar1(s_ar1, r) ) 
+        
+        # 2. Condition the GP on the observed data y using the same x where observations occurred
+        p_f = posterior(f(x, s_obs^2 + 1e-9), y)
+        
+        # 3. Sample the latent function at those same indices
+        # return rand(p_f(x, s_obs^2)) # return predictive with observation error
+        return rand(p_f(x)) # return latent 
+    end
+
+   return dropdims( stack(latent_samples), dims=3) # Returns a Matrix [Time x Samples]
+end
+
+res = get_latent_ar1_gp(chain, x, y) 
+
+# Calculate summary statistics across the samples (dim=2)
+μ_latent = mean(res, dims=2) |> vec
+σ_latent = std(res, dims=2) |> vec
+
+# 95% Credible Interval (approx 1.96 * σ for Gaussian posterior)
+ci_95 = 1.96 .* σ_latent
+
+# Create the plot
+plot(x, μ_latent, 
+     ribbon = ci_95, 
+     fillalpha = 0.3, 
+     label = "Latent Mean (95% CI)", 
+     lw = 2,
+     color = :blue)
+
+# Overlay the original noisy data for comparison
+scatter!(x, y, 
+         label = "Observed Data", 
+         markersize = 3, 
+         alpha = 0.5, 
+         color = :black)
+
+# Plot the first 20 individual latent samples
+plot!(x, res[:, 1:20], 
+     linealpha = 0.1, 
+     color = :blue, 
+     label = "")
+
+# Overlay the mean on top
+plot!(x, μ_latent, color = :red, lw = 2, label = "Posterior Mean")
+
+# Use asymmetric ribbon: 
+
+lower = [quantile(row, 0.025) for row in eachrow(res)]
+upper = [quantile(row, 0.975) for row in eachrow(res)]
+ribbon = (μ_latent .- lower, upper .- μ_latent)
+
+plot!(x, μ_latent,
+     ribbon = ribbon, 
+     fillalpha = 0.3, 
+     label = "Latent Mean (95% CI)", 
+     lw = 2,
+     color = :orange )
+ 
+ 
+ 
+
+```
+
+
+
+
+#### Alternative development
 
 - Treating each time slice as an inducing node in a GP can be seen an AR(n) approach. 
   
@@ -3897,10 +3970,98 @@ plot!(ts, vec(yp) .+ mean(Y), label="AR(1) mean as GP -- faster", seriestype=:pa
 ```
 
 
+### AR1 as a TemporalGPs, O(N)
+
+Use of TemporalGPs.jl fast .. but fails at the moment
+
+- State-Space Inference: Instead of inverting a large matrix, it uses a Kalman Filter approach. For 1,000 data points, this is roughly 100x faster.
+  
+- Matern12 Identity: The AR(1) process is the discrete-time equivalent of a continuous-time Matern-1/2 process. Using Matern12Kernel allows TemporalGPs to recognize and optimize the transition matrices.
+ 
+
+```{julia}
+#| label: model-ar1-temporalgp
+#| eval: true
+#| echo: false
+#| output: false
+
+# using TemporalGPs, KernelFunctions, Distributions, Turing
+
+ 
+@model function model_ar1_temporalgp(y, x)
+    # x must be sorted for TemporalGPs
+    σ_obs ~ LogNormal(-2, 1)  # use of lognormal to stabilize variances
+    σ_ar1 ~ LogNormal(0, 1)   # σ_ar1 aka "innovation" noise
+    l ~ LogNormal(0, 1)     # Lengthscale 
+    # l = -1 / log(ρ) ---> log(ρ) = -1/l
+    ρ = exp(-1/l) 
+    kernel = kernel_ar1(σ_ar1, ρ) 
+   
+    # to_sde converts the GP to a state-space model: likelihood calculation O(N)
+    gp_ar1 = to_sde(GP(kernel), SArrayStorage(Float64)) # SArrayStorage is usually faster 
+
+    y ~ gp_ar1(x, softplus(σ_obs^2 .+ 1.0e-5) )
+end
+ 
+
+# ERROR: MethodError: no method matching Float64(::ForwardDiff.Dual{ForwardDiff.Tag{Turing.TuringTag, Float64}, Float64, 3})
+# The type `Float64` exists, but no method is defined for this combination of argument types when trying to construct it.
+
+ 
+# partially correlated data
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+ 
+model = model_ar1_temporalgp( y, x )  # note using actual x and not a quantized x ...
+
+chain = sample(model, NUTS(), 1000)
+
+showall( summarize(chain) )
+ 
+
+function get_fast_samples(chain, x, y, x_post)
+    # Direct access to parameters is faster than eachrow(DataFrame)
+    sig_ar1s = chain[:σ_ar1]
+    rhos     = chain[:ρ]
+    sig_obss = chain[:σ_obs]
+
+    samples = map(sig_ar1s, rhos, sig_obss) do s_ar1, r, s_obs
+        k = s_ar1^2 * with_lengthscale(Matern12Kernel(), -1/log(r))
+        f_sde = to_sde(GP(k))
+        
+        # O(N) Posterior conditioning
+        p_f = posterior(f_sde(x, s_obs^2 + 1e-9), y)
+        
+        # O(N) Sampling
+        return rand(p_f(x_post))
+    end
+    return stack(samples, dims=2) # Results in a Matrix
+end
+
+yp = get_fast_samples(chain, x, y, x_post)
+  
+pl = scatter( x, y, label="obs" )
+   
+yg = vec( mean(yp, dims=1) )
+ci = sample(1:size(yp)[1], 100)
+
+for i in ci
+  pl = scatter(pl, x_post, yp[i, :], label=false, alpha=0.1, color="gray" ) # some samples
+end
+pl = scatter(pl, x_post, yg, label="ar1",  legend=true, color="blue" ) # mean
+pl
+
+
+
+```
+
+
+
+Note: check out LaplaceRedux.jl and do a MAP version
+
  
 
 
-### Stochastic differential equation (Fourier transform)
+#### Stochastic differential equation (Fourier transform)
 
 Rasmussen and Williams (2006) treats AR(1) processes in their Appendix B as a continuous, stochastic differential equation. They start with:
 
@@ -3931,7 +4092,7 @@ $$k(t) = \frac{b^2_0}{2 a_0} e^{-a_0|t|}$$
 TODO: an example for this approach via FFT? (see stmv), but see Harmonic Fourier decompoisiton (below)
 
  
-### Continuous autocorrelation
+#### Continuous autocorrelation
 
 In a completely identical approach to the spatial case, a temporal
 autocorrelation function can be used to describe the form of the
@@ -4396,18 +4557,1221 @@ histogram(vec(b[:,2]))
 
 ```
 
+### RW2
+
+
+Similar idea but a Gaussian random walk -- second order difference
+
+### Basic RW2 Recursive
+
+```{julia}
+#| label: model-rw2-recursive
+#| eval: true
+#| echo: false
+#| output: false
+
+# note this is a latent form
+ 
+@model function model_rw2_recursive(y, xi, nx)
+
+    # 1. Priors for hyperparameters
+    σ_obs ~ Exponential(1.0)  # Observation noise
+    σ_rw2 ~ Exponential(1.0)  # Random walk step size (smoothness)
+    
+    # 2. Priors for the first two points (Initial conditions)
+    # RW2 requires two starting values to begin the second-order difference
+    x = Vector{Real}(undef, nx)
+    x[1] ~ Normal(0, 10)
+    x[2] ~ Normal(0, 10)
+    
+    # 3. Latent Random Walk 2 process
+    # x[g] - 2x[g-1] + x[g-2] ~ Normal(0, σ_rw2)
+    for g in 3:nx
+        μ = 2*x[g-1] - x[g-2]
+        x[g] ~ Normal(μ, σ_rw2)
+    end
+    
+    # 4. Likelihood
+    for i in 1:length(y)
+        y[i] ~ Normal(x[xi[i]], σ_obs)
+    end
+
+end
+
+ 
+# partially correlated data
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+
+# x variable needs to be quantized for the recursive methods 
+xd, xi, xd_mid, nx, dx = discretize_data(x, dx=0.5)
+   
+model = model_rw2_recursive( y, xi, nx )  # must pass xi (xindex) as it is a discrete model
+
+chain = sample(model, NUTS(), 1000)
+summarize(chain)
+  
+
+res = Array(chain)
+nparams = 2 # σ_obs, σ_rw2
+yi = (nparams+1):size(res)[2]
+
+res = res[:,yi] # trim  params
+ 
+yg = vec( mean(res, dims=1) )  
+
+ci = sample(1:size(res)[1], 100)  # samples to plot
+
+pl = scatter( x, y, label="obs" )
+for i in ci
+  pl = plot(pl, xd_mid, res[i,:], label=false, alpha=0.1, color="gray" ) # some samples
+end
+pl = plot(pl, xd_mid, yg, label="rw2-recursive", lwd=2, legend=true, color="blue" ) # mean
+pl
+
+
+
+```
+
+### RW2 as a continuous GP model
+ 
+
+```{julia}
+#| label: model-rw2-gp
+#| eval: true
+#| echo: false
+#| output: false
+
+
+@model function model_rw2_gp(y, x)
+    σ_obs ~ Exponential(1.0)
+    σ_rw2 ~ Exponential(0.5) 
+    gp_rw2 = GP(kernel_rw2(σ_rw2))
+    y ~ gp_rw2(x, σ_obs^2) 
+end
+
+ 
+# partially correlated data
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+  
+model = model_rw2_gp( y, x )  # note using actual x and not a quantized x ...
+chain = sample(model, NUTS(), 1000)
+showall( summarize(chain) )
+ 
+
+function get_latent_rw2_gp(chain, x, y)
+  # Generate latent samples for every MCMC draw
+  latent_samples = map(chain[:σ_obs], chain[:σ_rw2]) do σ_obs, σ_rw2 
+    f = GP(kernel_rw2(σ_rw2))
+    p_f = posterior(f(x, σ_obs^2 + 1e-9), y) # Condition GP on the observations
+    # return rand(p_f(x, σ_obs^2)) # sample and return predictive with observation error
+    return rand(p_f(x)) # sample and return latent 
+  end
+  out = stack(latent_samples)
+  out = dropdims(out, dims=3)
+  return  # Returns a Matrix [Time x Samples]
+end
+
+res = get_latent_rw2_gp(chain, x, y)
+
+# Calculate summary statistics across the samples (dim=2)
+μ_latent = mean(res, dims=2) |> vec
+σ_latent = std(res, dims=2) |> vec
+
+# 95% Credible Interval (approx 1.96 * σ for Gaussian posterior)
+ci_95 = 1.96 .* σ_latent
+
+# Create the plot
+plot(x, μ_latent, 
+     ribbon = ci_95, 
+     fillalpha = 0.3, 
+     label = "Latent Mean (95% CI)", 
+     lw = 2,
+     color = :blue)
+
+# Overlay the original noisy data for comparison
+scatter!(x, y, 
+         label = "Observed Data", 
+         markersize = 3, 
+         alpha = 0.5, 
+         color = :black)
+
+# Plot the first 20 individual latent samples
+plot!(x, res[:, 1:20], 
+     linealpha = 0.1, 
+     color = :blue, 
+     label = "")
+
+# Overlay the mean on top
+plot!(x, μ_latent, color = :red, lw = 2, label = "Posterior Mean")
+
+
+# Use asymmetric ribbon: 
+lower = [quantile(row, 0.025) for row in eachrow(res)]
+upper = [quantile(row, 0.975) for row in eachrow(res)]
+ribbon = (μ_latent .- lower, upper .- μ_latent)
+
+plot!(x, μ_latent,
+     ribbon = ribbon, 
+     fillalpha = 0.3, 
+     label = "Latent Mean (95% CI)", 
+     lw = 2,
+     color = :orange )
+ 
+ 
+ 
+```
+
+
+### RW2 as a TemporalGP 
+
+Define the O(N) Gaussian Processes
+RW2 equivalent: Integrated Wiener Process (IWP) of order 2
+AR1 equivalent: Matern-1/2 kernel
+ 
+
+```{julia}
+#| label: model-rw2-temporalgp
+#| eval: true
+#| echo: false
+#| output: false
+
+
+@model function model_rw2_gp(y, x)
+    σ_obs ~ Exponential(1.0)
+    σ_rw2 ~ Exponential(0.5) 
+    gp_rw2 = to_sde( GP(kernel_rw2(σ_rw2)), SArrayStorage(Float64)) # SArrayStorage is usually faster
+    y ~ gp_rw2(x, σ_obs^2) 
+end
+ 
+ 
+# partially correlated data
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+ 
+model = model_rw2_gp( y, x )  # note using actual x and not a quantized x ...
+chain = sample(model, NUTS(), 1000)
+showall( summarize(chain) )
+ 
+```
+
+Errors out:
+ERROR: MethodError: no method matching Float64(::ForwardDiff.Dual{ForwardDiff.Tag{Turing.TuringTag, Float64}, Float64, 2})
+The type `Float64` exists, but no method is defined for this combination of argument types when trying to construct it.
+
+
+
+
+### Recursive form
+
+```{julia}
+#| label: model-all-recursive
+#| eval: true
+#| echo: false
+#| output: false
+
+# note this is a latent form
+ 
+@model function model_recursive(y, xi, zi, ui, nx, nz, nu)
+    # input is y, xindex zindex, uindex and numbers of xi total, zi total, ui total
+    σ_obs ~ Exponential(1.0)
+    σ_ar1 ~ Exponential(1.0)
+    ρ ~ Uniform(-1, 1) # AR1 coefficient
+    
+    σ_rw2 ~ Exponential(1.0)  # Random walk step size (smoothness)
+    
+    # AR1(x) - latent
+    x = Vector{Real}(undef, nx)
+    x[1] ~ Normal(0, σ_ar1 / sqrt(1 - ρ^2))
+    for g in 2:nx
+      x[g] ~ Normal(ρ * x[g-1], σ_ar1)
+    end
+
+    # RW2(z) - latent
+    z = Vector{Real}(undef, nz)
+    z[1] ~ Normal(0, 10)
+    z[2] ~ Normal(0, 10)
+    for g in 3:nz
+      z[g] ~ Normal( 2*z[g-1] - z[g-2], σ_rw2 )
+    end
+    
+    # Fixed Effect: Categorical 
+    β_u ~ filldist(Normal(0, 10), nu) 
+    
+    # Likelihood
+    mu = Vector{Real}(undef, length(y))
+    for i in 1:length(y)
+      mu[i] = x[xi[i]] + z[zi[i]] + β_u[ui[i]]
+    end
+
+    y ~ MvNormal(mu, σ_obs * I)
+
+    return mu
+end
+
+
+ 
+# partially correlated data
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+ 
+# x, z needs to be quantized for the recursive methods 
+xd, xi, xd_mid, nx, dx = discretize_data(x, dx=0.5)
+zd, zi, zd_mid, nz, dz = discretize_data(z, dx=1.0)
+
+ud_mid = 1:nu
+  
+model = model_recursive( y, xi, zi, u, nx, nz, nu )  
+
+chain = sample(model, NUTS(), 1000)
+summarize(chain)
+  
+alleffects = generated_quantities(model, chain)
+alleffects = dropdims( stack(alleffects), dims=3) 
+
+yhat = vec( mean(alleffects, dims=2) )
+
+pl = scatter( x, y, label="obs" )
+scatter!(x, yhat)
+
+ss = findall( x -> x<0, z )
+pl = scatter( x, y, label="obs" )
+scatter!(x[ss], yhat[ss])
+
+
+# single effects 
+pl = scatter( x, y, label="obs" )
+  nsims, n_vars, nchains = size(chain)
+     
+  mx = zeros(nsims, nx) 
+  mz = zeros(nsims, nz)
+  mu = zeros(nsims, nu)
+
+  for i in 1:nx
+    mx[:,i] = chain[:, Symbol("x[$i]"), 1]
+  end
+  plot( xd_mid, vec( mean(mx, dims=1) ), label="x" )  
+
+  for i in 1:nz
+    mz[:,i] = chain[:, Symbol("z[$i]"), 1]
+  end
+  plot( zd_mid, vec( mean(mz, dims=1) ), label="z" )  
+
+  for i in 1:nu
+    mu[:,i] = chain[:, Symbol("β_u[$i]"), 1]
+  end
+  plot( ud_mid, vec( mean(mu, dims=1) ), label="u" )  
+
+ 
+res = Array(chain)
+nparams = 4 # σ_obs, σ_ar1, ρ, σ_rw2
+yi = (nparams+1):size(res)[2]
+
+res = res[:,yi] # trim  params
+ 
+yg = vec( mean(res, dims=1) )  
+
+ci = sample(1:size(res)[1], 100)  # samples to plot
+
+pl = scatter( x, y, label="obs" )
+for i in ci
+  pl = plot(pl, xd_mid, res[i,:], label=false, alpha=0.1, color="gray" ) # some samples
+end
+pl = plot(pl, xd_mid, yg, label="rw2-recursive", lwd=2, legend=true, color="blue" ) # mean
+pl
+ 
+
+
+```
+
+## Complex mixed models 
+ 
+### Multiple Gaussian Process Models
+
+The Fixed Effect is modeled as a LinearKernel on variable u
+    - Mathematically: f(u) = β*u where β ~ N(0, β_u)
+   
+
+```{julia}
+#| label: model-all-gp
+#| eval: true
+#| echo: false
+#| output: false
+ 
+@model function model_gp(y, inputs)
+    σ_obs ~ Exponential(1.0)      # Observation noise
+    σ_rw2 ~ Exponential(0.1)      # RW2 scale
+    σ_ar1 ~ Exponential(0.1)      # AR1 scale
+    ρ     ~ Uniform(0, 1)        # AR1 persistence
+    β_u   ~ Normal(0, 2.0)     # Coefficient for Fixed Effect u
+    
+    # The Fixed Effect is modeled as a LinearKernel on variable u
+    # Mathematically: f(u) = β*u where β ~ N(0, β_u)
+    k_u = β_u^2 * LinearKernel()
+
+    k_x = kernel_ar1(σ_ar1, ρ)
+    k_z = kernel_rw2(σ_rw2)
+
+    # Likelihood: AbstractGPs allows adding GPs directly
+    # 3. Combine using Input Slicing
+    # Since AbstractGPs takes a single input vector, we wrap our variables.
+    # We apply each kernel to its respective dimension (Dim 1: x, Dim 2: z, Dim 3: u)
+    f = GP( k_x + k_z + k_u )
+    y ~ f(inputs, σ_obs^2 + 1e-6)
+end
+
+
+ 
+# partially correlated data
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+  
+# Combine inputs into a vector of observations (rows of a matrix or tuples)
+# Column-major matrix where each column is [x, z, u]
+inputs = ColVecs(vcat(x', z', u'))
+
+model = model_gp( y, inputs )
+chain = sample(model, NUTS(), 100)  # slow so keep ndata low and number of samples
+ 
+ 
+function get_latent_gp(chn, y, inputs, term)
+    # Generate latent samples for every MCMC draw
+    latent_samples = map( chn[:σ_obs], chn[:σ_rw2], chn[:σ_ar1], chn[:ρ], chn[:β_u], ) do σ_obs, σ_rw2, σ_ar1, ρ, β_u
+      k_x = kernel_ar1(σ_ar1, ρ)
+      k_z = kernel_rw2(σ_rw2)
+      k_u = β_u^2 * LinearKernel()
+
+      if term=="all"
+
+        f = GP( k_x + k_z + k_u )
+        p_f = posterior(f(inputs, σ_obs^2 + 1e-9), y)
+        # return rand(p_f(inputs, σ_obs^2)) # return predictive with observation error
+        return rand(p_f(inputs)) # return latent 
+
+      elseif term=="x"
+
+        f = GP( k_x )
+        ii = stack(inputs, dims=1)[:,1] 
+        p_f = posterior(f( ii, σ_obs^2 + 1e-9), y)
+        # return rand(p_f(ii, σ_obs^2)) # return predictive with observation error
+        return rand(p_f(ii)) # return latent 
+      
+      elseif term=="z"
+
+        f = GP( k_z )
+        ii = stack(inputs, dims=1)[:,2]
+        p_f = posterior(f( ii, σ_obs^2 + 1e-9), y)
+        # return rand(p_f(ii, σ_obs^2)) # return predictive with observation error
+        return rand(p_f(ii)) # return latent 
+
+      elseif term=="u"
+
+        f = GP( k_u )
+        ii = stack(inputs, dims=1)[:,3] 
+        p_f = posterior(f( ii, σ_obs^2 + 1e-9), y)
+        # return rand(p_f(ii, σ_obs^2)) # return predictive with observation error
+        return rand(p_f(ii)) # return latent 
+
+      end
+
+    end
+  return dropdims( stack(latent_samples), dims=3)  
+end
+
+res = get_latent_gp(chain, y, inputs, "all") # everything 
+
+# x component
+res = get_latent_gp(chain, y, inputs, "x") 
+x_latent = mean(res, dims=2) |> vec
+scatter(x, x_latent) 
+
+# z component 
+res = get_latent_gp(chain, y, inputs, "z") 
+z_latent = mean(res, dims=2) |> vec
+scatter(z, z_latent) 
+
+# u component 
+res = get_latent_gp(chain, y, inputs, "u") 
+u_latent = mean(res, dims=2) |> vec
+scatter(u, u_latent) 
+
+
+# 95% Credible Interval (approx 1.96 * σ for Gaussian posterior)
+ci_95 = 1.96 .* σ_latent
+
+# Create the plot
+plot(
+  x, μ_latent, 
+  ribbon = ci_95, 
+  fillalpha = 0.3, 
+  label = "Latent Mean (95% CI)", 
+  lw = 2,
+  color = :blue
+)
+
+# Overlay the original noisy data for comparison
+scatter!(
+  x, y, 
+  label = "Observed Data", 
+  markersize = 3, 
+  alpha = 0.5, 
+  color = :black
+)
+  
+# Plot the first 20 individual latent samples
+plot!(
+  x, res[:, 1:20], 
+  linealpha = 0.1, 
+  color = :blue, 
+  label = "")
+  
+# Overlay the mean on top
+plot!(x, μ_latent, color = :red, lw = 2, label = "Posterior Mean")
+
+# Use asymmetric ribbon: 
+lower = [quantile(row, 0.025) for row in eachrow(res)]
+upper = [quantile(row, 0.975) for row in eachrow(res)]
+ribbon = (μ_latent .- lower, upper .- μ_latent)
+
+plot!(
+  x, μ_latent,
+  ribbon = ribbon, 
+  fillalpha = 0.3, 
+  label = "Latent Mean (95% CI)", 
+  lw = 2,
+  color = :orange 
+)
+  
+```
+
+
+#### TemporalGPs implemention
+
+Supposed to scale as faster as O(N), but seems to fail with unclear errors. Try again in future. 
+
+- RW2 equivalent: Integrated Wiener Process (IWP) of order 2
+- AR1 equivalent: Matern-1/2 kernel
+
+
+```{julia} 
+
+# 1. Define the O(N) Gaussian Processes
+function build_gp(σ_rw2, σ_ar1, ρ)
+    # TemporalGPs requires kernels that have a State-Space representation
+    k_rw2 = σ_rw2^2 * Matern32Kernel() # Smooth RW2 approx
+    k_ar1 = σ_ar1^2 * with_lengthscale(Matern12Kernel(), -1/log(ρ))
+    
+    # Wrap in TemporalGPs.to_sde for O(N) performance
+    return to_sde(GP(k_rw2)) + to_sde(GP(k_ar1))
+end
+
+@model function model_all_gp(y, x_time, u; nu)
+    # --- Hyperparameter Priors ---
+    σ_obs ~ Exponential(1.0)
+    σ_rw2 ~ Exponential(0.5)
+    σ_ar1 ~ Exponential(0.5)
+    ρ     ~ Uniform(0.1, 0.99) # AR1 persistence
+    
+    # --- Fixed Effects (Categorical) ---
+    β_u ~ filldist(Normal(0, 10), nu)
+    
+    # --- Construct Latent Field ---
+    f_total = build_gp(σ_rw2, σ_ar1, ρ)
+    
+    # --- Efficient Likelihood ---
+    # TemporalGPs uses a specialized logpdf that runs in O(N)
+    # We subtract fixed effects from y to use the zero-mean GP likelihood
+    y_adj = y .- β_u[u]
+    y_adj ~ f_total(x_time, σ_obs^2)
+end
+
+
+ 
+# partially correlated data
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+  
+model = model_all_gp(y, x, u, nu=10)
+chain = sample(model, NUTS(), 500)
+
+```
+
+### INLA approach (Integrated Nested Laplace Approximation)
+
+Uncertainty estimation: 
+  - find the Maximum A Posteriori (MAP) estimate 
+  - calculate the Hessian at that point to form a Gaussian approximation 
+  - significantly faster than MCMC sampling for large datasets
+  - MAP to Laplace Approximation via Optim.jl to find the mode 
+  - ForwardDiff.jl (or Zygote.jl) to compute the curvature (Hessian) for uncertainty intervals 
+  - Symmetry: Priors for variances are highly skewed. On the log-scale, they become symmetric, making the "Laplace" (Normal) approximation significantly more accurate.
+  - Constraint Handling: Using logit transforms, ensures the AR1 process remains stable without needing to manually clip values during optimization.
+  - Numerical Stability: Computing the Hessian on the log-scale avoids the "vanishing gradient" issues often found near zero for variance parameters.
+
+```{julia}
+ 
+using Optim, ForwardDiff, LinearAlgebra, Distributions
+
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+  
+model = model_all_gp(y, x, u, nu=10)
+
+# 1. Find the MAP Estimate
+# model = fast_inla_model(y, x, u; nu=5)
+map_res = optimize(model, MAP())
+θ_map = map_res.values.array  # The "Mode"
+
+# 2. Compute the Hessian at the MAP
+# This gives the negative log-posterior curvature
+f_logp(θ) = Turing.LogDensityProblems.logdensity(
+    Turing.LogDensityProblems.ADgradient(model), θ )
+
+H = ForwardDiff.hessian(f_logp, θ_map)
+
+# 3. Construct the Laplace Approximation
+# The covariance is the inverse of the negative Hessian
+Σ = inv(-H)
+posterior_approx = MvNormal(θ_map, Σ)
+
+# 4. Extract INLA-style Summaries (Mean ± 1.96 * SD)
+stds = sqrt.(diag(Σ))
+lower_95 = θ_map .- 1.96 .* stds
+upper_95 = θ_map .+ 1.96 .* stds
+
+```
+
+To improve the Laplace approximation accuracy, a Bijector transformation can be used. Using a log-precision scale by transforming constrained parameters to an unconstrained real-valued space where the Gaussian assumption is much more robust.
+
+
+```{julia}
+using Bijectors, Turing, Optim, ForwardDiff, LinearAlgebra
+
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+  
+model = model_all_gp(y, x, u, nu=10)
+
+# 1. Access the internal Turing model interface
+# This allows us to work in the unconstrained "linked" space
+vi = Turing.VarInfo(model)
+obj = Turing.LogDensityProblems.ADgradient(
+    Turing.LogDensityProblems.LogDensityFunction(vi, model, Turing.DefaultContext())
+)
+
+# 2. Find MAP in the unconstrained space (Log-scale for σ, Logit-scale for ρ)
+# This prevents the optimizer from hitting boundaries at 0 or 1
+opt_res = optimize(θ -> -Turing.LogDensityProblems.logdensity(obj, θ), vi[Turing.SampleFromPrior()])
+θ_unconstrained_map = opt_res.minimizer
+
+# 3. Compute Hessian in unconstrained space
+H_unconstrained = ForwardDiff.hessian(θ -> Turing.LogDensityProblems.logdensity(obj, θ), θ_unconstrained_map)
+Σ_unconstrained = inv(-H_unconstrained)
+
+# 4. Transform back to physical scale (INLA-style summaries)
+# We draw samples from the Gaussian approx and transform them back
+# (This is much more accurate than transforming the Hessian directly)
+samples_unconstrained = rand(MvNormal(θ_unconstrained_map, Σ_unconstrained), 5000)
+
+# Apply the inverse bijector to map samples back to [0, ∞) or [-1, 1]
+b = inverse(bijector(model))
+samples_physical = b(samples_unconstrained)
+
+# 5. Extract Final Statistics
+mean_vals = mean(samples_physical, dims=2)
+sd_vals   = std(samples_physical, dims=2)
+
+``` 
+
+As an alternative ADVI (AD variational inference) can be used:
+
+
+```{julia}
+# now with ADVI
+
+x, y, z, u, X, Y, Z = example_data("correlated_data")
+  
+# 1. Define the model (using the fast TemporalGP version from before)
+model = model_all_gp(y, x, u, nu=10)
+
+
+# 2. Configure ADVI
+# ADVI(samples_per_step, max_iterations)
+# - 10 samples are used to estimate the ELBO gradient per step
+# - 10,000 iterations for convergence
+advi = ADVI(10, 10_000)
+
+# 3. Perform Variational Inference
+# This returns a VariationalPosterior (q)
+q = vi(model, advi)
+
+# 4. Extract Results
+# Generate 1,000 samples from the fitted variational posterior
+samples = rand(q, 1000)
+
+# Get means and standard deviations for all parameters
+post_mean = mean(q)
+post_std  = std(q)
+
+```
+
+## Gaussian Markov random fields (GMRFs)
+
+A class of spatial models in which a sparse matrix structure arises naturally involves
+data that is laid out on some sort of spatial lattice, of regular or irregular nature. A powerful
+modeling tool for this type of data is the framework of Gaussian Markov random
+fields (GMRFs). A GMRF can be specified by a multivariate Gaussian distribution
+with mean µ and a precision matrix Q, where the (i, j)th element of Q is zero if the
+process at location i is conditionally independent of the process at j given the process
+at all locations except i, j. The pattern of zero and non-zero elements in such matrices
+is typically due to the assumption of some sort of Markov property in space and is
+called the sparsity structure. Whereas the total number of non-zero elements divided
+by the total number of elements is called the density of the matrix; Q, for example, usually
+has a very low density. 
+
+
+A latent GMRF (Gaussian Markov Random Field) model is a hierarchical model where $\textbf{y}$, the observables are  assumed to be distributed as conditionally independent (ie. a product of) of some latent parameters $\eta$ and other parameters $\theta_1$:
+
+$p(\mathbf{y}| \mathbf{\eta}, \mathbf{\theta_1} ) = \prod_{j} p(y_j | \eta_j, \mathbf{\theta_1} )$
+
+
+and hyperparameters $\theta = (\theta_1, \theta_2)$ with various prior distributions
+
+Thus:
+
+$
+(\mathbf{\theta}) \sim p(\mathbf{\theta}) \\
+(\mathbf{x} | \mathbf{\theta} )  \sim \textrm{N}(\mathbf{0}, Q(\mathbf{\theta})^{-1} )  \\
+\eta_i = \sum_j c_{ij}x_j \\
+( y_i | \mathbf{x}, \mathbf{\theta} ) \sim p( y_i | \eta_i, \mathbf{\theta} ) 
+$
+
+
+Approximation of the posterior density of $(\mathbf{\theta | y}) $ using a Gaussian approximation for the posterior latent field: $\tilde{p} (\mathbf{x} | \mathbf{\theta}, \mathbf{y} )$ evaluated at the posterior mode, $\mathbf{x}^*(\mathbf{\theta} ) = \textrm{argmax}_{x} \ p(\mathbf{x} | \mathbf{\theta} , \mathbf{y} )$ such that:
+
+$\begin{array}{cl}
+p(\mathbf{\theta} | \mathbf{y} )  & \propto 
+\frac{p(\mathbf{\theta}, \mathbf{x}, \mathbf{y} ) } { p(\mathbf{x} | \mathbf{\theta}, \mathbf{y})} \bigg|_{\mathbf{x} =\mathbf{x}^*(\mathbf{\theta}) }   \\
+& \approx \frac{p(\mathbf{\theta}, \mathbf{x}, \mathbf{y} ) } { \tilde{p}(\mathbf{x} | \mathbf{\theta}, \mathbf{y})} \bigg|_{\mathbf{x} =\mathbf{x}^*(\mathbf{\theta}) }   
+\end{array}$
+
+.. a Laplace approximation .. such that the posterior of $\theta$ can be evaluated (after optimisation used to ID modes) and marginal posteriors calculated by numerical intergeration over $\theta$.
+
+A second Laplace approximation is also used to compute latent field marginal posteriors:
+
+$\begin{array}{cl}
+p(\theta_k | \mathbf{y}) & \approx \int \tilde{p}(\mathbf{\theta} | \mathbf{y} ) \; \textrm{d}\mathbf{\theta}_{-k} \\
+p( x_k | \mathbf{y} )  & \approx \int \tilde{p}(x_j | \mathbf{\theta}, \mathbf{y} ) \ \tilde{p}(\mathbf{\theta} | \mathbf{y} )  \; \textrm{d} \mathbf{\theta}
+\end{array}$
+
+INLA thus provides fast and accurate approximations of
+
+$p(\theta | y)$ ,  the posterior marginal densities for the hyperparameters and $p( x_k | y), \ k=0, ...n-1$  , the posterior marginal densities of the latent variables $x_i$ , which can be used to rapidly compute posterior means, variances, etc.
+
+More specifically, INLA models GMRF's of the form where:
+
+(A)    $p(\mathbf{y}| \mathbf{\eta}, \mathbf{\theta_1} ) = \prod_{j} p(y_j | \eta_j, \mathbf{\theta_1} )$
+
+where
+
+(B)   $\eta_i = \textrm{Offset}_i + \sum_{k=0}^{n_f-1} { w_{ki} \ f_k ( c_{ki} ) } + z_i^T \beta + \epsilon_i $, and $ i = 0, ... , n_\eta - 1 $
+
+$J \in \{0,1,..., n_\eta -1\}$ ... i.e. not all latent parameters $\eta$ are observed through the data $y$.
+
+$p(y_j|\eta_j, \theta_1)$ is the likelihood of the observed data and conditionally independent given its parameters
+
+$\eta_i$ are the latent variables that enters the likelihood through a known link function
+
+$\epsilon$ is a vector of unstructured random effects of length $n_\eta$ with iid Gaussian priors with a precision of $\lambda_\eta$ i.e., :
+
+$\epsilon | \lambda_{\eta} \sim N (0, \lambda_\eta I)$
+
+$\eta = (\eta_1, \eta_2, ...) $ is the vector of predictors
+
+Offset is an a-priori known component of the linear predictor
+
+$w_k$ are the known weights defined for each observation
+
+$f_k(c_{ki})$ are the effects of a covariate k which assumes values $c_{ki}$ for observation i
+
+$f_k = (f_{0k}, ... , f_{(m_{k}-1 ) k}) ^T$ are the nonlinear functions (function evaluations) of the continuous covariates, time trends, seasonal effects, space, iid random intercepts and slopes, spatial random effects, etc. .. which are modelled as GMRFs of paramters $\theta_{fk}$ ...that is:
+
+$f_k | \theta_{fk} \sim N (0, Q_k^{-1} )$
+
+$z_i$ is a vector of $n_\beta$ covariates assumed to have a linear effect
+
+and
+
+$\beta$ is the corresponding vector of unknown parameters with independent zero-mean Gaussian priors with fixed precisions
+
+Then the **full latent field**, parameterized as a with the (linear) predictors $\eta$ instead of the unstructured terms $\epsilon$ is:
+
+$x = ( \eta^T, f_0^T, ..., f_{n_{f}-1} ^T, \beta^T )$
+
+which has a dimension of:
+
+$n = n_\eta + \sum_{j=0}^{n_{f}-1}{m_j} + n_\beta$
+
+As all elements are $x$ are defined as GMRFs, (equation082.png) itself is a GMRF with density:
+
+$p( x|\theta_2) = 
+\prod_{i=0}^{n_\eta -1} {p(\eta_i | f_0, ..., f_{n_f-1}, \beta, \lambda_\eta )}  
+\prod_{k=0}^{n_f -1}  {p(f_k| \kappa_{fk})} 
+\prod_{m=0}^{n_\beta -1}  {p(\beta_m)} $
+
+
+where
+
+$
+\eta_i | f_0, ..., f_{n_f-1}, \beta \sim N ( \sum_{k=0}^{n_f-1}{f_k(c_{ki})} + z_i^T \beta, \lambda_\eta)
+$
+
+$
+\theta_2 = \{\log \lambda_\eta, \theta_{f_0}, ..., \theta_{n_f-1} \}
+$
+
+with priors for the hyperparameters  $\theta = (\theta_1, \theta_2)$
+
+---
+### Examples
+
+#### 0. ANOVA
+
+$c_k = \textrm{covariates} \ : 
+\ c_{1i} = w_i, \ c_{2i} = v_i, \ c_{3i}=(w_i, v_i) 
+$
+
+$\eta_i = f_1(w_i) + f_2(v_i) +f_{1|2}(w_i, v_i) + ...$
+
+$f_1, \ f_2  = \textrm{main effects}$
+
+$f_{1|2} = \textrm{ 2D interaction surface }$
+
+
+#### 1. Time-series models
+
+$c_k = \textrm{time}$
+
+$\eta_t = f_{trend}(t) + f_{seasonal}(t) + z_t^T \beta$
+
+$f_k = \textrm{nonlinear or seasonal trends}$  where t is time
+
+
+#### 2. GAMs
+
+$c_k = \textrm{univariate continuous covariate}$
+
+$p(y_i|\eta_i, \theta_l) \sim \textrm{Exponential family} $
+
+$f_k = \textrm{smooth functions of covariates}$
+
+
+#### 3. GAMMs
+
+$\eta_{it} = f_0( c_{it0} ) + ... , + f_{n_f-1} (c_{it(n_f-1) } ) + b_{0i}w_{it0} +  b_{(n_b-1) i} w_{it(n_b-1) } $
+
+$\eta_{it}$ is the predictor for individual i at time t
+
+$x_{itk}, w_{itq} = \textrm{covariates} $
+
+$b_{0i}, ..., b_{(n_b-1)i}  = \ \textrm{vector of individual random intercepts or slopes if w itq is 1 }$
+
+
+$\begin{array}{cl}
+r & = (i,t) \\
+c_{tj} & = c_{itj} \ \ \ \textrm{for} \  j=0, ..., n_f-1 \\
+c_{r,(n_f-1)+q} & = w_{itq}  \\
+f_{n_f-1+q} (c_{r,(n_f-1)+q}) & = b_{qi}w_{itq} \ \ \ \textrm{for}  \ q = 0, ..., n_b
+\end{array}$
+
+
+#### 4. Geoadditive models
+
+$\eta_i = f_1(c_{0i}) + ... + f_{n_f-1}(c_{(n_f-1)i}) + f_{sp}(s_i) + z_i^T\beta$
+
+$s_i$  is location of observation i
+
+$f_{sp}$ is spatially correlated effect
+
+
+
+#### 5. Spatial models (GRMF)
+
+Based upon notation and summary from Blangiardo, Cameletti, Baio and Rue. 2012. Spatial and Spatio-temporal models with R-INLA. Spatial and Spatio-Temporal Epidemiology XX : XX
+
+And Lindren, F. and Rue, H. 201X Bayesian Spatial Modelling with R-INLA .. Journal of Statistical Software ...
+
+Advantage of Bayesian analysis:
+
+use of hierarchical models and priors
+
+Advantage of INLA:
+
+1. faster and less CPU intensive than MCMC methods (at cost of being less general esp for Latent models)
+2. MCMC show poor mixing for correlated problems ... there is very poor mixing even for simple problems
+3. Use of Matern permits simple implementation of non-stationarity as differential operators act locally permitting merging of Gaussian random (continuous) field with (discrete) Markov properties/computations (GRMF's)
+
+Definitions:
+
+$\mathbf{s} = {s_1, ... s_n}$ == finite set of locations in space (points) .. locations of observations
+
+$x(\mathbf{s})$ == stochastic (latent--unobserved) process (i.e., stochastic point process) or spatial field
+
+$y(\mathbf{s})$ == observations or realizations of a process or field $x(\mathbf{s})$ 
+
+$\Omega$ == a fixed subset of $\mathbb{R}^d$ (for the following, $d=2$, discrete or continuous )
+
+Then more formally for a **spatial process**:
+
+$x(\mathbf{s}) \equiv \{ y(\mathbf{s}),  \mathbf{s} \in \Omega \in \mathbb{R}^2 \} $  ... the process/random field
+
+$\textbf{y} = \{y(s_1), ..., y(s_n) \}$  .. the observations
+
+To identify the probability distribution for observed data as a function of some parameters, $\theta$:
+
+1. for the spatial case, let $\theta$ be parameters for an exponential distribution that   determines the spatial autocorrelation
+
+2. and assuming that it is a latent stationary Gaussian Field (GF) governed by (hyperparameters) and associated prior distributions, $p(\psi)$
+
+**Stationary Matérn fields**
+
+If $Y(s)$ is parameterized as a stationary SPDE/GRMF such that:
+
+$(\kappa^2 - \Delta)^{\alpha/2} \ (\tau x(\mathbf{s})) 
+  = \mathcal{W}( \mathbf{s} ), \; \mathbf{s} \in \Omega $
+
+where:
+
+$\Delta$ is the Laplacian
+
+$\kappa$ is the spatial scale parameter
+
+$\alpha$ controls the smoothness of the realizations
+
+$\tau$ controls the variance
+
+$\mathcal{W}(\mathbf{s})$ is Guassian white noise
+
+$x(\mathbf{s})$ is the random field
+
+then, $x(\mathbf{s})$ has a stationary solution on $\mathbb{R}^d$ that is a Matérn covariance function:
+
+$\textrm{Cov}(x(\mathbf{0}), x(\mathbf{s})) 
+  = \frac{\sigma^2}{2^{\nu-1}\Gamma(\nu) }  
+  ( \kappa \|s\|)^\nu \ K_{\nu} ( \kappa\|s\| )
+$
+
+where:
+
+$\|s\| = \Delta_{ij} = \| s_i - s_j \|$  .. different notations for Euclidean distance
+
+$K_{\nu}$ is the modified Bessel function of second kind and order ν>0 measuring the degree of smoothness
+
+$\nu = \alpha - d/2$ .. is the Bessel function's smoothness parameter
+
+$\kappa > 0$  is the scaling parameter related to range, r:
+
+$\rho = \frac{ \sqrt{8 \nu} } {\kappa}$ .. empirically defined where ρ  is the distance where spatial correlation ~ 0.13
+
+$\sigma^2 = \frac{\Gamma(\nu) } 
+  {\Gamma(\alpha)(4\pi)^{d/2} \kappa^{2\nu} \tau^2 }$ .. the marginal variance
+
+Aside:
+if, ν = 1/2 then this becomes the exponential covariance when d=1 and α=1 or for d=2 and α=3/2.
+if, α=1 and d=2 (ν=0) then on a regular lattice discretization, the autocorrelation is CAR(1)
+
+So:
+
+From $x \sim \textrm{N}(0, Q^{-1})$, continuously defined functions $x(\mathbf{s})$ can be obtained that are approximate solutions to the SPDE, where $x(\mathbf{s})$  are represented as basis functions that are explicit functions of $(\tau, \kappa)$ ...  and so Q are also explicitly functions of $(\tau, \kappa)$:
+
+
+$ \theta_1 =  \log(\tau)  = \frac{1} {2} \log( \frac{\Gamma(\nu) } { (4 \pi)^{d/2} \Gamma(\alpha)} ) - \log (\theta) - \nu \log (\kappa)  $
+
+$ \theta_2 =  \log(\kappa)  = \frac {\log(8 \nu)} {2} - \log ( \rho) $
+
+
+which can be simplified/re-parameterized to terms of (\sigma, \rho):
+
+$\log(\sigma) = \log ( \tau_0) - \theta_1 + \nu \theta_2  $
+
+$\log( \rho)  = \log( \kappa_0 )- \theta_2$
+
+where (equation118.png) are some baseline standard deviation and range values.
+
+**For non-stationary fields**:
+
+$(\kappa(\mathbf{s})^2 - \Delta)^{\alpha/2} (\tau(\mathbf{s}) x(\mathbf{s})) 
+  = \mathcal{W}( \mathbf{s} ), \; \mathbf{s} \in \Omega $
+
+$\Delta$ is the Laplacian
+
+$\kappa$ is the spatial scale parameter
+
+$\alpha$ controls the smoothness of the realizations
+
+$\tau$ controls the variance
+
+$\mathcal{W}(\mathbf{s})$ is Guassian white noise
+
+$x(\mathbf{s})$ is the random field
+
+
+$ \log(\tau(\mathbf{s}) )  = b_0^{\tau}(\mathbf{s}) + \sum_{k=1}^{p} b_{k}^{\tau}(\mathbf{s}) \theta_k $
+
+$ \log(\kappa(\mathbf{s}) ) = b_0^{\kappa}(\mathbf{s}) + \sum_{k=1}^{p} b_{k}^{\kappa}(\mathbf{s}) \theta_k $
+ 
+
+where:
+
+$\{\theta_1, ..., \theta_p \}$ are internal representations of parameters
+
+$b_k^{\tau}(\cdot)  , \, b_k^{\kappa}(\cdot)$ are spatial basis functions
+
+and the precision matrix ($Q$) is a discrete field representation based upon (\tau, \kappa)
+
+which can be reparamterized as:
+
+$ \log(\sigma(\mathbf{s}) )  = b_0^{\sigma}(\mathbf{s}) + \sum_{k=1}^{p} b_{k}^{\sigma}(\mathbf{s}) \theta_k $
+
+$ \log(\rho(\mathbf{s}) ) =b_0^{\rho}(\mathbf{s}) + \sum_{k=1}^{p} b_{k}^{\rho}(\mathbf{s}) \theta_k
+ $
+
+
+#### 6. Spatio-temporal models
+
+
+For a **spatio-temporal process**:
+
+$x(s,t) \equiv \{ y(s,t), (s,t) \in \Omega \in \mathbb{R}^2 \times \mathbb{R} \}$ ... stochastic process in 2-space and time
+
+then the space-time SPDE is:
+
+$\frac {\partial}{\partial t} ( \kappa(s)^2 - \Delta)^{\alpha/2} (\tau(\mathbf{s}) x(\mathbf{s},\mathbf{t})) 
+=  \mathcal{W}( \mathbf{s},\mathbf{t}  ), \; ( \mathbf{s},\mathbf{t}  ) \in \Omega \times \mathbb{R}$
+
+$\Delta$ is the Laplacian
+
+$\kappa$ is the spatial scale parameter
+
+$\alpha$ controls the smoothness of the realizations
+
+$\tau$ controls the variance
+
+$\mathcal{W}(\mathbf{s})$ is Guassian white noise
+
+$x(\mathbf{s})$ is the random field
+
+with a precision matrix:
+
+$Q = Q_t \otimes Q_s$ .. i.e. a separable model
+
+where $Q_s$ is the spatial component and $Q_t$ is the temporal component. The latter is the precision of a 1-D random walk.
+
+$Cov(\theta_{it}, \theta_{ju}) = \sigma_{C}^2 C( s_i, s_j ; t, u)$ ... covariance function (i,j) indexes space and (t,u) indexes time
+
+Assuming space and time stationarity: s
+
+$Cov(\theta_{it}, \theta_{ju}) = \sigma_{C}^2 C( \Delta_{ij}; \Lambda_{tu} )$
+
+where: $\Delta_{ij}$ is Euclidean distance and $\Lambda_{tu} = \mid t-u \mid$ is the temporal lag
+
+with an assumption of space-time separability this can simplify to a multiplicative (or additive) form such as:
+
+$Cov(\theta_{it}, \theta_{ju}) = \sigma_{C}^2 C_1( \Delta_{ij}) C_2( \Lambda_{tu} )$
+
+or sometimes a Kronecker product between space and time can be defined ... but this is expensive
+
+INLA:
+
+Modelling the mean of observed data on a suitable scale ($\eta$) while accounting for covariates using an additive linear predictor:
+
+$\eta_i = \alpha + \sum \limits_{m=1}^M \beta_{m} x_{mi} + \sum \limits_{l=1}^L f_{l} (z_{li}) $   .... EQ 1
+
+where:
+ 
+$\alpha$ is a scalar representing the intercept
+
+$\boldsymbol{\beta} = (\beta_1,...,\beta_M)$  coefficients that quantify the effect of covariates $\textbf{x}$ upon the response variable
+
+$\textbf{x} = (x_1,...x_M)$  ... covariates (standard linear .. "fixed")
+
+$\textbf{f} = \{f_1(\cdot), ..., f_L(\cdot) \}$ .. functions of other covariates (equation036.png)
+
+$\textbf{z} = (z_1,...z_L)$.. covariates (functional covariates .. "random")
+
+The parameters of EQ 1 are therefore:
+
+$\boldsymbol {\theta} = \{ \alpha, \boldsymbol{\beta}, \boldsymbol{f} \}$
+
+.. assume $\boldsymbol {\theta}$ to be GMRF as this reduces the dimensionality of the problem to local covariance matrices ... and allows the use of sparse matrix algorithms.
+
+with a mean of 0 and precision matrix $\boldsymbol {Q}$
+
+and K hyperparameters $\boldsymbol {\psi} = (\psi_1, ..., \psi_K )$ with dimension ~ order of (1+L) << the size of $\boldsymbol {\theta}$
+
+Starting with Bayes' theorem:
+
+$p( \boldsymbol{\theta} | \boldsymbol{y} ) = \frac 
+{p( \boldsymbol{y} |\boldsymbol{\theta }) \ p(\boldsymbol{\theta}) } 
+{\int p( \boldsymbol{y} | \boldsymbol{\theta} ) \ p(\boldsymbol{\theta}) \ d \boldsymbol{\theta}}$
+
+
+$p(\theta_i | \boldsymbol{y} ) = \int p( \boldsymbol{\psi} | \boldsymbol{y} ) \ p( \theta_i | \boldsymbol{\psi} , \boldsymbol{y} ) \ d\boldsymbol{\psi}$
+
+$p(\theta_i | \boldsymbol{y} ) = \int p( \boldsymbol{\psi} | \boldsymbol{y} ) \ p( \theta_i | \boldsymbol{\psi} , \boldsymbol{y} ) \ d\boldsymbol{\psi}$  ... -k means everything but k (i.e, marginal to k)
+
+$p( \boldsymbol{\psi} | \boldsymbol{y} ) $ ...
+
+$p( \psi_k | \boldsymbol{y} )$ ... marginal posteriors of parameters
+
+---
+
+$Y(s,t) \equiv \{y(s,t),(s,t) \subset \}$
+
+ 
+ 
+### GRMF (Gaussian Markov Random Fields) Implementations
+
+- O(N^1.5)
+- Uses sparse precision matrix 
+  - mostly zeros: cholesky (via SparseMatrixCSC in SuiteSparse), is fast for banded/sparse matrices.
+- direct kronecker manipulation: Q_v = kron(Q_v_time, Q_v_space) 
+  - scale: if nt=100 and ns=1000:
+    - A dense Covariance matrix uses 75 GB RAM ... slow and useless
+    - A sparse Precision matrix uses 50MB RAM ... faster and viable
+
+```{julia}
+using Turing
+using LinearAlgebra
+using SparseArrays
+using Graphs
+using Distributions
+
+# 1. Helper: Build Sparse Precision Components
+
+# Build the unscaled Laplacian (Q_structure) from an adjacency matrix
+function build_laplacian_precision(adj::AbstractMatrix)
+    # Degree matrix (diagonal)
+    degrees = vec(sum(adj, dims=2))
+    D = Diagonal(degrees)
+    # Laplacian: Q = D - W
+    Q = sparse(D - adj)
+    return Q
+end
+
+# Scale the precision matrix so the geometric mean of marginal variances is 1
+# (Equivalent to INLA's scale.model=TRUE)
+function scale_precision!(Q::AbstractMatrix)
+    # Invert Q to get Marginal Variances (only need diagonal)
+    # We add a tiny jitter for numerical stability during inversion
+    Q_inv = inv(Matrix(Q + I * 1e-6)) 
+    scaling_factor = exp(mean(log.(diag(Q_inv))))
+    Q ./= scaling_factor
+    return Q
+end
+
+# Custom Log-PDF for GMRFs (The "Magic" Speedup)
+# We compute log|Q| using the sparse Cholesky factorization
+function logpdf_gmrf(x::AbstractVector, Q::AbstractMatrix)
+    # 1. Sparse Cholesky Factorization (Fast)
+    # We add a small jitter to the diagonal for positive definiteness stability
+    F = cholesky(Symmetric(Q + I * 1e-8))
+    
+    # 2. Log Determinant: 2 * sum(log(diag(L)))
+    log_det = logdet(F)
+    
+    # 3. Quadratic Form: x'Qx
+    quad_form = dot(x, Q, x)
+    
+    # 4. Log-Likelihood
+    n = length(x)
+    return 0.5 * (log_det - quad_form - n * log(2π))
+end
+
+# 2. The Turing Model (GMRF Version)
+
+# Generate spatio-temporal data
+y, a_idx, u_idx, group_idx, W, N_times, N_areas, N_obs = example_data("icar")
+
+@model function inla_gmrf_model(y, a_idx, u_idx, v_time, v_space, adj)
+    
+    N = size(adj, 1)
+    T_steps = maximum(v_time)
+    
+    # --- Pre-computation ---
+    # 1. Spatial Structure (ICAR precision)
+    Q_spatial_raw = build_laplacian_precision(adj)
+    scale_precision!(Q_spatial_raw) # Apply INLA scaling rules
+    
+    # 2. Identity Matrix (for IID noise part of BYM2)
+    I_N = sparse(I, N, N)
+    
+    # --- Hyperparameters ---
+    
+    # AR1 (Time)
+    σ_a ~ truncated(Normal(0, 1), 0, Inf)
+    ρ_a ~ Uniform(0, 1)
+    τ_a = 1 / σ_a^2 # Convert variance to precision
+    
+    # BYM2 (Space)
+    σ_u ~ truncated(Normal(0, 1), 0, Inf)
+    ϕ_u ~ Beta(1, 1) # Mixing parameter
+    τ_u = 1 / σ_u^2
+    
+    # Spatio-Temporal
+    σ_v ~ truncated(Normal(0, 1), 0, Inf)
+    ϕ_v ~ Beta(1, 1)
+    ρ_v ~ Uniform(0, 1) # AR1 for group
+    τ_v = 1 / σ_v^2
+    
+    # Observation Noise
+    σ_y ~ truncated(Normal(0, 1), 0, Inf)
+    τ_y = 1 / σ_y^2
+
+    # --- Precision Matrix Construction (The "Q") ---
+    
+    # 1. f(a): AR1 Precision Matrix (Tridiagonal Sparse)
+    # Q_ar1 = [1 -ρ ...; -ρ 1+ρ^2 -ρ...; ... -ρ 1] * τ / (1-ρ^2)
+    # Constructing sparse AR1 precision manually:
+    diag_ar1 = [1.0; fill(1 + ρ_a^2, T_steps - 2); 1.0]
+    off_diag_ar1 = fill(-ρ_a, T_steps - 1)
+    Q_ar1_structure = spdiagm(0 => diag_ar1, 1 => off_diag_ar1, -1 => off_diag_ar1)
+    Q_a = (τ_a / (1 - ρ_a^2)) * Q_ar1_structure
+
+    # 2. f(u): BYM2 Precision Matrix
+    # Q_bym2 = τ * ( (1-ϕ)*I + ϕ*Q_spatial )
+    # Note: We strictly sum the precision matrices to maintain sparsity
+    Q_u = τ_u * ( (1 - ϕ_u) * I_N + ϕ_u * Q_spatial_raw )
+    
+    # 3. f(v): Spatio-Temporal (Kronecker Product)
+    # Precision of separable process is Kronecker product of precisions: Q_st = Q_time ⊗ Q_space
+    Q_v_time = (1 / (1 - ρ_v^2)) * spdiagm(0 => diag_ar1, 1 => fill(-ρ_v, T_steps-1), -1 => fill(-ρ_v, T_steps-1))
+    Q_v_space = τ_v * ( (1 - ϕ_v) * I_N + ϕ_v * Q_spatial_raw )
+    
+    # Use 'kron' from LinearAlgebra/SparseArrays - highly efficient for sparse
+    Q_v = kron(Q_v_time, Q_v_space) 
+
+    # --- Latent Variables ---
+    
+    # We sample the latent vectors directly using our custom sparse logpdf
+    f_a ~ ArrayDist(Normal(0, 1)) # Placeholder to initialize size, we overwrite logprob below
+    Turing.@addlogprob! logpdf_gmrf(f_a, Q_a)
+    
+    f_u ~ ArrayDist(Normal(0, 1))
+    Turing.@addlogprob! logpdf_gmrf(f_u, Q_u)
+    
+    f_v ~ ArrayDist(Normal(0, 1))
+    Turing.@addlogprob! logpdf_gmrf(f_v, Q_v)
+
+    # --- Likelihood ---
+    mu = f_a[a_idx] + f_u[u_idx] + f_v # Assumes f_v aligns with data grid
+    
+    y ~ MvNormal(mu, σ_y^2 * I)
+end
+
+```
+
 
 ## Spatial Models
 
 ### Discrete (CAR)
 
-
 Also known as Conditional autoregressive (CAR) models. 
 
-
-
 Sources: 
-
 
 https://sites.stat.columbia.edu/gelman/research/published/bym_article_SSTEproof.pdf
 
@@ -4558,7 +5922,6 @@ exponential function that decays to a "base" model of 0 precision.
 Though additive in the logarithmic link space, these are multiplicative
 for the Poisson models that follow.
 
-
 #### CAR with Turing (in Julia)
 
 This is a simple Julia implementation of a binomial CAR model. 
@@ -4657,7 +6020,8 @@ Small samples to check for model functionality.
 
 # data source:  https://mc-stan.org/users/documentation/case-studies/icar_stan.html
 
-D, W, X, log_offset, y, nX, nAU, node1, node2, scaling_factor = scottish_lip_cancer_data()  # data and pre-computed parameters 
+D, W, X, log_offset, y, nX, nAU, node1, node2, scaling_factor = example_data("scottish_lip_cancer_data") 
+  # data and pre-computed parameters 
   # y: the observed lip cancer case counts on a per-county basis
   # x: an area-specific continuous covariate that represents the proportion of the population employed in agriculture, fishing, or forestry (AFF)
   # E: the expected number of cases, used as an offset .. log_offset=log.(E),
@@ -4831,6 +6195,280 @@ NOTE: Function not complete.
 
 
 ```
+
+
+
+
+
+
+
+
+#### Naive implementation  
+
+```{julia}
+
+# using Turing, AbstractGPs, LinearAlgebra, SparseArrays, Distributions
+
+# --- Utility Functions for Precision Matrices ---
+
+# AR1 Precision Matrix
+function ar1_prec(n, ρ, τ)
+    Q = sparese(I, n, n)
+    for i in 2:n
+        Q[i, i] = 1 + ρ^2
+        Q[i-1, i] = Q[i, i-1] = -ρ
+    end
+    Q[1, 1] = Q[n, n] = 1
+    return τ * Q
+end
+
+# ICAR Precision Matrix (from Adjacency Matrix W)
+
+function icar_prec(W::AbstractMatrix, scaled=true)
+
+    n = size(W, 1)
+    # Create the ICAR precision matrix
+    D = Diagonal(sum(W, dims=2)[:])
+    Q = D - W
+    
+    if !scaled 
+      return sparse(Q)
+    end
+    
+    # Compute the generalized inverse (Moore-Penrose)
+    # We add a small jitter only for numerical stability during inversion,
+    # then apply the sum-to-zero constraint logic.
+    Σ = pinv(collect(Q))
+    
+    # Scale factor is the geometric mean of the diagonal of the covariance matrix
+    # This ensures the 'typical' variance of a node is 1.
+    scale_factor = exp(mean(log.(diag(Σ))))
+    
+    return Q * scale_factor
+end
+
+# Pre-calculate scaled precision for the model
+Q_scaled = scale_icar(W)
+
+
+# --- Turing Model Definition ---
+
+@model function model_s_st_bym2(y, a_idx, u_idx, group_idx, W, N_areas, N_times, Q_scaled)
+
+    # 1. AR1 Term 
+    ρ_a ~ Uniform(-1, 1)
+    τ_a ~ Gamma(1, 0.01)
+    Qa = ar1_prec(maximum(a_idx), ρ_a, τ_a)
+    a ~ MvNormal(zeros(size(Qa, 1)), inv(collect(Qa)))
+
+    # 2. BYM2 Term: ICAR + IID components
+    τ_u ~ Gamma(1, 0.01)
+    logit_ϕ_u ~ Normal(0, 1)
+    ϕ_u = logistic(logit_ϕ_u)
+    
+    Q_spatial = Q_scaled
+    # Note: Q_spatial is singular; typically add a small jitter or handle constraints
+    u_struc ~ MvNormal(zeros(N_areas), inv(collect(Q_spatial + 1e-6I)))
+    u_iid ~ MvNormal(zeros(N_areas), I)
+    u_combined = (sqrt(ϕ_u) .* u_struc .+ sqrt(1 - ϕ_u) .* u_iid) ./ sqrt(τ_u)
+
+    # 3. Spatio-temporal: Kronecker product of Spatial (BYM2) and Temporal (AR1)
+    ρ_v ~ Uniform(-1, 1)
+    τ_v ~ Gamma(1, 0.01)
+    # We simplify this as a grouped effect for memory efficiency
+    v_raw ~ filldist(MvNormal(zeros(N_areas), I), N_times)
+    v = Vector{Vector{Float64}}(undef, N_times)
+    v[1] = v_raw[1] ./ sqrt(τ_v)
+    for t in 2:N_times
+        v[t] = ρ_v .* v[t-1] .+ v_raw[t] ./ sqrt(τ_v)
+    end
+
+    # 4. Likelihood
+    σ ~ Exponential(1)
+    for i in eachindex(y)
+        mu = a[a_idx[i]] + u_combined[u_idx[i]] + v[group_idx[i]][u_idx[i]]
+        y[i] ~ Normal(mu, σ)
+    end
+end
+
+
+model = model_s_st_bym2(y, a_indices, u_indices, w_indices, W, N_areas, N_times)
+
+chain = sample(model, NUTS(), 1000)
+
+
+
+# Plotting the posterior distributions
+p1 = density(chain[:ρ_a], title="Recovery: ρ_a (True=0.8)", label="Posterior")
+vline!([0.8], label="True Value", color=:red, lw=2)
+
+p2 = density(logistic.(chain[:logit_ϕ_u]), title="Recovery: ϕ_u (True=0.7)", label="Posterior")
+vline!([0.7], label="True Value", color=:red, lw=2)
+
+p3 = density(chain[:ρ_v], title="Recovery: ρ_v (True=0.5)", label="Posterior")
+vline!([0.5], label="True Value", color=:red, lw=2)
+
+plot(p1, p2, p3, layout=(3,1), size=(800, 900))
+
+
+```
+
+#### As GPs (very slow)
+
+- AbstractGPs (Covariance): O(N^3) inverting dense covariance matrices
+ 
+- AR1 Process: A discrete AR(1) process is equivalent to a GP with a Matérn-1/2 Kernel (exponential decay) defined over integer time steps.
+
+- BYM2 Spatial: A mixture of an unstructured component (White Noise) and a structured component (ICAR/Graph). Define a custom GraphKernel derived from the graph Laplacian pseudo-inverse and summing it with a WhiteKernel GP.
+
+$$k_{bym2} = \sigma^2[(1-\phi)I + \phiQ^{-1}]$$
+
+Spatio-Temporal: A separable space-time structure via a Tensor Product Kernel: 
+
+$$k_{st} = k_{time} \otimes k_{space}$$
+
+Where KernelFunctions.TensorProduct is used for the Kronecker product such that:
+
+$$k((x1, y1), (x2, y2)) = k1(x1, x2) * k2(y1, y2)$$
+
+
+```{julia}
+using Turing
+using AbstractGPs
+using KernelFunctions
+using LinearAlgebra
+using SparseArrays
+using Graphs
+
+# 1. Custom Graph Kernel for AbstractGPs (The "Structure" of BYM2)
+# AbstractGPs works best with covariance functions. 
+# For the "structured" part of BYM2 (ICAR), we use the pseudo-inverse of the Laplacian.
+struct GraphKernel{T<:AbstractMatrix} <: Kernel
+    C::T # The pseudo-inverse of the Laplacian (Covariance Matrix)
+end
+
+# Kernel evaluation: Simply look up the covariance between node i and node j
+# Inputs x and y are integer indices of the graph nodes
+(k::GraphKernel)(x::Integer, y::Integer) = k.C[x, y]
+
+# Helper to build the GraphKernel from an Adjacency Matrix
+function build_graph_kernel(adj_mat::AbstractMatrix; scale_model=true)
+    # 1. Compute Laplacian: D - W
+    degrees = vec(sum(adj_mat, dims=2))
+    Q = Diagonal(degrees) - adj_mat
+    
+    # 2. Compute Pseudo-Inverse (Covariance of ICAR)
+    # We add a tiny jitter for stability or use pinv
+    # INLA's "scale.model=TRUE" standardizes the generalized variance to 1.
+    Q_inv = pinv(Matrix(Q)) 
+    
+    if scale_model
+        # Geometric mean of diagonal variances
+        gmean_var = exp(mean(log.(diag(Q_inv))))
+        Q_inv ./= gmean_var
+    end
+    
+    return GraphKernel(Q_inv)
+end
+
+
+ 
+
+@model function model_basic_gp(y, a_idx, u_idx, v_time, v_space, adj)
+
+# Data inputs:
+# y: Observations
+# a_idx: Indices for AR1 factor 'a' (1..T)
+# u_idx: Indices for Spatial factor 'u' (1..N_nodes)
+# v_time: Indices for Spatio-temporal time 'w' (1..T_groups)
+# v_space: Indices for Spatio-temporal space 'v' (1..N_nodes)
+# adj: Adjacency matrix for the spatial graph
+    
+    # --- 1. Pre-computation (Graph Structure) ---
+    # Create the structured spatial kernel from the graph
+    k_graph = build_graph_kernel(adj; scale_model=true)
+    
+    # --- 2. Hyperparameters ---
+    
+    # f(a, model="ar1"): Autoregressive parameter and variance
+    σ_a ~ truncated(Normal(0, 1), 0, Inf)
+    ρ_a ~ Uniform(0, 1) # Correlation for AR1
+    # Transform rho to lengthscale for Matern1/2: rho = exp(-1/l) -> l = -1/log(rho)
+    l_a = -1 / log(ρ_a) 
+    
+    # f(u, model="bym2"): Spatial Mixing (phi) and Marginal Variance (sigma)
+    σ_u ~ truncated(Normal(0, 1), 0, Inf)
+    ϕ_u ~ Beta(1, 1) # Mixing parameter (0=IID, 1=ICAR)
+    
+    # f(v, model="bym2", group=w...): Spatio-temporal Hyperparameters
+    σ_v ~ truncated(Normal(0, 1), 0, Inf)
+    ϕ_v ~ Beta(1, 1) # Spatial mixing for v
+    ρ_v ~ Uniform(0, 1) # Temporal AR1 correlation for v
+    l_v = -1 / log(ρ_v)
+    
+    # Observation Noise
+    σ_y ~ truncated(Normal(0, 1), 0, Inf)
+
+    # --- 3. GP Definitions (The "f(...)" terms) ---
+    
+    # Component A: AR1 process
+    # Equivalent to Matern12 kernel on integer inputs
+    kernel_a = σ_a^2 * (Matern12Kernel() ∘ ScaleTransform(1/l_a))
+    gp_a = GP(kernel_a)
+    f_a ~ gp_a(a_idx, 1e-6) # Latent AR1 vector
+    
+    # Component U: BYM2 Spatial
+    # BYM2 = (1-ϕ)*IID + ϕ*ICAR
+    # We construct this by summing kernels:
+    # k_bym2 = σ^2 * ( (1-ϕ)*WhiteKernel + ϕ*GraphKernel )
+    kernel_u = σ_u^2 * ( 
+        (1 - ϕ_u) * WhiteKernel() + 
+        ϕ_u * k_graph 
+    )
+    gp_u = GP(kernel_u)
+    f_u ~ gp_u(u_idx, 1e-6) # Latent Spatial vector
+
+    # Component V: Spatio-Temporal (Group AR1 x BYM2)
+    # Separable Kernel: k_total = k_time ⊗ k_space
+    kernel_v_time = Matern12Kernel() ∘ ScaleTransform(1/l_v)
+    kernel_v_space = σ_v^2 * ( (1 - ϕ_v) * WhiteKernel() + ϕ_v * k_graph )
+    
+    # Tensor Product: We combine inputs (time, space)
+    # AbstractGPs doesn't have a native "TensorKernel" in the public API easily accessible 
+    # for mixed types without KernelFunctions.TensorProduct.
+    # Strategy: We evaluate the kernel matrix manually for the V component to be safe,
+    # or use the KernelFunctions `TensorProduct` if inputs are zipped.
+    
+    # Let's stick to the AbstractGPs way by defining the kernel on the zipped inputs:
+    # Input for V is a vector of Tuples: [(t1, s1), (t2, s2), ...]
+    kernel_v = kernel_v_time ⊗ kernel_v_space 
+    gp_v = GP(kernel_v)
+    
+    # Construct inputs for V (Vector of Tuples)
+    v_inputs = ColVecs(vcat(v_time', v_space')) # dim 1 = time, dim 2 = space
+    f_v ~ gp_v(v_inputs, 1e-6)
+
+    # --- 4. Likelihood ---
+    # y ~ Intercept + f(a) + f(u) + f(v)
+    # Note: We need to map the latent vectors f_a, f_u, f_v to the observation indices of y.
+    # Assuming y is aligned such that y[i] corresponds to a specific a, u, and v index.
+    # If y is the raw data length, we map the effects:
+    
+    mu = f_a[a_idx] + f_u[u_idx] + f_v # Assuming f_v is already same length as y
+    
+    y ~ MvNormal(mu, σ_y^2 * I)
+end
+ 
+    
+y_data, a_data, u_data, v_grid_time, v_grid_space, adj = example_data("basic_gp")
+
+model = model_basic_gp(y_data, a_data, u_data, v_grid_time, v_grid_space, adj)
+
+chain = sample(model, NUTS(), 1000)
+
+
+```
+
 
 
 #### CAR with INLA (in R)
@@ -5696,9 +7334,9 @@ icar.data$inv_sqrt_scale_factor <- 1 / sqrt( scale_factor )
 
 ```
 
+### Continuous covariance/kernal models in 2D aka Kriging
 
-### Continuous
-
+ 
 A spatial autocorrelation function $\rho$ indicates how the proportion
 of the spatial variance $C(h=0)=^{\omega}\sigma^{2}$ drops as distance
 increases $h$. It is the covariance function $C(h)$ scaled by the total
@@ -5812,7 +7450,344 @@ requirement of a complete data series without missing data, in the
 standard form.
 
 
-### Spatial kernel of a GP
+
+#### 1. ApproximateGPs Implementation
+
+- O(M^2 N)
+- Euclidean (Coordinates) and not areal units/graphs
+- Aprroximation, using inducing points
+
+Graph (BYM2, neighbors) -> Euclidean Space (Matern kernel on the polygon centroids)
+
+Exact -> Sparse Variational GPs (approximate the infinite Gaussian Process using a finite set of "Inducing Points" or representative locations)
+
+Sampling the exact latent vector f -> Sample (or optimize) the Variational Parameters (Mean 
+ and Covariance) of the inducing points. 
+
+
+
+```{julia}
+using Turing
+using AbstractGPs
+using ApproximateGPs
+using KernelFunctions
+using LinearAlgebra
+using Distances
+
+
+y, X_space, X_time, X_st, inducing_locs_st = example_data("ApproximateGP")
+
+# Instantiate the model from previous turn
+# Ensure you have the 'svgp_spatial_model' function defined!
+model = svgp_spatial_model(y_obs, X_space, X_time, X_st, inducing_locs)
+
+# Sample using NUTS (Hamiltonian Monte Carlo)
+# We sample the Variational Parameters (Mean and Covariance of Inducing Points)
+chain = sample(model, NUTS(0.65), 500)
+
+Check σ_a (Time Variance): Should be significant (signal present).
+Check σ_y (Noise): Should converge around 0.3 (the noise we added).
+
+
+
+# 1. Helper: Space-Time Input Construction
+# We need to treat Space and Time as continuous coordinates.
+# Inputs: 
+#   spatial_coords: Matrix (2 x N_nodes) -> [Lat, Lon]
+#   time_coords: Vector (T_steps)
+# Returns:
+#   ColVecs of 3D points (Time, Lat, Lon)
+
+function build_st_inputs(time_indices, space_indices, spatial_coords)
+    # Map indices to actual coordinates
+    # This assumes spatial_coords is 2xN
+    
+    # 1. Extract coords for every observation
+    coords = spatial_coords[:, space_indices] # 2 x N_obs
+    times = time_indices' # 1 x N_obs
+    
+    # 2. Stack to create 3D input: [Time; Lat; Lon]
+    return ColVecs(vcat(times, coords))
+end
+
+
+```
+
+
+
+#### 2. The ApproximateGPs Model (SVGP)
+
+
+```{julia}
+
+y, X_space, X_time, X_st, inducing_locs_st = example_data("ApproximateGP")
+
+@model function svgp_spatial_model(y, X_space, X_time, X_st, inducing_locs_st)
+    
+    # --- Hyperparameters ---
+    
+    # 1. AR1 (Time) - Kept Exact (Low dim)
+    # Matern-1/2 is equivalent to AR1
+    σ_a ~ truncated(Normal(0, 1), 0, Inf)
+    l_a ~ LogNormal(0, 1)
+    kernel_a = σ_a^2 * (Matern12Kernel() ∘ ScaleTransform(1/l_a))
+    gp_a = GP(kernel_a)
+    f_a ~ gp_a(X_time, 1e-6)
+
+    # 2. Spatial (Approximated)
+    # We replace BYM2 with Matern3/2 on Centroids
+    σ_u ~ truncated(Normal(0, 1), 0, Inf)
+    l_u ~ LogNormal(0, 1)
+    kernel_u = σ_u^2 * (Matern32Kernel() ∘ ScaleTransform(1/l_u))
+    
+    # --- Variational Approximation (The "Sparse" Magic) ---
+    # We define inducing points in Space-Time (3D)
+    # Note: For 'u' (Space only), we just ignore the time dimension of the kernel
+    # or define separate inducing points. Let's do Space-Time (v) as the example.
+    
+    # 3. Spatio-Temporal (v)
+    # Kernel: Time (Matern1/2) ⊗ Space (Matern3/2)
+    σ_v ~ truncated(Normal(0, 1), 0, Inf)
+    l_v_time ~ LogNormal(0, 1)
+    l_v_space ~ LogNormal(0, 1)
+    
+    # Tensor Kernel formulation
+    # Note: We select dimensions manually. 
+    # Dim 1 is Time, Dim 2-3 are Space.
+    k_v_time = Matern12Kernel() ∘ ScaleTransform(1/l_v_time) ∘ SelectTransform([1])
+    k_v_space = Matern32Kernel() ∘ ScaleTransform(1/l_v_space) ∘ SelectTransform([2, 3])
+    
+    kernel_v = σ_v^2 * k_v_time * k_v_space # Product kernel for separability
+    
+    # --- Inducing Points Setup ---
+    # M = number of inducing points (e.g., 50)
+    # inducing_locs_st is a ColVecs of size 3xM
+    
+    # Variational Parameters (We sample these instead of the full GP)
+    M = length(inducing_locs_st)
+    
+    # Mean vector for inducing points
+    m_v ~ MvNormal(zeros(M), I) 
+    
+    # Lower triangular Cholesky factor for Covariance of inducing points
+    # We use a trick to keep it positive definite
+    L_vec ~ MvNormal(zeros(M * (M + 1) ÷ 2), I)
+    L_v = LowerTriangular(zeros(M, M))
+    
+    # (Advanced): Unpacking the L_vec into a LowerTriangular matrix logic omitted for brevity
+    # In practice, we often use a diagonal approximation for speed:
+    # s_v ~ ArrayDist(LogNormal(0, 1), M)
+    # q_v = ApproximateGPs.MVNormalMeanDiagCov(m_v, s_v.^2)
+    
+    # For full rank approximation (Gaussian):
+    # We define the Sparse Variational GP wrapper
+    # This calculates the ELBO-required statistics
+    gp_v = GP(kernel_v)
+    
+    # The Approximate Posterior
+    # This is the distribution q(f) ≈ p(f|u)q(u)
+    # For Sampling (MCMC), we construct the approximation object
+    # and sample the latent function at data locations.
+    
+    # Note: In pure MCMC, we often sample f_v directly from the conditional.
+    # But the benefit of ApproximateGPs is computing the ELBO log-likelihood.
+    # Below is the "VFE" (Variational Free Energy) style usage:
+    
+    svgp_v = ApproximateGPs.VGP(
+        gp_v(inducing_locs_st, 1e-6), # Prior at inducing points
+        m_v,                          # Variational Mean
+        Diagonal(abs.(m_v) .+ 1e-3),  # Variational Cov (Simplified diagonal for demo)
+        ApproximateGPs.Add()
+    )
+    
+    # Project the sparse GP onto the data locations
+    f_v_approx = svgp_v(X_st)
+
+    # --- Likelihood ---
+    σ_y ~ truncated(Normal(0, 1), 0, Inf)
+    
+    # Combine terms:
+    # Note: f_v_approx is a distribution object, we need a sample for MCMC
+    # or we integrate it out if we are doing VI.
+    # In full MCMC, we treat the approximation as the prior:
+    
+    val_v ~ f_v_approx # Sample the latent vector from the approximation
+    
+    mu = f_a + val_v # + f_u (omitted for brevity)
+    
+    y ~ MvNormal(mu, σ_y^2 * I)
+end
+
+
+```
+
+
+#### 3. Flux-Optimization (Mini-batch) Implentation
+
+
+Before training, it is good practice to check the variance of your target.
+
+Stats: std(y_full) should be around 1.5 to 2.0.
+
+Signal-to-Noise: Since our signal amplitude is 2 and noise is 0.2, the Signal-to-Noise Ratio (SNR) is high (10:1). The model should easily fit this.
+
+Test by varing the noise multiplier in step 3 to: 1.5 * randn(N).
+
+
+```{julia}
+
+using ApproximateGPs
+using Flux
+using KernelFunctions
+using LinearAlgebra
+using Zygote
+using Distributions
+using Random
+ 
+
+
+# --- Usage ---
+# Generate the massive dataset
+
+X_full, y_full = example_data("SpatialSVGP")
+
+println("Data Generated!")
+println("Input Shape: ", size(X_full)) # Should be (3, 100000)
+println("Target Shape: ", size(y_full)) # Should be (100000,)
+
+
+# 1. Data & Mini-Batch Setup
+
+# Assume we have 100,000 points (Big Data)
+N_total = 100_000
+Batch_Size = 256
+
+# Synthetic Space-Time Data (3D Inputs: Time, Lat, Lon)
+# X is 3 x N matrix
+X_full = randn(3, N_total) 
+y_full = sin.(X_full[1, :]) .+ cos.(X_full[2, :]) .+ 0.1 .* randn(N_total)
+
+# Create the Mini-Batch Loader
+# shuffle=true ensures we get random samples every epoch (Stochasticity)
+train_loader = Flux.DataLoader((X_full, y_full), batchsize=Batch_Size, shuffle=true)
+
+# 2. Model Definition (Variational Parameters)
+
+# We treat the model parameters as a Flux struct so we can optimize them
+struct SpatialSVGP
+    # Kernel Hyperparameters (in log domain for positivity)
+    log_σ::Array{Float64, 1} 
+    log_ℓ_time::Array{Float64, 1}
+    log_ℓ_space::Array{Float64, 1}
+    
+    # Inducing Points (Variational Parameters)
+    # Z: Locations of inducing points (Optimizable!)
+    Z::Array{Float64, 2} 
+    
+    # m: Variational Mean
+    m::Array{Float64, 1}
+    
+    # L: Variational Covariance (Lower Triangular Cholesky factor)
+    L_vec::Array{Float64, 1} 
+end
+
+# Initialize trainable parameters
+M_inducing = 100 # Number of inducing points (Sparse approximation)
+init_Z = randn(3, M_inducing) # Initialize inducing points randomly in input space
+
+model_params = SpatialSVGP(
+    [0.0], [0.0], [0.0],        # Log-Hyperparams
+    init_Z,                     # Inducing locations
+    zeros(M_inducing),          # Variational Mean (m)
+    zeros(M_inducing * (M_inducing + 1) ÷ 2) # Packed Cholesky (L)
+)
+
+# Helper to unpack parameters into a valid ApproximateGPs Object
+function build_vgp(p::SpatialSVGP)
+    # 1. Construct Kernel (Time ⊗ Space)
+    σ = exp(p.log_σ[1])
+    ℓ_t = exp(p.log_ℓ_time[1])
+    ℓ_s = exp(p.log_ℓ_space[1])
+    
+    # Time Kernel (Dim 1)
+    k_time = Matern12Kernel() ∘ ScaleTransform(1/ℓ_t) ∘ SelectTransform([1])
+    # Space Kernel (Dim 2,3)
+    k_space = Matern32Kernel() ∘ ScaleTransform(1/ℓ_s) ∘ SelectTransform([2, 3])
+    
+    kernel = σ^2 * k_time * k_space
+    
+    # 2. Unpack Variational Covariance (L)
+    # We reconstruct the LowerTriangular matrix from the vector
+    L_mat = ApproximateGPs.vec_to_tril(p.L_vec, size(p.Z, 2))
+    
+    # 3. Build VGP
+    # This object represents the approximate posterior q(f)
+    return ApproximateGPs.VGP(
+        GP(kernel),          # The Prior
+        ColVecs(p.Z),        # Inducing inputs
+        p.m,                 # Variational Mean
+        L_mat * L_mat' + 1e-6*I # Variational Covariance S = LL' (ensure pos-def)
+    )
+end
+
+# 3. The Mini-Batch Loss Function (ELBO)
+
+# The Objective: Minimize Negative ELBO
+function loss(p::SpatialSVGP, x_batch, y_batch)
+    # 1. Build the model with current params
+    vgp = build_vgp(p)
+    
+    # 2. Project VGP onto the mini-batch locations
+    # f_approx is the distribution q(f(x_batch))
+    f_approx = vgp(ColVecs(x_batch))
+    
+    # 3. Calculate Expected Log-Likelihood for this batch
+    # We assume Gaussian noise with std=0.1 for simplicity (or make it learnable)
+    noise_std = 0.1
+    log_like_batch = mean(logpdf(Normal(μ, noise_std), y) for (μ, y) in zip(mean(f_approx), y_batch))
+    
+    # CRITICAL: Scale batch likelihood up to full dataset size
+    # Expected Log Like ≈ (N / BatchSize) * ∑ batch_log_like
+    scale_factor = N_total / length(y_batch)
+    total_log_like = scale_factor * sum(logpdf(Normal(μ, noise_std), y) for (μ, y) in zip(mean(f_approx), y_batch))
+    
+    # 4. KL Divergence (Regularization)
+    # This penalizes the approximation for drifting too far from the prior
+    # ApproximateGPs calculates this automatically between VGP and Prior
+    kl = approximate_kl(vgp) 
+    
+    # Maximize ELBO = Minimize Negative ELBO
+    return -(total_log_like - kl)
+end
+
+# 4. The Training Loop (Flux)
+
+optimizer = Flux.Adam(0.01) # Standard optimizer
+params_flux = Flux.params(model_params) # Tell Flux what to update
+
+# Run for 5 Epochs
+for epoch in 1:5
+    println("Starting Epoch $epoch...")
+    
+    for (x_b, y_b) in train_loader
+        # Compute Gradient of the Loss w.r.t Parameters
+        grads = Zygote.gradient(() -> loss(model_params, x_b, y_b), params_flux)
+        
+        # Update Parameters
+        Flux.update!(optimizer, params_flux, grads)
+    end
+    
+    # Optional: Print loss
+    current_loss = loss(model_params, X_full[:, 1:100], y_full[1:100])
+    println("Epoch $epoch Loss: $current_loss")
+end
+
+
+```
+
+
+
+#### Spatial kernel of a GP
 
 Source: [Herb Susmann  (2019)](http://herbsusmann.com/2019/08/09/autoregressive-processes-are-gaussian-processes) 
 
@@ -6642,12 +8617,7 @@ errors and no simple way to assess overall model performance. \[ASIDE:
 this hierarchical approach is also known as "Delta models" or "Hurdle
 models"\].
 
- 
-
-
- 
-
-
+  
 
   
 ## Spatiotemporal models
@@ -6667,7 +8637,13 @@ parameter or function (if there is sufficient time-series data).
 
 **See example in [snowcrab_carstm_julia.md](snowcrab_carstm_julia.md)**
 
-### Stationary spatiotemporal models
+
+
+## Spatiotemporal models
+
+
+### Stationary spatiotemporal models  (ICAR/AR1)
+
 
 Spatiotemporal models can be seen as a simple extension of the spatial
 regression model. The space-time regression model can then be specified
@@ -6739,7 +8715,7 @@ context (location and time) dependent (non-linear/non-additive). There
 are discontinuities in space and time due to landscape, species
 collapse, invasions, etc.
 
-### Complex spatiotemporal models (stmv)
+### Hybrid spatiotemporal models (stmv)
 
 All these approaches, including most operational spatiotemporal models,
 share a core assumption, that the mean and variance is stable throughout
@@ -6931,6 +8907,7 @@ time-series literature, these are are known as the AR(I)MA type models
 (AutoRegressive Integrated Moving Average), often used when
 deterministic models do not exist or difficult to parameterize.
 
+
 ### Space and time as as GP
 
 Source: [Herb Susmann  (2019)](http://herbsusmann.com/2019/08/09/autoregressive-processes-are-gaussian-processes) 
@@ -7013,7 +8990,7 @@ include( srcdir( "car_functions.jl" ))  # load support functions
 include( srcdir( "regression_functions.jl" ))  # load support functions
 
 
-D, W, X, log_offset, y, ti, nX, nAU, node1, node2, scaling_factor = scottish_lip_cancer_data_spacetime()
+D, W, X, log_offset, y, ti, nX, nAU, node1, node2, scaling_factor = example_data("scottish_lip_cancer_data_spacetime")
 nData = size(y,1)
 
 # scaling_factor = scaling_factor_bym2(W)  # 0.22585017121540601 note scaling factors comes from W, the adjacency matrix

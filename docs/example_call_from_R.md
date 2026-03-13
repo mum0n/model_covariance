@@ -49,7 +49,7 @@ setwd(currwd) # revert
 # julia_assign("X", t(Y) )  # copy data into julia session
 
 # set up problem parameters and conduct basic PCA to get initial settings
-J( 'id, sps, X, G, vn = iris_data(scale=false)' )
+J( 'id, sps, X, G, vn = example_data("iris_pca")' )
 J( 'nx, nvar = size(X); nz = 2' ) # nz is number of (latent) factors 
 J( 'evecs, evals, pcloadings, variancepct, C, PC = pca_standard(X; model="cor", obs="rows") ' ) # return values: eigenvectors, sqrt(eigenvalues), correlation matrix, pc scores
 J( 'v = eigenvector_to_householder(evecs, nz=nz )  ' )  # v is the householder representation of the eigenvectors used by the householder pca
