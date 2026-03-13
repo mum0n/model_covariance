@@ -71,22 +71,10 @@ using DrWatson
 basedirectory = homedir()
 basedirectory = "C:\\home\\jae"  # windows
 
-project_directory = joinpath( basedirectory, "projects", "model_covariance"
-) # change to location where you stored the project
-
+project_directory = joinpath( basedirectory, "projects", "model_covariance") 
 quickactivate(project_directory)
 
 include( scriptsdir( "startup.jl" ))     # env and data
-
-include( srcdir( "shared_functions.jl") )
-include( srcdir( "simple_linear_regression.jl") )
-include( srcdir( "regression_functions.jl" ))   # support functions  
-
-include( srcdir( "car_functions.jl" ))   # support functions  
-include( srcdir( "example_data.jl" ))     
-
-# Set a seed for reproducibility.
-Random.seed!(42)
 
 ```
 
@@ -267,6 +255,13 @@ To belabour the point, intuition in an algebraic sense is similar to covariance.
 
   x, y, z, u, X, Y, Z = example_data("iris")
 
+  n = length(X)
+
+  Xmean = sum(X)/n;
+  Ymean = sum(Y)/n;
+  
+  SXY = sum( (X .- Xmean) .* (Y .- Ymean ) ) # sum of covariance
+
   SSX = sum( (X .- Xmean).^2 )
   SSY = sum( (Y .- Ymean).^2 )
 
@@ -322,6 +317,20 @@ rho_xz = cor(X,Z)
 rho_xy_z = ( rho_xy - rho_xz * rho_yz ) / sqrt( (1-rho_xz^2 ) * (1-rho_yz^2)  ) # partials 
 
 # if another variable W: then this becomes a recursive process
+
+# Alternatively: 
+using StatsBase
+pcor = partialcor(X, Y, Z)  # is Z is a matrix then all columns are additional variables
+
+isapprox(pcor, rho_xy_z ) # ok
+
+
+using HypothesisTests
+using StatsBase
+
+# Test if partial correlation of x, y given Z is zero
+partial_test = PartialCorrelationTest(X, Y, Z)
+pvalue(partial_test)
 
 ```
 
@@ -476,7 +485,7 @@ plot(data.frame(G))
  
 ```
 
-So, bottom line, random effects can be modelled as covariates.
+So, bottom line, influence of random effects or more complex effects can be flexibly accounted in the same model-based framework.
 
 We repeat the above using Julia.
 
@@ -489,7 +498,7 @@ We repeat the above using Julia.
 #| echo: false 
 #| code-fold: true
 
-Random.seed!(1234)
+Random.seed!(42)
 
 # basic approach
 
@@ -523,12 +532,12 @@ Random.seed!(1234)
   # slope estimates which are also equal to the correlations (due to standardization): nearly identical
   isapprox(a, a2)  # ok
 
-  cor_geometric = sign(a) * sqrt(a*a2) # geometric mean  -0.7097178637658089
+  cor_geometric = sign(a) * sqrt(a*a2) # geometric mean  0.96287
   isapprox(cor_geometric, cor_xy) # ok
   
   b = linear_regression_simple(x, y; method="MAR_geometric_mean_untransposed", toget="res" )  # method used in "deprivation indices"
   isapprox( b.r, cor_xy)  # ok
-  isapprox( b.beta[2], cor_xy)  # ok  
+  isapprox( b.Beta[2], cor_xy)  # ok  
 
 
   # using MCMC/Turing
@@ -555,20 +564,18 @@ Random.seed!(1234)
   showall(res)
  
   corrs = generated_quantities( linear_regression_nointercept(x,y), res)
-  summarystats(corrs)
+  mean(corrs) :   0.962613
+  std(corrs):     0.015847739291210035
+  cor_xy:         0.962865431402796
+  cor_geometric:  0.962865431402796
 
-  Mean:          -0.953392 
-  Std. Deviation: 0.022223
-  
-  corr = - sqrt( -0.9538 * -0.9535 ) # -0.9536499882032191 
-
-  corr - cor_xy # 0.0002769013212672311 ... so a bit of a difference vs MCMC (but well within 1 SD) and a proper SD estimate for free
+  a bit of a difference vs MCMC (but well within 1 SD) and a proper SD estimate for free
 
 ```
 
-So for simple bivariate regression, all is good. We can use the slope coefficient to estimate correlation and be be reasonably accurate -- make sure to use the scaled and centered data.
+So the above shows that for simple bivariate regression, the slope coefficient is related to the correlation; that is  estimation of it be reasonably accurate. 
 
-Now we turn to a regression with three variables. Here we are essentially trying to estimate partial correlations from the regression coefficients:
+Though it might seem unnecessarily complicating a simple calculation, utility is seen when we turn to three or more variables where some are also random effects, higher order effects and even interactions: it becomes a useful way to estimate partial linear correlations in these more complex situations.
 
 
 ```{julia}
@@ -576,18 +583,18 @@ Now we turn to a regression with three variables. Here we are essentially trying
   x, y, z, u, X, Y, Z = example_data("iris")
 
   # these are the partial correlations between x and y, controlling for z
-  r_xy_z = partialcor(x,y,z)  # -0.18396101222357 
+  r_xy_z = partialcor(x,y,z)  # 0.8863
   
   dat = DataFrame(x=x,y=y,z=z)
 
-  res = lm( @formula( y~ x + z +0), dat )  # 0 means no intercept
-  coefs = coef(res) # -0.1007989629054409  slope parameter
+  res = lm( @formula(y~0+x+z), dat )  # 0 means no intercept
+  coefs = coef(res) # 0.7548  slope parameter
 
-  res2 = lm( @formula( x~ y + z +0), dat )  # 0 means no intercept
-  coefs2 = coef(res2) # -0.3357341488728164 slope parameter
+  res2 = lm( @formula(x~0+y+z), dat )  # 0 means no intercept
+  coefs2 = coef(res2) #  1.04072 slope parameter for x~y
   
   # compute geometric mean:
-  r_estimate = sign(coefs[1]) * sqrt( coefs[1] * coefs2[1] ) # -0.18396101222357086
+  r_estimate = sign(coefs[1]) * sqrt( coefs[1] * coefs2[1] ) # 0.88631
 
   isapprox(r_estimate, r_xy_z)  # ok
 
@@ -626,13 +633,14 @@ Now we turn to a regression with three variables. Here we are essentially trying
   corrs = generated_quantities( linear_regression_partial(x,y, z), chain_xyz)
   summarystats(corrs)
 
-  Mean:           -0.797952 # diff << SD
-  Std. Deviation:  0.043714
-  Median:         -0.797654
-
+  r_xy_z:         0.88631
+  Mean:           0.88638 
+  Std. Deviation: 0.02699
+  
+  # pretty close 
 ```
 
-So bottom line: the model-based approach is flexible and permits more complex random effects models, including *spatial and temporal and spatiotemporal autocorrelation models* (see below), to be able to contribute towards partial correlation estimates. This becomes useful in applications such as PCA, wherevariables can have multiple spatiotemporal autocorrelations interfering with real bivariate correlations.
+So bottom line: the model-based approach is flexible and permits more complex random effects models, including *spatial and temporal and spatiotemporal autocorrelation models* (see below), to be able to contribute towards partial correlation estimates of the linear terms. This becomes useful in applications such as PCA, where variables can have multiple spatiotemporal autocorrelations interfering with real bivariate correlations.
  
 For example, if we attribute to $x_2$ all the additional factors that modify or influence the relationship between $y$ and $x_1$:
 
@@ -697,6 +705,16 @@ Notice the dot product $X^T X^T$, is our covariance matrix. As this is a common 
 # didactic form of linear regression:
 
   x, y, z, u, X, Y, Z = example_data("iris")
+  
+  n = length(X)
+
+  Xmean = sum(X)/n;
+  Ymean = sum(Y)/n;
+  
+  SXY = sum( (X .- Xmean) .* (Y .- Ymean ) ) # sum of covariance
+
+  SSX = sum( (X .- Xmean).^2 )
+  SSY = sum( (Y .- Ymean).^2 )
 
   SSR = SXY^2 / SSX  # of regression == cov(x,y)^2 / var(x)
   SSE = SSY - SSR
@@ -758,63 +776,60 @@ Major Axis Regression is also known as Model 2 Regression. This a second form of
  
 
 ```{julia}
+
+x, y, z, u, X, Y, Z = example_data("iris")
  
+
 a = linear_regression_simple(X, Y; method="MAR_geometric_mean" , toget="res")
-a.beta[2] # slope of X vs Y
+a.Beta[2] # slope of X vs Y
 
 b = linear_regression_simple(X, Y; method="MAR_york_1966", toget="res" ) 
 c = linear_regression_simple(Y, X; method="MAR_york_1966", toget="res" ) 
-isapprox( b.beta[2],  1.0/c.beta[2])  # ok
+isapprox( b.Beta[2],  1.0/c.Beta[2])  # ok
  
 d = linear_regression_simple(X, Y; method="MAR_bisection", toget="res" )
 e = linear_regression_simple(Y, X; method="MAR_bisection", toget="res" )
-isapprox( d.beta[2] , 1 / e.beta[2] ) # ok
+isapprox( d.Beta[2] , 1 / e.Beta[2] ) # ok
 
 # Note: if X,Y are scaled, then coefficients will be 1 
 f = linear_regression_simple(x, y; method="MAR_geometric_mean" , toget="res")
-isapprox( abs(f.beta[2]), 1.0) 
-
-f_correlation = - std(Y) / std(X)  ## need to check ... this might be wrong (todo)
-
-f.r - f_correlation # 0.02 some deviation  
-
+isapprox( abs(f.Beta[2]), 1.0) 
+ 
 ```
 
 Major axis regression is also related to a PCA (see PCA section, below). Basically, as the principle axis (PC1) is a linear combination of the eigenvectors ($v$) from an Eigen-decomposition of $\bold{X}$:
 
 $$PC1 = v_1 X_1 + v_2 X_2 + v_3 X_3  + \cdots + v_n X_n$$
 
-The slope can be recovered from the Maximum Likelihood estimate  (see Legendre and Legendre 1998; Mandansky 1959; Kendall and Stuart 1966):
+The slope can be recovered from the Maximum Likelihood estimate (see Legendre and Legendre 1998; Mandansky 1959; Kendall and Stuart 1966):
+
 $$m=\frac{\sigma_y^2 - \lambda \sigma_x^2 + \sqrt{ {(\sigma_y^2 - \lambda \sigma_x^2)}^2 + 4 \lambda \sigma^2_{xy}} }{2 \sigma_{xy} }$$
 
-where $\lambda= \epsilon_y^2 / \epsilon_x^2$ (measurement or obervation error), $\sigma$ is standard deviation, and $\sigma_{xy}$ is the covariance. Of course, the magnitudes of e=observation error are similar $\lambda \rightarrow 1$ and simplifies to:
+where $\lambda= \epsilon_y^2 / \epsilon_x^2$ (measurement or obervation error of y and x), $\sigma$ is standard deviation, and $\sigma_{xy}$ is the covariance. Of course, if the magnitudes of measurement or observation errors of y and x are similar, $\lambda \rightarrow 1$ which simplifies the above to:
 
-$$m=\frac{\sigma_y^2 - \sigma_x^2 + \sqrt{ {(\sigma_y^2 - \sigma_x^2)}^2 + 4 \sigma^2_{xy}} }{2 \sigma_{xy} }$$
-
-NOTE --- this section needs to be checked ..  numbers do not seem ok
-
-To use this formula, the variables cannot be scaled to unit variance. In the PCA, the eigenvalues provide the $\sigma$ and the covariance directly from the product of x and y. 
+$$m=\frac{\sigma_y^2 - \sigma_x^2 + \sqrt{ (\sigma_y^2 - \sigma_x^2)^2 + 4 \sigma^2_{xy}} }{2 \sigma_{xy} }$$
+ 
+To use this formula, the variables cannot be scaled to unit variance, as we are trying to compute covariance. In the PCA, the eigenvalues provide the $\sigma$ and the covariance directly from the product of x and y. 
 
 
 ```julia
 CM = cov( [ X  Y] )
-eigen(CM)  
+CM_12 = CM[1,2]
 
+# ev = eigen(CM)
+ 
 ssx = var(X)
 ssy = var(Y)
-cov_xy = cov(X,Y) # = -1.131263461788575
+cov_xy = cov(X,Y)  
 
-#eigenvectors:
- -0.799625  -0.6005
- -0.6005     0.799625
-
-m = (ssy - ssx + sqrt( (ssy - ssx)^2 + 4 * cov_xy^2) ) / (2 * cov_xy)
-# -1.331599223477125  -- off? .. looks to be the same as TLS solution
-
+m = (ssy - ssx + sqrt( (ssy - ssx)^2 + 4 * cov_xy) ) / (2 * sqrt(cov_xy) )
+# m = 1.442  # NOTE: this is not standardized so not an estimate of correlation
+ 
 ```
 
 
 This is also known as: Orthogonal Regression or [Total Least Squares](https://en.wikipedia.org/wiki/Total_least_squares#Scale_invariant_methods) where the solution is approached from an SVD and solution is derived from the right matrix V and then multiplying by -1/V[2,2]  
+
 
 ```julia
 
@@ -830,13 +845,14 @@ function Total_Least_Squares( X, Y )
   return(B)
 end
 
-slope = Total_Least_Squares(X,Y)  # -1.3316525828891153 using unscaled data
-slope = Total_Least_Squares(x,y)  # -1.0  using scaled 
-
+slopexy = Total_Least_Squares(X,Y)  # 2.9614  using unscaled data
+slopeyx = Total_Least_Squares(Y,X)  # 0.3376  using unscaled data
+sqrt(slopexy * slopeyx)  # 1  not useful
+ 
 
 ```
    
-Of course using Turing, the form of the model can be made more explicitly:
+Of course using Turing, the form of the model can be made more explicitly and then it becomes more useful:
 
 ```{julia}
   
@@ -856,29 +872,24 @@ Of course using Turing, the form of the model can be made more explicitly:
   chain_xy = sample(model, Turing.NUTS(0.65), 3_000)
   showall(chain_xy)
 
-    parameters      mean       std      mcse    ess_bulk    ess_tail      rhat   ess_per_sec 
-          xvar    0.2789    0.1318    0.0173     51.1398     78.6902    0.9998        1.0560
-          yvar    0.3038    0.0221    0.0005   1652.3068   1557.8796    0.9997       34.1181
-       beta[1]   -0.9535    0.0303    0.0007   1752.9851   1938.5347    1.0000       36.1970
+  parameters      mean       std   naive_se      mcse         ess      rhat   ess_per_sec 
+           xvar    0.2219    0.1249     0.0023    0.0152     12.7894    1.0526        0.1065
+           yvar    0.2712    0.0155     0.0003    0.0006    585.1844    1.0012        4.8714
+        beta[1]    0.9614    0.0209     0.0004    0.0006   1250.3622    1.0001       10.4088
+  # slope (beta[1] ) ~ cor_xy = cor_geometric = 0.96286 (within <1 SD)
 
+  
   model = linear_regression_major_axis(y, x)
   chain_yx = sample(model, Turing.NUTS(0.65), 3_000)
   showall(chain_yx)
-
-    parameters      mean       std      mcse    ess_bulk    ess_tail      rhat   ess_per_sec 
-           xvar    0.2280    0.1709    0.0438     14.5733     36.8099    1.0031        0.1484
-           yvar    0.3034    0.0225    0.0008    848.4609   1177.3333    1.0072        8.6426
-        beta[1]   -0.9537    0.0300    0.0010    966.7917    893.8717    1.0045        9.8479
-
-  # slope parameters are larger: -0.95 and closer to the correlation estimate:
-
-  corr = - sqrt( -0.9535 * -0.9537 )  #  -0.9535999947567114
  
-  isapprox( a.r, f.r ) # ok
-  isapprox( a.r, corr ) # fail but diff = -0.0003268947677748102  < sd of ~0.03
+     parameters      mean       std   naive_se      mcse         ess      rhat   ess_per_sec 
+           xvar    0.2298    0.1356     0.0025    0.0165     13.7158    1.0209        0.0957
+           yvar    0.2727    0.0155     0.0003    0.0004   1834.9194    1.0017       12.8032
+        beta[1]    0.9637    0.0225     0.0004    0.0005   1395.9389    0.9997        9.7402
 
-  # so correlation can be approximated from Model 2 regression coefficients as well and both XY and YX can be run simultaneously as well ... leave that as an exercise to the reader
-
+  # slope (beta[1] ) ~ cor_xy = cor_geometric = 0.963 (within <1 SD)
+  
 ```
 
 ## Nonlinear Regression 

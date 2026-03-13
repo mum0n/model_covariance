@@ -16,28 +16,28 @@ pkgs = [
     "Revise", "Memoization", "BenchmarkTools", "OhMyREPL",
     "DataFrames", "CSV", "RData", "RDatasets", "JLD2", "ParameterHandling",  # "ArviZ", 
     "StatsBase", "Statistics", "MultivariateStats", "LinearAlgebra", "Distributions", "Random", 
-    "StatsModels", "StatsFuns", 
+    "StatsModels", "StatsFuns", "GLM", "Tables",
     "StaticArrays", "FillArrays",  "SparseArrays", "Graphs", "Distances", "CategoricalArrays",
     "PlotThemes", "Colors", "ColorSchemes", "Plots", "StatsPlots",
     "MKL", "PDMats", "Optim", 
-    "ADTypes",  "ForwardDiff",
+    "ADTypes",  "ForwardDiff", 
     "AdvancedVI",  "Turing", "Bijectors", "ArchGDAL",
     "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions", "TemporalGPs"
 ]
 
-# using ApproximateGPs, Random, "CodeTracking",   "Setfield", "ParameterHandling" 
-#   "AdvancedHMC", "DynamicHMC", "DistributionsAD", "Bijectors", "Libtask", "ReverseDiff", 
+# using "CodeTracking",  "Setfield",  "AdvancedHMC", "DynamicHMC", "DistributionsAD",   "Libtask", "ReverseDiff"  
     # "Symbolics", "Logging",  
-
  
-
-# Set a seed for reproducibility.
-Random.seed!(42) # Fix seed for reproducibility
-
 # load directly can cause conflicts due to same function names 
 pkgtoskipload = [  "RCall",   "CairoMakie", "PlotlyJS",  "PlotlyBase",  "PlotlyKaleido", "LazyArrays" ]
  
 print( "Loading libraries:\n\n" ) 
+
+# For RCall:
+# ENV["R_HOME"] = "C:\Program Files\R\R-4.5.2\bin\x64\Rgui.exe"
+ENV["R_HOME"] = "C:\\Program Files\\R\\R-4.5.2"
+ENV["path"] = string( ENV["R_HOME"], "\\bin\\x64; ", ENV["path"] )
+#    using Pkg; Pkg.build("RCall")
  
 for pk in pkgs; 
     if !(Base.find_package(pk) === nothing)
@@ -48,9 +48,21 @@ for pk in pkgs;
 end
 
 
+
 print( "\nTo (re)-install required packages, run:  install_required_packages() or Pkg.instantiate() \n\n" ) 
   
-DEBUG = Ref{Any}()
+# to help track variables, add something like this inside of a function:  
+# Main.DEBUG[] = y,p,t  # this stores y, p, t into Main.DEBUG 
+DEBUG = Ref{Any}()  # initiate
 
-# add this inside of a function to track vars
-# Main.DEBUG[] = y,p,t
+
+include( srcdir( "shared_functions.jl") )
+include( srcdir( "simple_linear_regression.jl") )
+include( srcdir( "regression_functions.jl" ))   # support functions  
+
+include( srcdir( "car_functions.jl" ))   # support functions  
+include( srcdir( "example_data.jl" ))     
+
+
+# Set a seed for reproducibility.
+Random.seed!(42)
