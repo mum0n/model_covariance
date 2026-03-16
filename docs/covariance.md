@@ -37,25 +37,12 @@ These are notes from a non-statistician's perspective on learning to use statist
 
 The concept of *Covariance* is foundational to much of practical numerical analysis, modelling and parameter estimation. However, its importance was never really clearly expressed in numerous foundational courses. Instead, derived components such as correlation and sums of squares, variance, etc., were the focus as they are usually *simpler* to understand. Covariance was always some abstract quantity that lurked in the background and referenced but never directly treated. Understanding of it's importance only gradually seeping after many years. A better intuition of covariance at the very beginning of my career would have likely made my progress that much more efficient.  
 
-Here I focus upon using [Julia](https://julialang.org/), as in my experience,
-it is a clear didactic tool and better for long-term learning and use in large
-projects due to maintainability of the code-base. It is an open-source platform
-created by mathematicians, engineers, natural scientists, statisticians,
-computer scientists and machine learning specialists, each bringing the best
-from their respective fields and lessons learned from domain-specific software
-platforms in a coherent and performative fashion. At the time of this writing,
-there still remain some lingering issues (start up speed, recompilation of code
-and incompatibility creep when there are updates to any library, most already
-being addressed rapidly), but the speed that is offered and code clarity in
-exchange is worth it in any serious data manipulation efforts. Your mileage
-will vary, but the lessons learned are also easily transportable to R, python,
-matlab, octave, etc. if you are forced to use those platforms. They each have
-their own quirks and challenges, but until their eventual convergence, Julia is
-a great platform to learn, teach and operate/develop cutting edge work. Many
-learning tools exist. [Have a look here for a curated list](https://julialang.org/learning/).
+Here I focus upon using [Julia](https://julialang.org/), as in my experience, it is a clear didactic tool and better for long-term learning and use in large projects due to maintainability of the code-base. It is an open-source platform created by mathematicians, engineers, natural scientists, statisticians, computer scientists and machine learning specialists, each bringing the best from their respective fields and lessons learned from domain-specific software platforms in a coherent and performative fashion. At the time of this writing, there still remain some lingering issues (start up speed, recompilation of code and incompatibility creep when there are updates to any library, most already being addressed rapidly), but the speed that is offered and code clarity in exchange is worth it in any serious data manipulation efforts. Your mileage will vary, but the lessons learned are also easily transportable to R, python, matlab, octave, etc. if you are forced to use those platforms. They each have their own quirks and challenges, but until their eventual convergence, Julia is a great platform to learn, teach and operate/develop cutting edge work. Many learning tools exist. [Have a look here for a curated list](https://julialang.org/learning/).
 
 
-## Preliminaries in Julia
+## Preliminaries 
+
+Consider installing [Julia](https://julialang.org/)  through [juliaup](https://github.com/JuliaLang/juliaup). It can make maintenance simpler. 
 
 Most functions used here that are not part of a standard library are collected together in [Julia](https://julialang.org/) functions at [src](../src/). They can be loaded with supporting standard libraries, as follows:
 
@@ -66,22 +53,26 @@ Most functions used here that are not part of a standard library are collected t
 #| echo: false
 #| output: false
 
-using DrWatson
 
+# define the local directory of the repository
 basedirectory = homedir()
 basedirectory = "C:\\home\\jae"  # windows
-
 project_directory = joinpath( basedirectory, "projects", "model_covariance") 
-quickactivate(project_directory)
 
-include( scriptsdir( "startup.jl" ))     # env and data
+
+# load environment, libraries  
+using DrWatson  # install this if you do not have it
+
+quickactivate(project_directory) 
+
+include( scriptsdir( "startup.jl" ))     
 
 ```
 
  
-### Matrix manipulations and GLM
+### Matrix manipulations
 
-Aside: see following nice summary for [matrix and symbolic manipulation in Julia](https://docs.juliahub.com/CalculusWithJulia/AZHbv/0.0.5/differentiable_vector_calculus/vectors.html)
+Aside: see following summary for [matrix and symbolic manipulation in Julia](https://docs.juliahub.com/CalculusWithJulia/AZHbv/0.0.5/differentiable_vector_calculus/vectors.html)
  
 
 ```{julia}
@@ -90,8 +81,9 @@ using Symbolics, LinearAlgebra
  
 a = [10  11  12] # row vector
 b = [10; 11; 12] # column vector 
+c = [10, 11, 12] # column vector
 
-[a; a.+2]   # vertically combine
+[a; a.+2]   # vertically combine (the "." distributes the operation to each cell)
 [b b.+2]   # horizontally combine
 
 M = [3 4 -5; 5 -5 7; -3 6 9] # matrix(3,3)
@@ -104,17 +96,60 @@ M * x - b
 A = [ c d e;  f g h;  i j k ]
 A * A'
 A * x - b
-dot(A, A)
+dot(A, A) # dot product
 
 a = [1, 2, 3]
 b = [4, 2, 1]
-cross(a, b)
+cross(a, b) # cross product
 
 M = [
   i j k; 
   1 2 3; 
   4 2 1]
 det(M)   # same as cross(a,b)
+
+transpose(M)
+
+
+# random matrices 
+B = rand(5,1)
+C = rand(5,5)
+
+A = C * B  # matrix multiplication
+
+# matrix inverse "1/C" equivalent operations
+C^(−1) 
+inv(C)
+inv( transpose(C) )
+
+# matrix "division" note equivalence with B
+C\A 
+inv(C) * A
+C^(−1) * A
+
+isapprox(B, C\A)
+
+
+# covariance matrix
+S = cov( rand(9,5) )
+L = cholesky(S)   # root
+E = eigen(S)   # eigen decomposition
+
+
+# operations between a matrix, vector and scalar require care as shapes differ
+# use "." to distribute the operation across all cells 
+C +  5 # gives error 
+C .+ 5 # adds 5 to every element
+C ./ 5 # divides each element by 5
+
+# but matrix vector operations are defined:
+A = [1, 10, 100, 1000, 10000] # define a (column) vector
+
+C * A   # 5 X 1  matrix X col vector multiplication
+C * A'  # matrix X row vector is not defined .. error
+C .* A   # apply A across C row-wise
+C .* A'  # 5 X 5  matrix X column-wise
+
 
 ```
 
@@ -288,8 +323,7 @@ Covariance can also be computed as an inner product, or, from simpler intermedia
 $$Cov(X, Y) = \frac{1}{n} (X-\bar{X}) (Y-\bar{Y})^T$$
  
 
-The next few steps uses a traditional (didactic) approach to calculations,
-usually found in introductory statistics to help build intuition.
+The next few steps uses a traditional (didactic) approach to calculations, usually found in introductory statistics to help build intuition.
 
 
 ```{julia}
@@ -1357,7 +1391,7 @@ A [Gaussian process](https://en.wikipedia.org/wiki/Gaussian_process) is a collec
   - speed ... computation of a determinant and inverse of a matrix in $R^{n×n}$, generally taking $O(n^3)$ operations to complete, and the computation of the Cholesky decomposition is typically a prerequisite for sampling from a multivariate normal, which also takes $O(n^3)$ time to complete (Golub & Van Loan 1996). Many spatial models, including those which tackle nonstationarity as in Bornn et al. (2012), parametrize the covariance matrix Σ, and hence for Monte Carlo-based inference require repeated recalculations of $Σ^{−1}$ and $|Σ|$.
 
 
-### Weight-space representation (kernel-based) 
+### Weight-space representation (kernel matrix) 
 
 - fast approximations of covariance functions
 
@@ -1381,9 +1415,9 @@ A [Gaussian process](https://en.wikipedia.org/wiki/Gaussian_process) is a collec
 
 
 
-#### Kernel-based ridge regression
+#### Kernel-ridge regression
 
-Returning to the simple form of Kernel-ridge regression--instead of constructing the feature matrix explicitly, we can use kernels to replace inner products of feature vectors with a kernel evaluation ... this makes it easy to generalize and extend to/use other kernels ("feature" representations): 
+The ridge regression from the previous section (Nonlinear regression) required construction of the feature matrix explicitly and the inner products of feature vectors. Instead, a kernel matrix representation permits a more general solution: 
 
 $$\langle \phi (x), \phi (x^T) \rangle = k(x, x^T)$$
 
@@ -1391,12 +1425,12 @@ or
 
 $$\tilde{X} \tilde{X}^{T} = K$$
 
-where $K_{ij} = k(x_i,x_j)$. To apply this "kernel trick" to ridge regression weights ($\beta$) gives:
+where $K_{ij} = k(x_i,x_j)$. Applying this "kernel trick"  [(matrix inversion lemma)](https://tlienart.github.io/posts/2018/12/13-matrix-inversion-lemmas/index.html) to ridge regression weights ($\beta$) gives:
  
 $$\beta = ( X^{T} X +\lambda I)^{-1} X^{T} y$$
-$$\beta = X^{T} ( X X^{T} X +\lambda I)^{-1} y$$
+$$\beta = X^{T} ( X X^{T} X +\lambda I)^{-1} y.$$
 
-See the [matrix inversion lemma](https://tlienart.github.io/posts/2018/12/13-matrix-inversion-lemmas/index.html). Further, replacing the inner product ($X X^{T}$) with the kernel matrix ($K$) gives:
+Replacing the inner product ($X X^{T}$) with the kernel matrix ($K$) gives:
 
 $$\beta =X^{T} (K+\lambda I)^{-1} y$$
 
@@ -1433,13 +1467,13 @@ plot!(Xinducing, yp;  marker=(:square,3), label="fit of order $degree and \$\\la
  
 ```
 
-So a reasonably powerful and simple approach to prediction and regression. Problem: the matrix inversion is expensive and slow { the "\y", above }.
+This represents a powerful and flexible approach to prediction and regression. The problem still remains in that matrix inversion is still expensive and slow.
 
-Semantic note in Julia. If: 
+Semantic note in Julia. Here: 
 
-- A = Ko + lambda * I  # kernel representation of $X X^T$
+- $A = K + \lambda I$  # kernel representation of $X X^T$
 
-- B = Yobs  # observations with error
+- $B = \text{Yobs}$  # observations with error
 
 then $A^{-1} B$  is ...  A\B == inv(A)*B 
 
@@ -1509,10 +1543,7 @@ see: https://distribution-explorer.github.io/multivariate_continuous/lkj.html
 
 There is an additional advantage is that once calculated, the Cholesky factor can be reused to sample from a Multivariate Normal Distribution with less cost:
 
-$s$ is a random sample, such that 
-
-$$s = L v + u$$ 
-  
+$s$ is a random sample, such that: $s = L v + u$ , 
 
 with 
 
@@ -1520,11 +1551,11 @@ $$LL^T = \Sigma = K+\lambda I$$
 
 and $v \sim N(0,1)$ and $u$ is the mean
 
-$$u =  X  \beta$$ 
+$u =  X  \beta$
 
-$$\beta = X^{T} \Sigma^{-1} y$$ 
+$\beta = X^{T} \Sigma^{-1} y$
 
-$$\beta = X^{T} (K+\lambda I)^{-1} y$$ 
+$\beta = X^{T} (K+\lambda I)^{-1} y$
 
 $$u = X X^{T} (K+\lambda I)^{-1} y$$
 
@@ -2264,11 +2295,8 @@ Spectral (Eigen) decomposition of rectangular data is also known as Principal co
 
 NOTE: This has been adapted from numerous sources. All credit to original authors (noted where found).
 
-
-
-### Preliminary: Eigen (spectral) decomposition
-
-Source: https://en.wikipedia.org/wiki/Principal_component_analysis
+ 
+(Source: https://en.wikipedia.org/wiki/Principal_component_analysis)
 
 An eigen-decomposition is a factorization of a square matrix
 $\mathbf{C} \in \Re^{n\times n}$ into an equivalent canonical (unique,
@@ -2308,32 +2336,7 @@ where $\mathbf{U}$ is a *unitary matrix*:
 
 $$\mathbf{V}^*=\mathbf{V}^{-1}.$$
 
-
-
-### Data 
-
-
-```{julia} 
-
-# include( srcdir( "pca_functions.jl" ))   # support functions  
-   
-# X has an embedded nonlinear pattern 
-# id, sps, X, G, vn = example_data( "iris_pca_nonlinear" )  
-
-id, sps, X, G, vn = example_data("iris_pca")
-nData, nvar = size(X)   
-nz = 2  # no latent factors to use
-
-n_samples = 500  # posterior sampling
-sampler = Turing.NUTS()  
-
-# test covariances...  
-isapprox(X'*X/(nData-1), cov(X) )  # ok
-
-XX = X .- mean(X, dims=2) # must center first (x is already centered by column)
-isapprox( XX*XX'/(nvar-1),  cov(XX') )  # ok
-
-```
+ 
 
 ### PCA
 
@@ -2479,12 +2482,29 @@ https://stats.stackexchange.com/questions/104306/what-is-the-difference-between-
 
 
 #### Basic PCA
-
-```{julia}
  
-Random.seed!(1); # Set a seed for reproducibility.
 
-# this is the core of eigendecompoistion. it:
+```{julia} 
+
+# include( srcdir( "pca_functions.jl" ))   # support functions  
+   
+# X has an embedded nonlinear pattern 
+# id, sps, X, G, vn = example_data( "iris_pca_nonlinear" )  
+
+id, sps, X, G, vn = example_data("iris_pca")
+nData, nvar = size(X)   
+nz = 2  # no latent factors to use
+
+
+# test covariances...  
+isapprox(X'*X/(nData-1), cov(X) )  # ok
+
+XX = X .- mean(X, dims=2) # must center first (x is already centered by column)
+isapprox( XX*XX'/(nvar-1),  cov(XX') )  # ok
+ 
+
+ 
+# this is the core of eigendecompoistion
 
 eigen( cov(X) )
 
@@ -2567,7 +2587,7 @@ Compare with solutions from MultivariateStats.jl
 
 ```{julia}
 
-using MultivariateStats 
+# using MultivariateStats 
 
 # note: MultivariateStats.jl operates on data matrices with rows as features and cols as observations
 
@@ -2730,7 +2750,7 @@ $$
 
 ```{julia}
 
-using MultivariateStats 
+# using MultivariateStats 
 
 # note: MultivariateStats.jl operates on data matrices with rows as features and cols as observations
 
@@ -2758,6 +2778,10 @@ Great, but in an MCMC setting, PCAs create rotationally symmetric solutions, mak
 
 ```{julia}
  
+n_samples = 500  # posterior sampling
+sampler = Turing.NUTS()  
+
+
     M = pPCA(X) ; # rand(M)
 
     res = sample(M, sampler, n_samples);
@@ -3648,49 +3672,11 @@ $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 ## Autocorrelation
 
-*Aside: Beyond the simple recursive methods, much of this section actually uses Gaussian Processes. However, due to its complexity and size, it is treated as a separate section*.
+Correlation and partial correlations between variables has already been discussed. Autocorrelation is a similar concept, except it expresses the correlation of a variable with itself, but across time or space. Self-correlation  due to proximity in time and/or space is an important trait that sometimes (almost always?) prevents clear undertanding of overall inter-variable relationships, even in the best statistical designs that attempt to factor it out. As such they are usually considered nuisance factors, factors of no importance that need to be "controlled" in some fashion, by a good statistical sampling design. 
 
-Correlation and partial correlations between variables were discussed above. Self-correlation or autocorrelation within a variable due to proximity in time and/or space is an important trait that sometimes (almost always?) prevents clear undertanding of overall inter-variable relationships, even in the best statistical designs that attempt to factor it out. As such they are usually considered nuisance factors, factors of no importance that need to be "controlled" in some fashion, by a good statistical sampling design. 
+However, another way to treat autocorrelation is to embrace it, rather than factor it out. [Autoregressive models](https://en.wikipedia.org/wiki/Autoregressive_model) attempt to do this. This is because, in reality, these nuisance factors are, actually highly informative and actually facilitate understanding of the focal process(es) of interest. If carefully measured and treated, they can support more precise and accurate predictions. Recall, that in the case of snow crab, sampling is 1 part in 10 billion. Additional information helps to improve the scale of this sampling. Further, when they operate on spatiotemporal scales similar to those of the focal process(es) they can become highly influential such that ignoring them can cause poor precision and accuracy. As such, in the snow crab assessment, we embrace these factors rather than try to ignore all the variability in the processes that influence biota; herein we will refer to this as *ecosystem variability*. Examples of *ecosystem variability* in the marine context include the interactions of organisms with variations in ambient temperatures, light levels, pH, redox potential, salinity, food/nutrient availability, shelter space, predator abundance, disease prevalence, etc. Characterizing *ecosystem variability* is indeed difficult and time-consuming due to their numerous and interacting nature; however, as they, by definition, directly and indirectly influence a population's status, they cannot and should not be ignored. This is especially the case if this information pre-exists or is cheaper to sample extensively than the population density.
 
-However, another way to treat autocorrelation is to embrace it, rather than factor it out. [Autoregressive models](https://en.wikipedia.org/wiki/Autoregressive_model) attempt to do this. This is because, in reality, these nuisance factors are, actually highly informative and
-actually facilitate understanding of the focal process(es) of interest. If carefully measured and treated, they can support more precise and accurate predictions. Recall, that in the case of snow crab, sampling is 1 part in 10 billion. Additional information helps to improve the scale of this
-sampling. Further, when they operate on spatiotemporal scales similar to
-those of the focal process(es) they can become highly influential such
-that ignoring them can cause poor precision and accuracy. As such, in
-the snow crab assessment, we embrace these factors rather than try to
-ignore all the variability in the processes that influence biota; herein
-we will refer to this as *ecosystem variability*. Examples of *ecosystem
-variability* in the marine context include the interactions of organisms
-with variations in ambient temperatures, light levels, pH, redox
-potential, salinity, food/nutrient availability, shelter space, predator
-abundance, disease prevalence, etc. Characterizing *ecosystem
-variability* is indeed difficult and time-consuming due to their
-numerous and interacting nature; however, as they, by definition,
-directly and indirectly influence a population's status, they cannot and
-should not be ignored. This is especially the case if this information
-pre-exists or is cheaper to sample extensively than the population
-density.
-
-Indeed, this *ecosystem variability* induces something very important:
-complex spatiotemporal autocorrelations in the abundance of the organism
-of interest. As stated by *Tobler's First law of geography*: *everything
-is related to everything else, but near things are more related than
-distant things* (Tobler 1970). If it were not the case, then everywhere
-we look would be completely chaotic and discontinuous, without localized
-areas of homogeneity. Similar arguments can be made for time. As such,
-experimental design must pay careful attention to *ecosystem
-variability* and the spatiotemporal autocorrelation that they induce. If
-the strategy is to "block out" nuisance factors, then each such AU must
-also be independent of each other, that is, without spatial (and
-temporal) autocorrelation. If a survey's experimental design is
-inadequate to guarantee such independence between AUs, then an
-appropriate spatiotemporal model can be used to attempt to rectify these
-biases and begin the process of (1) iteratively improving the
-experimental design and/or (2) improving the data collection required to
-analytically correct any biases induced by *ecosystem variability.* This
-point of view, we will herein refer to as a *Lagrangian* perspective,
-one that perceives AUs as being more fluid in definition than the static
-*Cartesian* view identified previously.
+Indeed, this *ecosystem variability* induces something very important: complex spatiotemporal autocorrelations in the abundance of the organism of interest. As stated by *Tobler's First law of geography*: *everything is related to everything else, but near things are more related than distant things* (Tobler 1970). If it were not the case, then everywhere we look would be completely chaotic and discontinuous, without localized areas of homogeneity. Similar arguments can be made for time. As such, experimental design must pay careful attention to *ecosystem variability* and the spatiotemporal autocorrelation that they induce. If the strategy is to "block out" nuisance factors, then each such AU must also be independent of each other, that is, without spatial (and temporal) autocorrelation. If a survey's experimental design is inadequate to guarantee such independence between AUs, then an appropriate spatiotemporal model can be used to attempt to rectify these biases and begin the process of (1) iteratively improving the experimental design and/or (2) improving the data collection required to analytically correct any biases induced by *ecosystem variability.* This point of view, we will herein refer to as a *Lagrangian* perspective, one that perceives AUs as being more fluid in definition than the static *Cartesian* view identified previously.
 
 
 ### Temporal Models
