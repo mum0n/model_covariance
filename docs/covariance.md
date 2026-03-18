@@ -3631,12 +3631,7 @@ Copied to: model_covariance/docs/reference/"Autoregressive Processes are Gaussia
 - By reducing the scale of the kernel to 1 time slice it becomes an RW(1) and by making it asymmetrical in time then it become an AR(1).
 - A GP is easier to integrate into modeling (space)-time varying processes.
 
-AR processes can be written as a Gaussian process model,
-which is useful because a temporal process can then be easily combined
-with other Gaussian Processes. In general, we can build our models by
-defining conditional distributions with a given mean and covariance, or
-a joint distribution with mean zero where the model is fully defined by
-a variance/covariance kernel function.
+AR processes can be written as a Gaussian process model, which is useful because a temporal process can then be easily combined with other Gaussian Processes. In general, we can build our models by defining conditional distributions with a given mean and covariance, or a joint distribution with mean zero where the model is fully defined by a variance/covariance kernel function.
 
 AR models are typically a set of conditional distributions for some first and secord order stationary variable which can then be centered as: $y = Y - \bar{Y}$, such that the expected value is 0, $E[y]=0$:
 
@@ -3734,7 +3729,8 @@ The intuition is that we are converting a set of correlations to a matrix of cov
 
 see eg: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4020183/
 
-Implementing it using the same toy data amounts to computing the kernel across time and shifting it appropriately. Speed is about 2-3X faster
+Implementing it to compute the kernel across time and shifting it appropriately improves speed by about 2-3X 
+
 
 ```{julia}
  
@@ -3786,6 +3782,7 @@ yp = mean(ymean_ar1, dims=1)
 plot!(xd_mid, vec(yp) .+ mean(Y), label="AR(1) mean as GP -- faster", seriestype=:path)
  
 ```
+
 #### AR1 as a TemporalGPs, O(N)
 
 Use of TemporalGPs.jl is supposed to be fast .. but fails at the moment

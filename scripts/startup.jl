@@ -34,13 +34,22 @@ pkgtoskipload = [  "RCall",   "CairoMakie", "PlotlyJS",  "PlotlyBase",  "PlotlyK
 print( "Loading libraries:\n\n" ) 
 
 # For RCall:
-# ENV["R_HOME"] = "C:\Program Files\R\R-4.5.2\bin\x64\Rgui.exe"
-ENV["R_HOME"] = "C:\\Program Files\\R\\R-4.5.2"
-ENV["path"] = string( ENV["R_HOME"], "\\bin\\x64; ", ENV["path"] )
-#    using Pkg; Pkg.build("RCall")
- 
+if Sys.iswindows()
+    # ENV["R_HOME"] = "C:\Program Files\R\R-4.5.2\bin\x64\Rgui.exe"
+    ENV["R_HOME"] = "C:\\Program Files\\R\\R-4.5.2"
+    ENV["path"] = string( ENV["R_HOME"], "\\bin\\x64; ", ENV["path"] )
+    #    using Pkg; Pkg.build("RCall")
+elseif Sys.islinux()
+elseif Sys.isapple()
+else
+end
+
+
 for pk in pkgs; 
-    if !(Base.find_package(pk) === nothing)
+    if (Base.find_package(pk) === nothing)
+        Pkg.add(pk)
+        @eval using $(Symbol(pk))
+    else
         if !(pk in pkgtoskipload)
             @eval using $(Symbol(pk)); 
         end
