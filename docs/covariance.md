@@ -9360,7 +9360,7 @@ This approach represents a practical balance between computational time and mode
 
 ## Complex mixed models
 
-A variety of models can be flexibly implemented using Bayesian methods. The difficulty is computational resources. Many approaches try to reduce this limitation. Some have already been encountered. Here some promising or didcatic approaches are further discussed.
+A variety of models can be flexibly implemented using Bayesian methods. The difficulty is often computational resources. Many approaches try to reduce this limitation. Some have already been encountered. Here some promising approaches are further discussed.
 
 ### Multiple processes--recursive form
 
