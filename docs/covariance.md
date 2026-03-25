@@ -721,8 +721,7 @@ Major Axis Regression is also known as Model 2 Regression. This a second form of
 ```{julia}
 
 x, y, z, u, X, Y, Z = example_data("iris")
- 
-
+  
 a = linear_regression_simple(X, Y; method="MAR_geometric_mean" , toget="res")
 a.Beta[2] # slope of X vs Y
 
@@ -781,9 +780,9 @@ This is also known as: Orthogonal Regression or [Total Least Squares](https://en
 
 function Total_Least_Squares( X, Y )
   # this is copied verbatim (almost) from https://en.wikipedia.org/wiki/Total_least_squares
-  n    = size(X,2);             # n is the width of X (X is m by n)
+  n       = size(X,2);             # n is the width of X (X is m by n)
   Z       = [X Y];               # Z is X augmented with Y.
-  p    = size(Z,2)
+  p       = size(Z,2)
   U, S, V = svd(Z);           # find the SVD of Z.
   VXY     = V[1:n, (1+n):end];   # Take the block of V consisting of the first n rows and the n+1 to last column
   VYY     = V[(1+n):end, (1+n):end]; # Take the bottom-right block of V.
@@ -868,9 +867,10 @@ $g(\cdot)= f^{-1}(\cdot)$.
 - In the Normal case:
 
 $$Y\sim\text{Normal}(\mu,{}^{\varepsilon}\!\sigma^{2})$$
-$$\mu=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\psi}$$ 
 
-with standard deviation $^{\varepsilon}\!\sigma$ associated with the residual error $\varepsilon$. 
+$$\mu=\boldsymbol{X}^{T}\boldsymbol{\beta}+\boldsymbol{O}+\boldsymbol{\psi}$$
+
+with an identity link and standard deviation $^{\varepsilon}\!\sigma$ associated with the residual error $\varepsilon$. 
 
 - In the Binomial case:
 
@@ -910,16 +910,11 @@ See [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/)
 ```{julia}
 # most libraries and functions are already preloaded
 
-using LinearAlgebra, Distributions
-using TuringGLM
-using MixedModels
-using CSV
-using StatsModels
-using DataFrames 
+using LinearAlgebra, Distributions, TuringGLM, MixedModels, CSV, StatsModels, DataFrames 
 
 iris = RDatasets.dataset("datasets", "iris")
 
-# Species as fixed effects
+# treat "Species" as fixed effects
 fm = @formula(SepalLength ~ SepalWidth * Species )
 model = turing_model(fm, iris);
 
@@ -927,17 +922,9 @@ n_samples = 1_000;
 chns = sample(model, Turing.NUTS(), n_samples);
 
 showall(chns)
+  
 
-  parameters      mean       std      mcse   ess_bulk   ess_tail      rhat   ess_per_sec 
-           α    3.1994    0.4659    0.0251   341.5986   560.6737    0.9994       40.2639
-        β[1]    0.5287    0.1351    0.0073   342.4059   536.0780    0.9995       40.3590
-        β[2]    0.3045    0.5878    0.0382   236.0464   428.7305    1.0026       27.8225
-        β[3]    0.6130    0.6106    0.0296   429.7671   426.0716    1.0032       50.6562
-        β[4]    0.3481    0.1940    0.0122   253.2514   408.7015    1.0080       29.8505
-        β[5]    0.4040    0.1953    0.0091   459.0698   451.3189    1.0016       54.1101
-           σ    0.4434    0.0259    0.0010   708.2505   619.4640    1.0112       83.4807
-
-# Species as fixed effects (random intercept)
+# Species as fixed effects with random intercept
 fm = @formula(SepalLength ~ SepalWidth + (1|Species) )
 model = turing_model(fm, iris);
 
@@ -945,49 +932,39 @@ n_samples = 1_000;
 chns = sample(model, Turing.NUTS(), n_samples);
  
 showall(chns)
-
-  parameters      mean       std      mcse   ess_bulk   ess_tail      rhat   ess_per_sec 
-           α    3.9826    0.7447    0.0661   124.3730   102.1071    1.0339       15.0719
-        β[1]    0.7444    0.1045    0.0045   536.8562   593.3069    1.0037       65.0577
-           σ    0.4407    0.0240    0.0009   680.7274   330.5873    1.0140       82.4924
-           τ    1.2776    0.5847    0.0474   220.8048    96.3477    1.0064       26.7577
-       zⱼ[1]   -1.3302    0.6247    0.0384   266.9425   425.1358    1.0025       32.3488
-       zⱼ[2]   -0.0123    0.5619    0.0429   162.4311   332.5250    1.0205       19.6838
-       zⱼ[3]    0.4546    0.6536    0.0490   158.3097   380.1932    1.0214       19.1844
-
-
-
+ 
+ 
 # low level access to TuringGLM data structures and methods, etc:
 
-  y = TuringGLM.data_response(fm, iris) # independent variable
-  X = TuringGLM.data_fixed_effects(fm, iris)  # design matrix
+y = TuringGLM.data_response(fm, iris) # independent variable
+X = TuringGLM.data_fixed_effects(fm, iris)  # design matrix
 
-  Z = TuringGLM.data_random_effects(fm, iris) # random effects, if any
-  
-  raneffects = TuringGLM.ranef(fm)
+Z = TuringGLM.data_random_effects(fm, iris) # random effects, if any
 
-  if false
+raneffects = TuringGLM.ranef(fm)
 
-    # Formulaic interaction with model and data (like brms) is possible but not necessary. 
-    # See examples in: https://github.com/TuringLang/TuringGLM.jl/blob/main/src/data_constructors.jl
-    # to modify priors ... need to look at current version of TuringGLM code
+if false
 
-    showall(model)
+  # Formulaic interaction with model and data (like brms) is possible but not necessary. 
+  # See examples in: https://github.com/TuringLang/TuringGLM.jl/blob/main/src/data_constructors.jl
+  # to modify priors ... need to look at current version of TuringGLM code
 
-    prior = TuringGLM._prior(priors, y, T)
-    m = median(y)
-    prior.predictors = TDist(3)
-    α = 2.5 * TDist(3)
-    y ~ MvNormal(α .+ X * β, σ^2 * I)  # example Normal model likelihood
-    y ~ arraydist(LazyArray(@~ BernoulliLogit.(α .+ X * β))) # example Bernoulli likelihood
-    y ~ arraydist(LazyArray(@~ LogPoisson.(α .+ X * β))) # example Poisson likelihood
-    prior.auxiliary = Gamma(0.01, 0.01) # only for neg binomial
-    y ~ arraydist(LazyArray(@~ NegativeBinomial2.(exp.(α .+ X * β), ϕ))) # example NegativeBinomial likelihood
-    α ~ prior.intercept
-    β ~ filldist( prior.predictors, predictors)
-    σ ~ Exponential(residual)
-  end
-  
+  showall(model)
+
+  prior = TuringGLM._prior(priors, y, T)
+  m = median(y)
+  prior.predictors = TDist(3)
+  α = 2.5 * TDist(3)
+  y ~ MvNormal(α .+ X * β, σ^2 * I)  # example Normal model likelihood
+  y ~ arraydist(LazyArray(@~ BernoulliLogit.(α .+ X * β))) # example Bernoulli likelihood
+  y ~ arraydist(LazyArray(@~ LogPoisson.(α .+ X * β))) # example Poisson likelihood
+  prior.auxiliary = Gamma(0.01, 0.01) # only for neg binomial
+  y ~ arraydist(LazyArray(@~ NegativeBinomial2.(exp.(α .+ X * β), ϕ))) # example NegativeBinomial likelihood
+  α ~ prior.intercept
+  β ~ filldist( prior.predictors, predictors)
+  σ ~ Exponential(residual)
+end
+
 
 # Possibly useful:
 # source: https://stackoverflow.com/questions/77639403/in-distributions-jl-package-for-julia-how-to-define-mvnormal-distributions-with
@@ -995,8 +972,7 @@ showall(chns)
 # -  Get the covariance matrix by accessing the field \Sigma instead of using function "cov",
 # -  Create the covariance matrix from constructed cholesky C by doing Cholesky(C) .. can reduce computation/inversion
 
-using Distributions
-using PDMats
+using Distributions, PDMats
 
 g1 = MvNormal([1,2], [2 1; 1 2])
 c1 = cholesky(cov(g1))
@@ -1018,9 +994,9 @@ $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 ### Basics: Linear form
 
-Nonlinear regresssion build on Linear Regression (as discussed above). Recall the Linear form:
+Nonlinear regresssion also builds upon Linear Regression. Recall the Linear form:
 
-$$y = X \beta + \epsilon$$ 
+$$y = X \beta + \epsilon$$
 
 where $y$ is a column vector of length n; $X_{n \times k}$ is a matrix {in code: Xobs}; where k = no covariates + 1 (for intercept, if any); $\beta$ is a column vector of length k, the linear coefficients of the covariates; and $\epsilon = y - X \beta$ is column vector of length n errors. 
 
@@ -4870,7 +4846,7 @@ and so the observations $Y_{st}$ are used to infer the real state $y_{st}$.
 
 Most survey-based approaches focus only upon a purely *temporal process* $\Upsilon_{t}$ that generates a spatially integrated spatiotemporal process $\int y_{st}ds$ :
 
-$$\Upsilon_{t}\overset{\text{temporal process}}{\rightarrow} \int y_{st} ds$$ 
+$$\Upsilon_{t}\overset{\text{temporal process}}{\rightarrow} \int y_{st} ds$$
  
 This integration is encoded in the *experimental design* and is almost always a purely *spatial process*. What this means is that spatial processes are being treated as being nested within temporal processes. The problem is that *a spatial experimental design* can represent a spatiotemporal process only if the temporal component is stationary (at least, first and second order). This is generally not true. (Indeed, even the assumption of a single *spatial process* being valid throughout the spatial domain of interest at some time is itself problematic, as we will see below.) A naive application of a spatial design to spatiotemporal problem can, therefore, be problematic; this assumption needs to be examined.
 
@@ -4961,16 +4937,15 @@ Here, $\tau$ is a precision parameter; and $\alpha\in[0,1]$ controls the strengt
 
 Under the assumption that $\phi$ is a Markov Random Field, the *joint distribution* of the random variable is, via Brook's Lemma (Besag 1974):
 
-$$\phi\sim N(\boldsymbol{0},Q^{-1}),$$ 
+$$\phi\sim N(\boldsymbol{0},Q^{-1}),$$
 
 where,
 
-$$Q=\tau D(I-\alpha B)$$ 
+$$Q=\tau D(I-\alpha B)$$
 
 is the precision matrix, and $D$ is a diagonal matrix of the same shape as $W$, and $\text{diag}(D)=d_{ii}=$ no. of neighbours for each $\text{AU}_{i_{i}}$. Further, $B=D^{-1}W$ is the scaled adjacency matrix that quantifies the relative strength/influence of the connectivity for each neighbour; $\text{diag}(B)=b_{ii}=0$. This simplifies to:
 
-$$Q=[\tau(D-\alpha W)]^{-1}.
-$$
+$$Q=[\tau(D-\alpha W)]^{-1}.$$
 
 The spatial dependence parameter is usually difficult to estimate and so is often assumed to be $\alpha=1$. This simplifies the precision matrix to:
 
@@ -5025,12 +5000,11 @@ Here, $\tau$ is a precision parameter; and $\alpha\in[0,1]$ controls the strengt
 
 Under the assumption that $\phi$ is a Markov Random Field, the *joint distribution* of the random variable is, via Brook's Lemma (Besag 1974):
 
-$$
-\phi\sim N(\boldsymbol{0},Q^{-1}),$$ 
+$$\phi\sim N(\boldsymbol{0},Q^{-1}),$$
 
 where,
 
-$$Q=\tau D(I-\alpha B)$$ 
+$$Q=\tau D(I-\alpha B)$$
 
 is the precision matrix, and $D$ is a diagonal matrix of the same shape as $W$, and $\text{diag}(D)=d_{ii}=$ no. of neighbours for each $\text{AU}_{i_{i}}$. Further, $B=D^{-1}W$ is the scaled adjacency matrix that quantifies the relative strength/influence of the connectivity for each neighbour; $\text{diag}(B)=b_{ii}=0$. This simplifies to:
 
@@ -10568,8 +10542,10 @@ Cons:
 - an approximation (usually Gaussian)
 
 ```{julia}
- 
+  
 using Optim, ForwardDiff, LinearAlgebra, Distributions
+
+x, y, z, u, X, Y, Z = example_data("correlated_data")
 
 # x, z needs to be quantized for the recursive methods 
 xd, xi, xd_mid, nx, dx = discretize_data(x, dx=0.5)

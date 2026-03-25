@@ -98,6 +98,46 @@ function summarize_samples(S; dims=1)
   return smean, slb, sub, ssd, smed
 end
     
+
+
+@model function model_recursive(y, xi, zi, ui, nx, nz, nu)
+    # input is y, xindex zindex, uindex and numbers of xi total, zi total, ui total
+    σ_obs ~ Exponential(1.0)
+    σ_ar1 ~ Exponential(1.0)
+    ρ ~ Uniform(-1, 1) # AR1 coefficient
+  
+    σ_rw2 ~ Exponential(1.0)  # Random walk step size (smoothness)
+  
+    # AR1(x) - latent
+    x = Vector{Real}(undef, nx)
+    x[1] ~ Normal(0, σ_ar1 / sqrt(1 - ρ^2))
+    for g in 2:nx
+      x[g] ~ Normal(ρ * x[g-1], σ_ar1)
+    end
+
+    # RW2(z) - latent
+    z = Vector{Real}(undef, nz)
+    z[1] ~ Normal(0, 10)
+    z[2] ~ Normal(0, 10)
+    for g in 3:nz
+      z[g] ~ Normal( 2*z[g-1] - z[g-2], σ_rw2 )
+    end
+  
+    # Fixed Effect: Categorical 
+    β_u ~ filldist(Normal(0, 10), nu) 
+  
+    # Likelihood
+    mu = Vector{Real}(undef, length(y))
+    for i in 1:length(y)
+      mu[i] = x[xi[i]] + z[zi[i]] + β_u[ui[i]]
+    end
+
+    y ~ MvNormal(mu, σ_obs * I)
+
+    return mu
+end
+ 
+
 # Squared-exponential covariance function
 sqexp_cov_fn(D, phi, eps=1e-3) = exp.(-D^2 / phi) + LinearAlgebra.I * eps
 

@@ -29,8 +29,9 @@ pkgs = [
     # "Symbolics", "Logging",  
  
 # load directly can cause conflicts due to same function names 
-pkgtoskipload = [  "RCall",   "CairoMakie", "PlotlyJS",  "PlotlyBase",  "PlotlyKaleido", "LazyArrays" ]
- 
+pkgtoskipload = [   "CairoMakie", "PlotlyJS",  "PlotlyBase",  "PlotlyKaleido", "LazyArrays" ]
+  # "RCall",
+   
 print( "Loading libraries:\n\n" ) 
 
 # For RCall:
