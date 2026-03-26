@@ -2956,21 +2956,858 @@ PMLR 97,
 
 This is the same idea behind PCA in that an eigen decomposition of a matrix is used to summarize relationships. However, unlike a correlation or covariance matrix, one uses a distance matrix, such as Euclidean or other comparable metric of distance. Distances are normalized by row and column before decomposition and provide similar ordinations.
 
+Principal Coordinates Analysis (PCoA), also known as classical or metric Multidimensional Scaling (MDS), aims to find a lower-dimensional representation of data points given a dissimilarity matrix, preserving the original distances as much as possible.
+
+Bayesian PCoA is equivalent to Bayesian MDS and CA (below) but with alternative distance metrics. This model directly assumes that your observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise.
+
+
+
+```{julia}
+
+@model function bayesian_distance_ordination(D_obs, n_points, n_dims)
+    # Priors for the latent coordinates X
+    # X is a n_dims x n_points matrix
+    X ~ MvNormal(Zeros(n_dims), I(n_dims)) # Prior for each column (point) is a spherical multivariate normal
+
+    # Prior for the observation noise standard deviation
+    sigma ~ InverseGamma(2, 3) # A common prior for scale parameters
+
+    # Calculate pairwise Euclidean distances from the latent coordinates X
+    # Ensure X is in the correct format for pairwise (features x observations or observations x features)
+    # Transpose X to have points as columns for pairwise calculation from Distances.jl
+    D_latent = pairwise(Euclidean(), X, dims=2) 
+
+    # Likelihood: observed dissimilarities are normally distributed around the latent distances
+    # with standard deviation sigma.
+    # We only consider the upper triangle of the matrix to avoid duplicating observations.
+    # Also, exclude diagonal (distance of point to itself is 0).
+    for i in 1:n_points
+        for j in (i+1):n_points
+            D_obs[i, j] ~ Normal(D_latent[i, j], sigma)
+        end
+    end
+end
+
+
+# Generate some synthetic data
+n_points = 10
+n_true_dims = 2
+
+# True latent coordinates
+X_true = randn(n_true_dims, n_points) * 5
+
+# True distances
+D_true = pairwise(Euclidean(), X_true, dims=2)
+
+# Add some noise to create observed dissimilarities
+observed_noise_std = 1.0
+D_obs = D_true + observed_noise_std * randn(n_points, n_points)
+
+# Ensure symmetry and non-negativity for D_obs (and set diagonal to 0 if necessary)
+D_obs = max.(0, (D_obs + D_obs') / 2.0)
+for i in 1:n_points
+    D_obs[i, i] = 0.0
+end
+
+# Define the model with the observed data and desired embedding dimension
+model = bayesian_distance_ordination(D_obs, n_points, n_true_dims)
+
+# Sample from the posterior distribution using NUTS (No-U-Turn Sampler)
+# It's recommended to run a longer chain and check convergence for real applications.
+chain = sample(model, NUTS(), 1000) # 1000 samples
+
+# You can inspect the chain
+display(chain)
+
+# Extract mean of latent coordinates (posterior mean)
+# X will be a matrix of size n_dims x n_points, but Turing flattens it for sampling
+# We need to reshape the sampled 'X' back into a matrix form.
+mean_X_samples = mean(chain[:X].data, dims=1)
+posterior_X = reshape(mean_X_samples, n_true_dims, n_points)
+
+println("\nPosterior mean of latent coordinates (first 5 points):\n")
+display(posterior_X[:, 1:5])
+
+
+# Extract all samples for X
+# X_samples_raw will be num_samples x (n_true_dims * n_points)
+X_samples_raw = Array(chain[:X])
+
+# Get dimensions from the already computed posterior_X
+n_true_dims = size(posterior_X, 1) # Should be 2 for 2D visualization
+n_points = size(posterior_X, 2)
+
+# Create a plot object
+plot_posterior = plot(xlabel="Latent Dimension 1", ylabel="Latent Dimension 2",
+                     title="Posterior Distribution of Latent Coordinates",
+                     legend=false, aspect_ratio=:equal, size=(700, 600)) # Added size for better viewing
+
+# Plot each point's individual samples
+for i in 1:n_points
+    # Extract samples for the i-th point's x and y coordinates
+    # The flattened 'X' in Turing chain[:X] means that for point 'i' (1-indexed),
+    # its x-coordinates are at column (i-1)*n_true_dims + 1 and y-coordinates at (i-1)*n_true_dims + 2.
+    x_coords_samples = X_samples_raw[:, (i-1)*n_true_dims + 1]
+    y_coords_samples = X_samples_raw[:, (i-1)*n_true_dims + 2]
+
+    # Plot individual samples for this point with low alpha to show density
+    scatter!(plot_posterior, x_coords_samples, y_coords_samples,
+             marker=:circle, markersize=2, markeralpha=0.1,
+             markercolor=i, # Color by point index
+             label=nothing) # Don't add a label for each sample scatter
+end
+
+# Overlay the posterior mean for each point with larger markers
+scatter!(plot_posterior, posterior_X[1,:], posterior_X[2,:],
+         marker=:star5, markersize=8, markeralpha=0.9,
+         markerstrokewidth=1, markerstrokecolor=:black,
+         markercolor=1:n_points, # Color by point index
+         series_annotations=text.(1:n_points, :bottom, 8, :black), # Annotate points with their index
+         label="Posterior Mean") # Label for the mean points in legend (if legend=true)
+
+# Display the plot
+display(plot_posterior)
+
+ 
+
+```
+
+
 ### Correspondence Analysis (CA)
 
 Can be seen as a variation of PCoA where the distance metric is essentially a Chi-squared metric. That is, relative count data.
 
-### Multi-dimensional scaling
+#### Frequentist form
 
-Attempts to achieve similar goals of maximally representing similarities and differences in multidimensional data without resorting to Spectral Decomposition. Instead, the approach iteratively represents distance matrices
+
+```{julia}
+using MultivariateStats
+using Plots
+
+# Example data: A contingency table (rows = observations/categories, columns = variables/categories)
+# Let's say we have counts of different pet preferences across different age groups.
+# Rows could be Age Groups, Columns could be Pet Types
+contingency_table = [ # Cats Dogs Birds Fish Other
+    10  20  5   2   3;  # Young Adults
+    15  12  8   5   4;  # Middle-aged
+    8   10  12  7   6;  # Seniors
+    20  15  7   3   5   # Teenagers
+]
+
+println("Original Contingency Table:")
+display(contingency_table)
+
+# Perform Correspondence Analysis
+# `ndim` specifies the number of dimensions for the embedding
+ca_model = fit(CA, contingency_table; ndim=2)
+
+# Get the row and column coordinates for the biplot
+row_coords = rowprojection(ca_model)
+col_coords = colprojection(ca_model)
+
+# Get the variance explained by each dimension
+var_explained = principalvars(ca_model) / totalvar(ca_model)
+println("\nVariance explained by each dimension: ", round.(var_explained * 100, digits=2), "%")
+
+# Plotting the Biplot
+# We'll label rows and columns for clarity
+row_labels = ["Young Adults", "Middle-aged", "Seniors", "Teenagers"]
+col_labels = ["Cats", "Dogs", "Birds", "Fish", "Other"]
+
+# Create a scatter plot for row points
+biplot = scatter(row_coords[1,:], row_coords[2,:],
+    label="Row Points",
+    marker=:circle, markersize=6, markercolor=:blue,
+    xlabel="Dimension 1 (" * string(round(var_explained[1]*100, digits=2)) * "%)",
+    ylabel="Dimension 2 (" * string(round(var_explained[2]*100, digits=2)) * "%)",
+    title="Correspondence Analysis Biplot",
+    legend=:topleft,
+    aspect_ratio=:equal
+)
+
+# Add row labels
+annotate!([ (row_coords[1,i], row_coords[2,i], text(row_labels[i], :bottom, 8, :blue)) for i in 1:size(row_coords, 2) ]...)
+
+# Add column points to the same plot
+scatter!(biplot, col_coords[1,:], col_coords[2,:],
+    label="Column Points",
+    marker=:utriangle, markersize=6, markercolor=:red
+)
+
+# Add column labels
+annotate!([ (col_coords[1,i], col_coords[2,i], text(col_labels[i], :top, 8, :red)) for i in 1:size(col_coords, 2) ]...)
+
+# Display the plot
+display(biplot)
+
+
+```
+
+#### Bayesian form
+
+Bayesian CA is equivalent to Bayesian PCoA (above) and MDS (below), where the distance metric is the Chi-squared distance. This model directly assumes that your observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise. Simply replace the metric.
+
+
+
+
+### Nonmetric Multi-dimensional scaling
+
+Attempts to achieve similar goals of maximally representing similarities and differences in multidimensional data without resorting to Spectral Decomposition. Instead, the approach iteratively represents the higher distance between data points into a smaller user specified dimensional representation of those relative distances.  
+
+```{julia} 
+ 
+using Distances, MultivariateStats
+
+# Example data (replace with your actual dissimilarity matrix)
+# This is a sample dissimilarity matrix, e.g., computed from some features.
+# For NMDS, you typically start with a dissimilarity matrix.
+data_points = rand(10, 5) # 10 observations, 5 features
+dissimilarities = pairwise(Euclidean(), data_points, dims=2) # Compute Euclidean distances as dissimilarities
+
+# Perform Nonmetric Multidimensional Scaling (NMDS)
+# The 'ndim' parameter specifies the number of dimensions for the embedding
+# The 'maxoutdim' parameter is typically used for PCA or similar, but for MDS,
+# we directly specify 'ndim' which becomes 'maxoutdim' in the context of `fit(MDS, ...)`
+# The `distance` parameter takes the dissimilarity matrix.
+nmds_model = fit(MDS, dissimilarities, maxoutdim=2, metric=false) # metric=false for Nonmetric MDS
+
+# Get the embedded coordinates (the lower-dimensional representation)
+coordinates = principalcomponents(nmds_model) # This gives the embedded coordinates
+
+println("Original dissimilarity matrix (first 5x5):")
+display(dissimilarities[1:5, 1:5])
+println("\nNMDS embedded coordinates (first 5 rows):")
+display(coordinates[:, 1:5]') # Transpose to show points as rows
+
+using Plots
+
+# Assuming 'coordinates' from the previous step is a 2xN matrix
+# where N is the number of data points and 2 is the number of dimensions
+
+# Create a scatter plot of the embedded coordinates
+# coordinates[1,:] gives the x-values, coordinates[2,:] gives the y-values
+scatter_plot = scatter(coordinates[1,:], coordinates[2,:],
+    xlabel="NMDS Dimension 1",
+    ylabel="NMDS Dimension 2",
+    title="NMDS Embedded Coordinates",
+    legend=false,
+    aspect_ratio=:equal # Keep the aspect ratio equal to avoid distortion
+)
+
+# Display the plot
+display(scatter_plot)
+
+``` 
+
+
+#### Bayesian form
+
+The simpler form of MDS is equivalent to the PCoA and CA, above.
+
+
+#### Extending to Nonmetric Bayesian MDS
+
+For a truly nonmetric Bayesian MDS, the main difference lies in how D_obs is related to D_latent. Instead of a direct Normal likelihood, you would introduce a monotonic function f such that f(D_obs) ~ Normal(D_latent, sigma). This function f itself would be part of the model and needs to be estimated. Common approaches for f include:
+
+Spline-based monotonic functions: Represent f using monotonic splines with priors on their coefficients.
+Isotonic Regression: Use an increasing sequence of values delta_i for each unique observed dissimilarity d_i, such that delta_i ~ Normal(D_latent_corresponding, sigma) and delta_i < delta_{i+1}. This is more complex to implement directly in a probabilistic programming language like Turing as it requires constrained sampling.
+Implementing these monotonic constraints within Turing.jl requires more advanced techniques, potentially involving custom samplers or careful parameterizations to enforce monotonicity.
+
+The core idea is to introduce a series of parameters (let's call them transformed_diss_params) that are forced to be monotonically increasing. Each observed dissimilarity D_obs[i,j] is then mapped to one of these transformed_diss_params based on its rank among the unique observed dissimilarities, and this transformed value is used in the likelihood.
+
+
+```{julia}
+@model function bayesian_nonmetric_mds(D_obs, n_points, n_dims, unique_D_obs_values_sorted, D_obs_to_unique_idx)
+    n_unique = length(unique_D_obs_values_sorted)
+
+    # Priors for the latent coordinates X
+    X ~ MvNormal(Zeros(n_dims), I(n_dims))
+
+    # Prior for the observation noise standard deviation
+    sigma ~ InverseGamma(2, 3) # A common prior for scale parameters
+
+    # Parameters for the monotonic transformation (transformed dissimilarities)
+    # We define `transformed_diss_params` such that they are monotonically increasing
+    transformed_diss_params = Vector{Real}(undef, n_unique)
+    transformed_diss_params[1] ~ Normal(0, 1) # Prior for the first transformed value
+
+    for k in 2:n_unique
+        # Sample unconstrained log-difference
+        log_diff_k ~ Normal(0, 1)
+        # Ensure positivity of difference: psi_k = psi_{k-1} + exp(log_diff_k)
+        transformed_diss_params[k] = transformed_diss_params[k-1] + exp(log_diff_k)
+    end
+
+    # Calculate pairwise Euclidean distances from the latent coordinates X
+    D_latent = pairwise(Euclidean(), X, dims=2)
+
+    # Likelihood: transformed observed dissimilarities are normally distributed around latent distances
+    # We only consider the upper triangle of the matrix to avoid duplicating observations.
+    # Also, exclude diagonal (distance of point to itself is 0).
+    for i in 1:n_points
+        for j in (i+1):n_points
+            # Map the observed dissimilarity D_obs[i,j] to its corresponding index
+            # in the unique sorted values, and get the transformed parameter.
+            idx = D_obs_to_unique_idx[D_obs[i, j]]
+            transformed_D_obs_ij = transformed_diss_params[idx]
+
+            # Likelihood connects the transformed observed dissimilarity to the latent distance
+            transformed_D_obs_ij ~ Normal(D_latent[i, j], sigma)
+        end
+    end
+end
+
+
+```
+
+we first need to pre-process the observed dissimilarity matrix to extract its unique, sorted values and create a mapping from original values to their indices in this sorted list. This allows the model to correctly apply the monotonic transformation.
+
+```{julia}
+
+# Using the same synthetic D_obs from the metric MDS example
+# (Assuming dce0c2fd has been executed and D_obs, n_points, n_true_dims are available)
+
+# 1. Get unique, sorted observed dissimilarities (excluding diagonal zeros)
+unique_D_obs = sort(unique(D_obs[triu(trues(size(D_obs)), 1)]))
+
+# 2. Create a mapping from each unique dissimilarity value to its index
+D_obs_to_unique_idx = Dict(unique_D_obs[k] => k for k in 1:length(unique_D_obs))
+
+# --- Define and Sample from the Nonmetric Model ---
+# Define the nonmetric model with the pre-processed data
+nonmetric_model = bayesian_nonmetric_mds(D_obs, n_points, n_true_dims, unique_D_obs, D_obs_to_unique_idx)
+
+# Sample from the posterior distribution
+# (This might take longer than the metric MDS due to the added complexity of monotonic parameters)
+nonmetric_chain = sample(nonmetric_model, NUTS(), 1000) # Reduced samples for quicker demonstration
+
+display(nonmetric_chain)
+
+# Extract posterior mean of latent coordinates from the nonmetric chain
+mean_X_samples_nonmetric = mean(nonmetric_chain[:X].data, dims=1)
+posterior_X_nonmetric = reshape(mean_X_samples_nonmetric, n_true_dims, n_points)
+
+println("\nPosterior mean of latent coordinates (Nonmetric MDS, first 5 points):\n")
+display(posterior_X_nonmetric[:, 1:5])
+
+```
 
 ### Mantel Matrix Correlation
 
-A method to compare two similarity or dissimilarity matrices, essentially by comparing the correlation between corresponding bivariate metrics. As such, it is also known as matrix correlation. HYpothsis testing by simulation and resampling is often used.
+A method to compare two similarity or dissimilarity matrices, essentially by comparing the correlation between corresponding bivariate metrics. As such, it is also known as matrix correlation. 
+
+#### Freqentist permutation approach
+
+The Mantel test calculates the Pearson correlation between the vectorized lower
+triangles of two distance matrices. Significance is assessed by randomly permuting the
+rows (and corresponding columns) of one of the original data matrices (which effectively
+permutes its distance matrix) and recalculating the correlation many times to build a
+null distribution. The p-value indicates how likely the observed correlation is
+under the null hypothesis of no relationship between the two matrices.
+
+Ad-hoc hypothsis testing is done by permutation (resampling).
+
+
+```{julia}
+
+using Distances, LinearAlgebra, Statistics, Random, Plots 
+
+"""
+mantel_test(data1::AbstractMatrix, data2::AbstractMatrix, num_permutations::Int=999;
+  dist_metric1=Euclidean(), dist_metric2=Euclidean(), rng::AbstractRNG=Random.GLOBAL_RNG)
+
+Performs a Mantel test to assess the correlation between two distance matrices.
+
+# Arguments
+- `data1`: A matrix where rows are observations (e.g., sites) and columns are variables
+           (e.g., species abundances, environmental measurements).
+- `data2`: A matrix with the same number of observations (rows) as `data1`, representing
+           another set of variables.
+- `num_permutations`: The number of permutations to perform for significance testing.
+- `dist_metric1`: The distance metric to use for `data1` (from `Distances.jl`).
+                  Common choices include `Euclidean()`, `BrayCurtis()`, `Jaccard()`.
+- `dist_metric2`: The distance metric to use for `data2` (from `Distances.jl`).
+- `rng`: A random number generator for reproducible permutations. Defaults to `Random.GLOBAL_RNG`.
+
+# Returns
+- `observed_r`: The observed Pearson correlation coefficient between the two distance matrices.
+- `p_value`: The p-value, representing the proportion of permuted correlations
+             greater than or equal to the observed correlation.
+- `permuted_r_values`: An array of correlation values obtained from permutations.
+
+"""
+function mantel_test(
+  data1::AbstractMatrix, data2::AbstractMatrix, num_permutations::Int=999;
+  dist_metric1=Euclidean(), dist_metric2=Euclidean(), rng::AbstractRNG=Random.GLOBAL_RNG
+)
+
+  size(data1, 1) == size(data2, 1) || throw(DimensionMismatch("Number of rows in data1 and data2 must be the same."))
+  n_obs = size(data1, 1)
+
+  # 1. Calculate distance matrices between observations (rows)
+  # `dims=1` specifies that distances are computed between rows.
+  D1 = pairwise(dist_metric1, data1, dims=1)
+  D2 = pairwise(dist_metric2, data2, dims=1)
+
+  # 2. Extract the unique elements from the lower triangle (excluding the diagonal)
+  # This avoids redundant comparisons and self-correlations.
+  idx_matrix = trues(n_obs, n_obs)
+  idx_matrix[diagind(idx_matrix)] .= false # Set diagonal to false
+  lower_tri_indices = tril(idx_matrix) # Get indices for the lower triangle
+
+  vec_D1 = D1[lower_tri_indices]
+  vec_D2 = D2[lower_tri_indices]
+
+  # 3. Calculate the observed Pearson correlation coefficient
+  observed_r = cor(vec_D1, vec_D2)
+
+  # 4. Perform permutations to build the null distribution
+  permuted_r_values = Vector{Float64}(undef, num_permutations)
+
+  for i in 1:num_permutations
+      # Permute the rows of one of the original data matrices.
+      # This breaks the spatial/site correspondence between the two datasets
+      # while preserving the internal structure of each dataset.
+      perm = shuffle(rng, 1:n_obs)
+      D2_perm = pairwise(dist_metric2, data2[perm, :], dims=1)
+      vec_D2_perm = D2_perm[lower_tri_indices]
+      permuted_r_values[i] = cor(vec_D1, vec_D2_perm)
+  end
+
+  # 5. Calculate the p-value
+  # The p-value is the proportion of permuted correlations that are
+  # greater than or equal to the observed correlation.
+  p_value = sum(permuted_r_values .>= observed_r) / num_permutations
+
+  return observed_r, p_value, permuted_r_values
+end
+
+
+Random.seed!(42)
+
+# Generate synthetic data for demonstration
+num_sites = 30       # Number of observations (e.g., ecological sites)
+num_species = 15     # Number of species
+num_env_vars = 7     # Number of environmental variables
+
+# Species abundance data (e.g., counts or biomass)
+# Rows are sites, columns are species
+species_data = rand(num_sites, num_species) .* 100
+
+# Environmental data (e.g., temperature, pH, etc.)
+# Rows are sites, columns are environmental variables
+environmental_data = rand(num_sites, num_env_vars) .* 20
+
+# Introduce some artificial correlation for demonstration purposes:
+# Let the abundance of the first few species be positively correlated with
+# the first environmental variable.
+for i in 1:num_sites
+    species_data[i, 1:3] .+= environmental_data[i, 1] * 50
+    species_data[i, 4:6] .+= environmental_data[i, 2] * 30
+end
+
+# Perform the Mantel test
+# Using Bray-Curtis distance for species data (common in ecology)
+# Using Euclidean distance for environmental data
+# Euclidean(): Standard straight-line distance. Good for physical environmental variables.
+# BrayCurtis(): Very popular for community abundance data because it accounts for differences in total abundance and composition without being overly sensitive to zeros.
+# Jaccard(): The standard for presence/absence (binary) data.
+# Cityblock(): Also known as Manhattan distance. Sum of absolute differences; less sensitive to outliers than Euclidean distance.
+# CosineDist(): Useful if you are more interested in the "angle" or proportion between variables rather than their absolute magnitude.
+
+observed_r, p_value, permuted_r_values = mantel_test(
+    species_data,
+    environmental_data,
+    9999, # Number of permutations (higher for better p-value resolution)
+    dist_metric1=BrayCurtis(),
+    dist_metric2=Euclidean(),
+    rng=MersenneTwister(123) # Use a specific RNG for reproducible permutations
+)
+
+println("\n--- Mantel Test Results ---")
+println("Observed Mantel r: ", round(observed_r, digits=4))
+println("P-value: ", round(p_value, digits=4))
+println("Number of permutations: ", length(permuted_r_values))
+
+# Optional: Visualize the distribution of permuted correlations
+# This helps to understand the null distribution and the position of the observed r.
+plot_title = "Mantel Test Permutation Distribution (Observed r = $(round(observed_r, digits=3)))"
+histogram(permuted_r_values, bins=50, label="Permuted r values",
+          title=plot_title,
+          xlabel="Correlation (r)", ylabel="Frequency",
+          legend=:topleft, color=:lightblue, linecolor=:black)
+vline!([observed_r], color=:red, linestyle=:dash, linewidth=2, label="Observed r")
+ 
+```
+
+
 
 ### Procrustes Analysis
 
-In comparing two matrices, how much deformation (rotation and shear) is required to make the matrices similar. A metric of overall difference in relationships. Again, useful for hypothesis testing.
+How similar two matrices are can be assessed by quantifying how much deformation (rotation and shear) is required to make the matrices similar. Again, useful for hypothesis testing.
+
+
+#### Deterministic (Least squares) Procrustes (SVD)
+
+This is the standard mathematical "computation" of the Procrustes problem. It finds the rotation matrix $R$, scale $s$, and translation $T$ that minimizes the squared distance between two point sets $X$ and $Y$.
+
+
+```{julia}
+
+using LinearAlgebra
+
+"""
+    procrustes_svd(X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
+
+Performs a deterministic Procrustes analysis using SVD to find the optimal
+scaling, rotation, and translation to superimpose matrix X onto matrix Y.
+
+# Arguments
+- `X`: The reference set of points (N points x D dimensions).
+- `Y`: The target set of points (N points x D dimensions).
+
+# Returns
+- `X_transformed`: The transformed X matrix.
+- `s`: The optimal scaling factor.
+- `R`: The optimal rotation matrix.
+- `T_vec`: The optimal translation vector.
+- `mse`: The mean squared error after transformation.
+
+# Throws
+- `DimensionMismatch`: If the dimensions of X and Y do not match.
+"""
+
+function procrustes_svd(X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
+    size(X) == size(Y) || throw(DimensionMismatch("Matrices X and Y must have the same dimensions."))
+    N, D = size(X)
+
+    # 1. Center the data
+    X_centroid = mean(X, dims=1)
+    Y_centroid = mean(Y, dims=1)
+
+    X_centered = X .- X_centroid
+    Y_centered = Y .- Y_centroid
+
+    # 2. Compute the covariance matrix H
+    H = X_centered' * Y_centered
+
+    # 3. Perform SVD on H
+    U, S, V = svd(H)
+
+    # 4. Compute the optimal rotation matrix R
+    # Handle reflection: If det(V * U') is -1, it implies a reflection.
+    # To ensure only rotation (and no reflection), we can adjust the last column of V.
+    # This is a common practice in Procrustes analysis to enforce proper rotation.
+    R = V * U'
+    if det(R) < 0
+        # Flip the sign of the last column of V
+        V_prime = copy(V)
+        V_prime[:, end] .*= -1
+        R = V_prime * U'
+    end
+
+    # 5. Compute the optimal scaling factor s
+    s = sum(S) / sum(abs2, X_centered)
+
+    # 6. Compute the optimal translation vector T_vec
+    T_vec = Y_centroid' - s * R * X_centroid'
+    T_vec = T_vec' # Convert back to row vector for consistency with centroids
+
+    # 7. Transform X
+    X_transformed = s .* (X_centered * R) .+ T_vec
+
+    # 8. Calculate Mean Squared Error
+    mse = sum(abs2, X_transformed - Y_centered) / N
+
+    return X_transformed, s, R, T_vec, mse
+end
+
+# --- Demonstration ---
+println("--- Deterministic Procrustes Analysis (SVD) ---")
+
+# Generate synthetic data
+# Original shape (e.g., a square)
+X_original = [
+    0.0 0.0;
+    1.0 0.0;
+    1.0 1.0;
+    0.0 1.0;
+]
+
+# Define true transformation parameters for Y
+true_s = 2.5
+true_theta = π / 6 # 30 degrees
+true_R_matrix = [cos(true_theta) -sin(true_theta); sin(true_theta) cos(true_theta)]
+true_T_vector = [3.0, -1.5]
+noise_std = 0.1
+
+# Create the target shape Y by transforming X_original and adding noise
+Y_true_transformed = true_s .* (X_original * true_R_matrix) .+ true_T_vector'
+Y_noisy = Y_true_transformed .+ noise_std .* randn(size(X_original))
+
+println("\nOriginal X:\n", X_original)
+println("\nTarget Y (noisy transformed X):\n", Y_noisy)
+
+# Perform Procrustes analysis
+X_transformed, s_opt, R_opt, T_vec_opt, final_mse = procrustes_svd(X_original, Y_noisy)
+
+println("\n--- Optimal Transformation Parameters ---")
+println("Optimal Scale (s): ", s_opt)
+println("Optimal Rotation Matrix (R):\n", R_opt)
+println("Optimal Translation Vector (T):\n", T_vec_opt)
+println("Final Mean Squared Error: ", final_mse)
+
+println("\nTransformed X:\n", X_transformed)
+
+# Verify the transformation by applying it manually and comparing with X_transformed
+X_manual_check = s_opt .* ((X_original .- mean(X_original, dims=1)) * R_opt) .+ T_vec_opt
+println("\nManual check of transformed X (should be very close to X_transformed):\n", X_manual_check)
+
+# --- Visualization (requires Plots.jl) ---
+using Plots
+gr() # Use the GR backend for Plots.jl
+
+plot(
+    X_original[:, 1], X_original[:, 2],
+    seriestype=:scatter, label="Original X", markersize=6, markercolor=:blue,
+    aspect_ratio=:equal, legend=:topleft, title="Procrustes Analysis (SVD)"
+)
+plot!(
+    Y_noisy[:, 1], Y_noisy[:, 2],
+    seriestype=:scatter, label="Target Y (Noisy)", markersize=6, markercolor=:red
+)
+plot!(
+    X_transformed[:, 1], X_transformed[:, 2],
+    seriestype=:scatter, label="Transformed X", markersize=6, markercolor=:green,
+    markeralpha=0.8
+)
+
+# Add lines to connect points for better shape visualization
+for i in 1:size(X_original, 1)
+    plot!([X_original[i,1], X_original[mod1(i+1, size(X_original,1)),1]],
+          [X_original[i,2], X_original[mod1(i+1, size(X_original,1)),2]],
+          line=(:blue, 1, :solid), label=false)
+    plot!([Y_noisy[i,1], Y_noisy[mod1(i+1, size(Y_noisy,1)),1]],
+          [Y_noisy[i,2], Y_noisy[mod1(i+1, size(Y_noisy,1)),2]],
+          line=(:red, 1, :solid), label=false)
+    plot!([X_transformed[i,1], X_transformed[mod1(i+1, size(X_transformed,1)),1]],
+          [X_transformed[i,2], X_transformed[mod1(i+1, size(X_transformed,1)),2]],
+          line=(:green, 1, :dash), label=false)
+end
+
+
+
+```
+
+#### Bayesian 2D Procrustes (Turing)
+
+This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when your data is noisy or you need a probabilistic estimate of how well two shapes align.
+
+
+
+```{julia}
+
+using Turing
+using Distributions
+using LinearAlgebra
+using Plots
+using StatsPlots # For density plots of chains
+
+"""
+    procrustes_analysis(X_obs::AbstractMatrix{T}, Y_obs::AbstractMatrix{T}) where {T}
+
+A Turing.jl model for Bayesian Procrustes analysis in 2D.
+
+Given two sets of points, X_obs and Y_obs, this model infers the optimal
+transformation (scale, rotation, translation) and observation noise
+to superimpose X_obs onto Y_obs.
+
+# Arguments
+- `X_obs`: The observed reference shape (N points x 2 dimensions).
+- `Y_obs`: The observed target shape (N points x 2 dimensions).
+
+# Latent Variables
+- `s`: Scale factor.
+- `theta`: Rotation angle in radians.
+- `R`: 2x2 Rotation matrix derived from `theta`.
+- `T_vec`: 2-element translation vector.
+- `sigma`: Standard deviation of the observation noise.
+"""
+
+@model function procrustes_analysis(X_obs::AbstractMatrix{T}, Y_obs::AbstractMatrix{T}) where {T}
+    N, D = size(X_obs) # N points, D dimensions
+
+    # Ensure the model is used for 2D data as rotation is parameterized by an angle
+    @assert D == 2 "This model currently supports only 2D Procrustes analysis for rotation."
+
+    # Priors for transformation parameters
+    s ~ LogNormal(0.0, 1.0) # Scale factor (must be positive)
+    theta ~ Uniform(-π, π) # Rotation angle in radians
+
+    # Construct the 2D rotation matrix from the angle
+    R = [cos(theta) -sin(theta); sin(theta) cos(theta)]
+
+    T_vec ~ MvNormal(zeros(D), 1.0) # Translation vector (D-dimensional)
+
+    # Prior for observation noise standard deviation (must be positive)
+    sigma ~ LogNormal(0.0, 1.0)
+
+    # Predicted Y coordinates based on the current transformation parameters
+    # Y_pred = s * (X_obs * R) .+ T_vec'
+    # The `.` operator ensures element-wise multiplication for `s` and broadcasting for `T_vec'`
+    Y_pred = s .* (X_obs * R) .+ T_vec'
+
+    # Likelihood: Each observed point in Y_obs is a noisy version of the predicted point
+    for i in 1:N
+        Y_obs[i, :] ~ MvNormal(Y_pred[i, :], sigma * I)
+    end
+end
+
+# 1. Generate synthetic data
+# Original shape (e.g., a square)
+X_original = [
+    0.0 0.0;
+    1.0 0.0;
+    1.0 1.0;
+    0.0 1.0;
+]
+
+# Define true transformation parameters
+true_s = 2.0
+true_theta = π / 4 # 45 degrees
+true_R = [cos(true_theta) -sin(true_theta); sin(true_theta) cos(true_theta)]
+true_T = [0.5, -0.3]
+true_sigma = 0.1
+
+# Create the true transformed shape
+Y_true_transformed = true_s .* (X_original * true_R) .+ true_T'
+
+# Add Gaussian noise to simulate observed data
+Y_noisy = Y_true_transformed .+ true_sigma .* randn(size(X_original))
+
+# 2. Instantiate the Turing model
+procrustes_model = procrustes_analysis(X_original, Y_noisy)
+
+# 3. Sample from the posterior distribution using NUTS (No-U-Turn Sampler)
+# NUTS is a gradient-based MCMC sampler, generally efficient for continuous parameters.
+num_samples = 2000 # Number of samples to draw
+num_chains = 4     # Number of parallel chains
+warmup_steps = 1000 # Warmup steps for adaptation
+target_acceptance = 0.8 # Target acceptance rate for NUTS
+
+println("Sampling from the posterior... This may take a moment.")
+chain = sample(
+    procrustes_model,
+    NUTS(warmup_steps, target_acceptance),
+    MCMCThreads(), # Use multiple threads for chains if available
+    num_samples,
+    num_chains,
+    progress=true
+)
+
+# 4. Summarize the results
+println("\n--- Posterior Summary ---")
+display(summary(chain))
+
+# 5. Extract posterior means for visualization and comparison
+posterior_s = mean(chain[:s])
+posterior_theta = mean(chain[:theta])
+posterior_R = [cos(posterior_theta) -sin(posterior_theta); sin(posterior_theta) cos(posterior_theta)]
+posterior_T = [mean(chain[:T_vec, 1]), mean(chain[:T_vec, 2])] # Access elements of T_vec
+posterior_sigma = mean(chain[:sigma])
+
+println("\n--- True Parameters ---")
+println("  Scale (s): ", true_s)
+println("  Rotation Angle (theta): ", true_theta, " radians (", rad2deg(true_theta), " degrees)")
+println("  Translation (T): ", true_T)
+println("  Noise Std Dev (sigma): ", true_sigma)
+
+println("\n--- Inferred Posterior Means ---")
+println("  Scale (s): ", posterior_s)
+println("  Rotation Angle (theta): ", posterior_theta, " radians (", rad2deg(posterior_theta), " degrees)")
+println("  Translation (T): ", posterior_T)
+println("  Noise Std Dev (sigma): ", posterior_sigma)
+
+# 6. Visualize the results
+plot(
+    X_original[:, 1], X_original[:, 2],
+    seriestype=:scatter, label="Original X", markersize=6, markercolor=:blue,
+    aspect_ratio=:equal, legend=:topleft, title="Bayesian Procrustes Analysis"
+)
+plot!(
+    Y_noisy[:, 1], Y_noisy[:, 2],
+    seriestype=:scatter, label="Noisy Y (Observed)", markersize=6, markercolor=:red
+)
+
+# Plot the transformed X using the inferred posterior mean parameters
+X_inferred_transformed = posterior_s .* (X_original * posterior_R) .+ posterior_T'
+plot!(
+    X_inferred_transformed[:, 1], X_inferred_transformed[:, 2],
+    seriestype=:scatter, label="Inferred Transformed X", markersize=6, markercolor=:green,
+    markeralpha=0.8
+)
+
+# Plot posterior distributions of the parameters
+StatsPlots.plot(chain, seriestype=:density, layout=(4,1), legend=false,
+    title=["Posterior of Scale" "Posterior of Angle" "Posterior of T_x" "Posterior of T_y" "Posterior of Sigma"],
+    xlabel=["s" "theta" "T_x" "T_y" "sigma"]
+)
+
+
+
+```
+
+#### Bayesian 3D Procrustes
+
+In 2D, rotation has only 1 degree of freedom (a single angle $\theta$). In 3D, rotation has 3 degrees of freedom. While you could use Euler angles (yaw, pitch, roll), they suffer from "gimbal lock" and discontinuities that can hinder MCMC sampling.
+
+A more robust approach for Turing is to use a Rotation Vector (also known as the Exponential Map). This represents rotation as a 3D vector where the direction is the axis of rotation and the magnitude is the angle. We then use Rodrigues' Rotation Formula to convert this vector into a $3 \times 3$ matrix.
+
+Parameterization: Instead of a single theta, we sample omega::Vector{3}.
+Helper Functions: The rodrigues and skew_3d functions are necessary to map the 3D vector space into the Special Orthogonal group $SO(3)$.
+Efficiency: Using the exponential map avoids the periodic boundary issues of Euler angles, allowing the NUTS sampler to move smoothly through the rotation space.
+
+
+This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when your data is noisy or you need a probabilistic estimate of how well two shapes align.
+
+```{julia}
+using Turing, LinearAlgebra
+
+function skew_3d(v)
+    return [0.0 -v[3] v[2]; v[3] 0.0 -v[1]; -v[2] v[1] 0.0]
+end
+
+function rotation_vector_to_matrix(omega)
+    theta = norm(omega)
+    if theta < 1e-12 return Matrix{eltype(omega)}(I, 3, 3) end
+    K = skew_3d(omega / theta)
+    return I + sin(theta) * K + (1 - cos(theta)) * K * K
+end
+
+@model function procrustes_analysis_3d(X_obs, Y_obs)
+    N, D = size(X_obs)
+    s ~ LogNormal(0.0, 1.0)
+    T_vec ~ MvNormal(zeros(D), 10.0)
+    
+    if D == 2
+        theta ~ Uniform(-π, π)
+        R = [cos(theta) -sin(theta); sin(theta) cos(theta)]
+    else
+        omega ~ MvNormal(zeros(3), π)
+        R = rotation_vector_to_matrix(omega)
+    end
+    
+    sigma ~ LogNormal(0.0, 1.0)
+    Y_pred = s .* (X_obs * R) .+ T_vec'
+
+    for i in 1:N
+        Y_obs[i, :] ~ MvNormal(Y_pred[i, :], sigma * I)
+    end
+end
+
+
+
+```
 
 $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
@@ -3775,8 +4612,8 @@ Use of TemporalGPs.jl is supposed to be fast .. but fails at the moment
 # using TemporalGPs, KernelFunctions, Distributions, Turing
 
  
-@model function model_ar1_temporalgp(y, x)
-    # x must be sorted for TemporalGPs
+@model function model_ar1_temporalgp(y, x, ::Type{T}=Float64) where {T}
+    # IMPORTANT: x must be strictly sorted for TemporalGPs to work.
     σ_obs ~ LogNormal(-2, 1)  # use of lognormal to stabilize variances
     σ_ar1 ~ LogNormal(0, 1)   # σ_ar1 aka "innovation" noise
     l ~ LogNormal(0, 1)     # Lengthscale 
@@ -3785,20 +4622,21 @@ Use of TemporalGPs.jl is supposed to be fast .. but fails at the moment
     kernel = kernel_ar1(σ_ar1, ρ) 
    
     # to_sde converts the GP to a state-space model: likelihood calculation O(N)
-    gp_ar1 = to_sde(GP(kernel), SArrayStorage(Float64)) # SArrayStorage is usually faster 
+    # SArrayStorage is faster  
+    gp_ar1 = to_sde(GP(kernel), SArrayStorage(T)) 
 
-    y ~ gp_ar1(x, σ_obs^2 + 1.0e-6 )
+    y ~ gp_ar1(x, σ_obs^2 + 1.0e-6)
 end
- 
 
-# ERROR: MethodError: no method matching Float64(::ForwardDiff.Dual{ForwardDiff.Tag{Turing.TuringTag, Float64}, Float64, 3})
-# The type `Float64` exists, but no method is defined for this combination of argument types when trying to construct it.
-
- 
 # partially correlated data
 x, y, z, u, X, Y, Z = example_data("correlated_data")
  
-model = model_ar1_temporalgp( y, x )  # note using actual x and not a quantized x ...
+# Pre-sort the data by x. Unsorted inputs are the primary cause of DomainErrors in TemporalGPs.
+idx = sortperm(x)
+xs = x[idx]
+ys = y[idx]
+
+model = model_ar1_temporalgp( ys, xs )
 
 chain = sample(model, NUTS(), 1000)
 
@@ -3808,11 +4646,11 @@ showall( summarize(chain) )
 function get_fast_samples(chain, x, y, x_post)
     # Direct access to parameters is faster than eachrow(DataFrame)
     sig_ar1s = chain[:σ_ar1]
-    rhos     = chain[:ρ]
+    ls       = chain[:l]
     sig_obss = chain[:σ_obs]
 
-    samples = map(sig_ar1s, rhos, sig_obss) do s_ar1, r, s_obs
-        k = s_ar1^2 * with_lengthscale(Matern12Kernel(), -1/log(r))
+    samples = map(sig_ar1s, ls, sig_obss) do s_ar1, l, s_obs
+        k = s_ar1^2 * with_lengthscale(Matern12Kernel(), l)
         f_sde = to_sde(GP(k))
       
         # O(N) Posterior conditioning
@@ -3821,7 +4659,7 @@ function get_fast_samples(chain, x, y, x_post)
         # O(N) Sampling
         return rand(p_f(x_post))
     end
-    return stack(samples, dims=2) # Results in a Matrix
+    return stack(samples) # Results in a Matrix [Time x Samples]
 end
 
 yp = get_fast_samples(chain, x, y, x_post)
@@ -9616,17 +10454,8 @@ For temporal GPs, this approach is optimized to scale as O(N), but seems to fail
 
 ```{julia}
 
-# 1. Define the O(N) Gaussian Processes
-function build_gp(σ_rw2, σ_ar1, ρ)
-    # TemporalGPs requires kernels that have a State-Space representation
-    k_rw2 = σ_rw2^2 * Matern32Kernel() # Smooth RW2 approx
-    k_ar1 = σ_ar1^2 * with_lengthscale(Matern12Kernel(), -1/log(ρ))
-  
-    # Wrap in TemporalGPs.to_sde for O(N) performance
-    return to_sde(GP(k_rw2)) + to_sde(GP(k_ar1))
-end
-
-@model function model_all_gp(y, x_time, u; nu)
+ 
+@model function model_all_gp(y, x_time, u, nu, ::Type{T}=Float64) where {T}
     # --- Hyperparameter Priors ---
     σ_obs ~ Exponential(1.0)
     σ_rw2 ~ Exponential(0.5)
@@ -9637,9 +10466,17 @@ end
     β_u ~ filldist(Normal(0, 10), nu)
   
     # --- Construct Latent Field ---
-    f_total = build_gp(σ_rw2, σ_ar1, ρ)
+    
+     # TemporalGPs requires kernels that have a State-Space representation
+    k_rw2 = σ_rw2^2 * Matern32Kernel() # Smooth RW2 approx
+    k_ar1 = σ_ar1^2 * with_lengthscale(Matern12Kernel(), -1/log(ρ))
   
-    # --- Efficient Likelihood ---
+    # to_sde converts the GP to a state-space model: likelihood calculation O(N)
+    # SArrayStorage is faster   
+    # Wrap in TemporalGPs.to_sde for O(N) performance
+ 
+    f_total =  to_sde( GP(k_rw2 + k_ar1), SArrayStorage(T) )
+    
     # TemporalGPs uses a specialized logpdf that runs in O(N)
     # We subtract fixed effects from y to use the zero-mean GP likelihood
     y_adj = y .- β_u[u]
@@ -9649,10 +10486,19 @@ end
  
 x, y, z, u, X, Y, Z = example_data("correlated_data")
   
-model = model_all_gp(y, x, u, nu=10)
+# Pre-sort the data by x. Unsorted inputs are the primary cause of DomainErrors in TemporalGPs.
+idx = sortperm(x)
+xs = x[idx]
+ys = y[idx]
+us = u[idx]
 
-# failing
+nu =10
+
+model = model_all_gp(ys, xs, us, nu)
+
+
 chain = sample(model, NUTS(), 500)
+ 
 
 ```
 ### Gaussian Markov random fields (GMRFs)
