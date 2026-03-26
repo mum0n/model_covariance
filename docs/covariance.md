@@ -988,7 +988,496 @@ $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 ### Binomial regression
 
+The standard Binomial distribution assumes that the probability of success p is constant for all trials. 
+
+```{julia}
+
+using StatsAPI # Provides logistic and logit functions
+using LinearAlgebra # For I (identity matrix)
+ 
+
+# 1. Generate Synthetic Data for Binomial Regression
+num_samples = 100
+
+# True coefficients
+true_intercept = -1.0
+true_beta1 = 0.5
+true_beta2 = 1.2
+
+# Predictor variables
+x1 = randn(num_samples) # Normal distribution
+x2 = rand(num_samples) * 5 # Uniform distribution
+
+# Create design matrix (intercept, x1, x2)
+X = hcat(ones(num_samples), x1, x2)
+
+# Calculate true linear predictor
+linear_predictor = X * [true_intercept, true_beta1, true_beta2]
+
+# Convert linear predictor to probability using the logistic (sigmoid) function
+probabilities = StatsAPI.logistic.(linear_predictor)
+
+# Generate binary outcomes (0 or 1) based on these probabilities
+y = [rand(Bernoulli(p)) for p in probabilities]
+
+println("Synthetic data generated. First 10 probabilities and outcomes:")
+display(hcat(probabilities[1:10], y[1:10]))
+
+# 2. Define the Bayesian Binomial Regression Model
+@model function binomial_regression(X, y)
+    # Number of predictors (including intercept) is the number of columns in X
+    num_predictors = size(X, 2)
+
+    # Priors for the regression coefficients (including intercept)
+    # We use a relatively broad Normal prior for each coefficient
+    beta ~ MvNormal(Zeros(num_predictors), I * 2.0) # Multivariate Normal with covariance I*2
+
+    # Calculate the linear predictor for each observation
+    linear_predictor_model = X * beta
+
+    # Transform the linear predictor to a probability using the logistic function
+    p = StatsAPI.logistic.(linear_predictor_model)
+
+    # Likelihood: Each observed outcome y[i] is a Bernoulli trial
+    # The dot syntax `.~` is used for vectorized likelihoods in Turing
+    y .~ Bernoulli.(p)
+end
+
+# 3. Instantiate and Sample from the Model
+# Create an instance of the model with our data
+model = binomial_regression(X, y)
+
+println("\nSampling from posterior (this may take a moment)...")
+# Sample from the posterior distribution using NUTS
+# It's good practice to run multiple chains and check convergence
+chain = sample(model, NUTS(0.65), 1000, 4) # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain)
+
+println("\nTrue Intercept: $(true_intercept)")
+println("True Beta1: $(true_beta1)")
+println("True Beta2: $(true_beta2)")
+
+println("\nPosterior Means for Coefficients:")
+println("Intercept (beta[1]): ", round(mean(chain[:beta___1]), digits=3))
+println("Beta1 (beta[2]): ", round(mean(chain[:beta___2]), digits=3))
+println("Beta2 (beta[3]): ", round(mean(chain[:beta___3]), digits=3))
+
+# You can also get credible intervals or plot the posterior distributions
+
+
+```
+
+### Binomial overdispersed (Beta-binomial)
+
+If the probability of success p varies from observation to observation (e.g., due to unmeasured factors), the observed variance will be higher than expected by the Binomial distribution, leading to overdispersion. The Beta-Binomial distribution models this by assuming that the success probability p for each observation is drawn from a Beta distribution.
+ 
+```{julia}
+
+using StatsAPI # Provides logistic and logit functions
+using Random
+using LinearAlgebra # For I (identity matrix)
+
+# Set a seed for reproducibility
+Random.seed!(456);
+
+# 1. Generate Synthetic Data for Beta-Binomial Regression
+num_samples = 100
+
+# True coefficients for the mean probability
+true_intercept_beta = -0.5
+true_beta1_beta = 0.7
+
+# Predictor variable
+x1_beta = randn(num_samples) # Normal distribution
+
+# Create design matrix (intercept, x1)
+X_beta = hcat(ones(num_samples), x1_beta)
+
+# Calculate true linear predictor for the mean probability
+linear_predictor_beta = X_beta * [true_intercept_beta, true_beta1_beta]
+
+# Convert linear predictor to mean probability using the logistic (sigmoid) function
+true_p_mean = StatsAPI.logistic.(linear_predictor_beta)
+
+# True overdispersion parameter (phi). Larger phi means less overdispersion.
+# Beta distribution parameters alpha and beta can be derived from p_mean and phi:
+# alpha = p_mean * phi
+# beta = (1 - p_mean) * phi
+true_phi = 5.0 # Example: some overdispersion. When phi -> infinity, Beta-Binomial -> Binomial.
+
+# Number of trials for each observation
+n_trials = rand(5:20, num_samples) # Each observation has between 5 and 20 trials
+
+# Generate count outcomes from a Beta-Binomial distribution
+y_beta_binom = Vector{Int}(undef, num_samples)
+for i in 1:num_samples
+    # Calculate alpha and beta for the Beta distribution for this observation's mean probability
+    alpha_i = true_p_mean[i] * true_phi
+    beta_i = (1 - true_p_mean[i]) * true_phi
+    
+    # The BetaBinomial distribution takes (n, alpha, beta)
+    y_beta_binom[i] = rand(BetaBinomial(n_trials[i], alpha_i, beta_i))
+end
+
+println("Synthetic Beta-Binomial data generated. First 10 observations:")
+display(hcat(n_trials[1:10], round.(true_p_mean[1:10], digits=3), y_beta_binom[1:10]))
+
+model function beta_binomial_regression(X, y, n_trials)
+    num_predictors = size(X, 2)
+
+    # Priors for the regression coefficients (including intercept) for p_mean
+    beta_coeffs ~ MvNormal(Zeros(num_predictors), I * 2.0) # Broad Normal prior
+
+    # Prior for the overdispersion parameter 'phi'.
+    # phi must be positive. A Gamma prior is suitable.
+    # Common parameterization: phi = alpha + beta.
+    # Smaller phi -> more overdispersion. Larger phi -> less overdispersion (approaching binomial).
+    phi ~ Gamma(2, 0.5) # Gamma(shape, scale) prior, ensuring positive values. Mean = shape*scale = 1.
+
+    # Calculate the linear predictor for each observation for the mean probability
+    linear_predictor_model = X * beta_coeffs
+
+    # Transform the linear predictor to the mean probability using the logistic function
+    p_mean_model = StatsAPI.logistic.(linear_predictor_model)
+
+    # Likelihood: Each observed count y[i] follows a Beta-Binomial distribution
+    # with n_trials[i] trials, mean p_mean_model[i], and dispersion phi.
+    # To use BetaBinomial(n, alpha, beta), we convert p_mean and phi to alpha and beta.
+    alpha = p_mean_model .* phi
+    beta = (1.0 .- p_mean_model) .* phi # Use 1.0 to ensure float multiplication
+
+    # The dot syntax `.~` is used for vectorized likelihoods in Turing
+    y .~ BetaBinomial.(n_trials, alpha, beta)
+end
+
+# 3. Instantiate and Sample from the Model
+# Create an instance of the model with our data
+model_beta_binom = beta_binomial_regression(X_beta, y_beta_binom, n_trials)
+
+println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+# It's good practice to run multiple chains and check convergence
+chain_beta_binom = sample(model_beta_binom, NUTS(0.65), 1000, 4) # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_beta_binom)
+
+println("\nTrue Intercept (beta_coeffs[1]): $(true_intercept_beta)")
+println("True Beta1 (beta_coeffs[2]): $(true_beta1_beta)")
+println("True Overdispersion Phi: $(true_phi)")
+
+println("\nPosterior Means for Coefficients:")
+println("Intercept (beta_coeffs[1]): ", round(mean(chain_beta_binom[:beta_coeffs___1]), digits=3))
+println("Beta1 (beta_coeffs[2]): ", round(mean(chain_beta_binom[:beta_coeffs___2]), digits=3))
+println("Overdispersion Phi: ", round(mean(chain_beta_binom[:phi]), digits=3))
+
+
+```
+
+
+
+
+### Negative binomial 
+
+For overdispersed count data
+
+
+```{julia}
+
+# 1. Generate Synthetic Data for Negative Binomial Regression
+num_samples = 100
+
+# True coefficients
+true_intercept = 1.0
+true_beta1 = 0.8
+true_beta2 = -0.5
+
+# True dispersion parameter for Negative Binomial (often 'r' or 'size')
+# Variance = μ + μ^2/r. Smaller r means more overdispersion.
+true_r = 2.0 # Example: some overdispersion
+
+# Predictor variables
+x1 = randn(num_samples) # Normal distribution
+x2 = rand(num_samples) * 3 # Uniform distribution
+
+# Create design matrix (intercept, x1, x2)
+X = hcat(ones(num_samples), x1, x2)
+
+# Calculate true linear predictor (log of the mean)
+linear_predictor = X * [true_intercept, true_beta1, true_beta2]
+
+# Convert linear predictor to mean count using the exponential (log link) function
+# Ensure means are positive
+μ_true = exp.(linear_predictor)
+
+# Generate count outcomes from a Negative Binomial distribution
+# NegativeBinomial(r, p) where p = r / (r + μ)
+# In Distributions.jl, NegativeBinomial(r, μ) means mean μ, variance μ + μ^2/r
+y = [rand(NegativeBinomial(true_r, p_val)) for p_val in μ_true] # p_val here is mean
+
+println("Synthetic data generated. First 10 true means and observed counts:")
+display(hcat(round.(μ_true[1:10], digits=2), y[1:10]))
+
+# 2. Define the Bayesian Negative Binomial Regression Model
+@model function neg_binomial_regression(X, y)
+    num_predictors = size(X, 2)
+
+    # Priors for the regression coefficients (including intercept)
+    beta ~ MvNormal(Zeros(num_predictors), I * 2.0) # Broad Normal prior
+
+    # Prior for the dispersion parameter `r` (or `size`)
+    # `r` must be positive. An Exponential or Gamma prior is suitable.
+    r_inv ~ InverseGamma(2, 3) # Prior for the inverse of the dispersion parameter
+    r = 1/r_inv # Actual dispersion parameter
+
+    # Calculate the linear predictor for each observation
+    linear_predictor_model = X * beta
+
+    # Transform the linear predictor to the mean count using the log link
+    μ = exp.(linear_predictor_model)
+
+    # Likelihood: Each observed count y[i] is a Negative Binomial trial
+    # We parameterize NegativeBinomial(r, μ) as (size, mean)
+    y .~ NegativeBinomial.(r, μ)
+end
+
+# 3. Instantiate and Sample from the Model
+# Create an instance of the model with our data
+model_neg_binom = neg_binomial_regression(X, y)
+
+println("\nSampling from posterior (this may take a moment)...")
+# Sample from the posterior distribution using NUTS
+# It's good practice to run multiple chains and check convergence
+chain_neg_binom = sample(model_neg_binom, NUTS(0.65), 1000, 4) # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_neg_binom)
+
+println("\nTrue Intercept: $(true_intercept)")
+println("True Beta1: $(true_beta1)")
+println("True Beta2: $(true_beta2)")
+println("True Dispersion r: $(true_r)")
+
+println("\nPosterior Means for Coefficients:")
+println("Intercept (beta[1]): ", round(mean(chain_neg_binom[:beta___1]), digits=3))
+println("Beta1 (beta[2]): ", round(mean(chain_neg_binom[:beta___2]), digits=3))
+println("Beta2 (beta[3]): ", round(mean(chain_neg_binom[:beta___3]), digits=3))
+
+# Note: Turing might sample r_inv or log_r instead of r directly. 
+# We defined r = 1/r_inv, so we can check the mean of 1/r_inv for the posterior mean of r.
+posterior_r_mean = mean(1 ./ chain_neg_binom[:r_inv])
+println("Posterior Mean for Dispersion r: ", round(posterior_r_mean, digits=3))
+
+# You can also get credible intervals or plot the posterior distributions for these parameters
+
+```
+
 ### Hurdle regression
+
+Hurdle regression is a powerful technique for modeling count data that has an excess of zeros. It works by modeling the data in two parts:
+
+A binary process: This part models whether a count occurs at all (i.e., is greater than zero) or not (is exactly zero). This is typically a Bernoulli or Binomial regression.
+A truncated count process: This part models the count value, given that it is greater than zero. This is typically a truncated Poisson or truncated Negative Binomial regression.
+Here's how we can implement a Bayesian Hurdle Poisson Regression 
+
+```{julia}
+
+# 1. Generate Synthetic Data for Hurdle Poisson Regression
+num_samples = 200
+
+# Predictor variables
+x1 = randn(num_samples) # Continuous predictor
+x2 = rand(0:1, num_samples) # Binary predictor
+
+# Design matrices (including intercept)
+X_hurdle = hcat(ones(num_samples), x1, x2)
+X_count = hcat(ones(num_samples), x1, x2)
+
+# True coefficients for the Hurdle part (Bernoulli: P(count > 0))
+true_beta_hurdle = [-1.5, 0.8, -0.5] # Intercept, x1_coeff, x2_coeff
+
+# True coefficients for the Count part (Truncated Poisson: mean for positive counts)
+true_beta_count = [1.0, 0.4, 0.7] # Intercept, x1_coeff, x2_coeff
+
+# Generate the binary outcome (is_positive)
+prob_positive = StatsAPI.logistic.(X_hurdle * true_beta_hurdle)
+is_positive = [rand(Bernoulli(p)) for p in prob_positive]
+
+# Generate the count outcomes
+y_obs = zeros(Int, num_samples)
+for i in 1:num_samples
+    if is_positive[i] == 1
+        # If the hurdle is passed, generate a count from a Truncated Poisson distribution
+        lambda_i = exp(X_count[i,:]' * true_beta_count)
+        # Truncated Poisson at 0 means values must be > 0 (i.e., >= 1)
+        y_obs[i] = rand(Truncated(Poisson(lambda_i), 1, Inf))
+    else
+        y_obs[i] = 0 # Count is zero if hurdle is not passed
+    end
+end
+
+println("Synthetic Hurdle Poisson data generated. First 10 observations:")
+display(hcat(round.(prob_positive[1:10], digits=3), is_positive[1:10], y_obs[1:10]))
+
+println("\nNumber of zeros in generated data: ", sum(y_obs .== 0), " out of ", num_samples)
+
+
+@model function hurdle_poisson_regression(X_hurdle, X_count, y_obs)
+    num_samples = length(y_obs)
+    num_predictors_hurdle = size(X_hurdle, 2)
+    num_predictors_count = size(X_count, 2)
+
+    # Priors for hurdle coefficients (binary part)
+    beta_hurdle ~ MvNormal(Zeros(num_predictors_hurdle), I * 2.0)
+
+    # Priors for count coefficients (positive part)
+    beta_count ~ MvNormal(Zeros(num_predictors_count), I * 2.0)
+
+    # Calculate probabilities for the 'is positive' part (P(y > 0))
+    p_positive = StatsAPI.logistic.(X_hurdle * beta_hurdle)
+
+    # Iterate through observations for the likelihood
+    for i in 1:num_samples
+        if y_obs[i] == 0
+            # If observed count is zero, it means the hurdle was NOT passed.
+            # We model this directly as a Bernoulli outcome of 0.
+            0 ~ Bernoulli(p_positive[i])
+        else
+            # If observed count is positive, it means the hurdle WAS passed,
+            # AND the count itself follows a truncated Poisson distribution.
+
+            # 1. Hurdle part: The event y > 0 occurred.
+            1 ~ Bernoulli(p_positive[i])
+
+            # 2. Count part: The positive count follows a Truncated Poisson distribution.
+            # Calculate lambda (mean) for the count part for this observation
+            lambda_i = exp(X_count[i,:]' * beta_count)
+
+            # Likelihood for positive counts, using a truncated Poisson. (Truncated at 0 for >0 counts)
+            y_obs[i] ~ Truncated(Poisson(lambda_i), 1, Inf) # Values must be >= 1 (i.e., > 0)
+        end
+    end
+end
+
+# 3. Instantiate and Sample from the Model
+# Create an instance of the model with our data
+model_hurdle = hurdle_poisson_regression(X_hurdle, X_count, y_obs)
+
+println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+chain_hurdle = sample(model_hurdle, NUTS(0.65), 1000, 4) # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_hurdle)
+
+println("\nTrue Hurdle Coefficients: $(true_beta_hurdle)")
+println("True Count Coefficients: $(true_beta_count)")
+
+println("\nPosterior Means for Hurdle Coefficients (beta_hurdle):")
+println("Intercept: ", round(mean(chain_hurdle[:beta_hurdle___1]), digits=3))
+println("X1 Coeff: ", round(mean(chain_hurdle[:beta_hurdle___2]), digits=3))
+println("X2 Coeff: ", round(mean(chain_hurdle[:beta_hurdle___3]), digits=3))
+
+println("\nPosterior Means for Count Coefficients (beta_count):")
+println("Intercept: ", round(mean(chain_hurdle[:beta_count___1]), digits=3))
+println("X1 Coeff: ", round(mean(chain_hurdle[:beta_count___2]), digits=3))
+println("X2 Coeff: ", round(mean(chain_hurdle[:beta_count___3]), digits=3))
+
+```
+
+
+### MaxEnt SPDM
+
+"Maxent Regression" in the context of species distribution modeling like the MaxEnt software, we are typically aiming to model the probability of a species being present (a binary outcome) given various environmental features. In a Bayesian framework, the most common and robust way to achieve this is through Bayesian Logistic Regression.
+
+Bayesian Logistic Regression models the probability of a binary event using a logistic (sigmoid) link function to connect a linear combination of predictors to the probability of the event. This directly aligns with the goal of MaxEnt-like models to predict occurrence probabilities.
+
+```{julia}
+
+# 1. Generate Synthetic Data for Species Presence/Absence (Maxent-like)
+num_locations = 200
+
+# True coefficients for environmental predictors
+true_intercept_maxent = -1.0  # Baseline probability
+true_coeff_temp = 0.8       # Effect of temperature
+true_coeff_precip = -0.4    # Effect of precipitation
+
+# Environmental predictor variables
+temperature = rand(Uniform(10, 30), num_locations) # Example: Average Annual Temperature (Celsius)
+precipitation = rand(Normal(1000, 200), num_locations) # Example: Annual Precipitation (mm)
+
+# Standardize predictors for better model convergence (common practice)
+temp_scaled = (temperature .- mean(temperature)) ./ std(temperature)
+precip_scaled = (precipitation .- mean(precipitation)) ./ std(precipitation)
+
+# Create design matrix (intercept, temperature, precipitation)
+X_maxent = hcat(ones(num_locations), temp_scaled, precip_scaled)
+
+# Calculate true linear predictor
+linear_predictor_maxent = X_maxent * [true_intercept_maxent, true_coeff_temp, true_coeff_precip]
+
+# Convert linear predictor to probability of species presence using the logistic function
+prob_presence = StatsAPI.logistic.(linear_predictor_maxent)
+
+# Generate binary outcomes (0 = absence, 1 = presence) based on these probabilities
+species_presence = [rand(Bernoulli(p)) for p in prob_presence]
+
+println("Synthetic Species Distribution Data Generated. First 10 locations:")
+display(hcat(round.(temperature[1:10], digits=1), round.(precipitation[1:10], digits=0), round.(prob_presence[1:10], digits=3), species_presence[1:10]))
+println("\nNumber of species presences: ", sum(species_presence), " out of ", num_locations)
+
+@model function bayesian_maxent_sdm(X, y)
+    num_predictors = size(X, 2)
+
+    # Priors for the regression coefficients (intercept, temp_coeff, precip_coeff)
+    # Broad Normal priors are often suitable for coefficients
+    beta_coeffs ~ MvNormal(Zeros(num_predictors), I * 2.0) 
+
+    # Calculate the linear predictor for each observation
+    linear_predictor_model = X * beta_coeffs
+
+    # Transform the linear predictor to the probability of presence using the logistic function
+    p_presence_model = StatsAPI.logistic.(linear_predictor_model)
+
+    # Likelihood: Each observed species presence/absence y[i] is a Bernoulli trial
+    y .~ Bernoulli.(p_presence_model)
+end
+
+# 3. Instantiate and Sample from the Model
+# Create an instance of the model with our data
+model_sdm = bayesian_maxent_sdm(X_maxent, species_presence)
+
+println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+chain_sdm = sample(model_sdm, NUTS(0.65), 1000, 4) # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_sdm)
+
+println("\nTrue Coefficients:")
+println("Intercept: $(true_intercept_maxent)")
+println("Temperature Coeff: $(true_coeff_temp)")
+println("Precipitation Coeff: $(true_coeff_precip)")
+
+println("\nPosterior Means for Coefficients:")
+println("Intercept (beta_coeffs[1]): ", round(mean(chain_sdm[:beta_coeffs___1]), digits=3))
+println("Temperature Coeff (beta_coeffs[2]): ", round(mean(chain_sdm[:beta_coeffs___2]), digits=3))
+println("Precipitation Coeff (beta_coeffs[3]): ", round(mean(chain_sdm[:beta_coeffs___3]), digits=3))
+
+# You can further analyze the chain for credible intervals, diagnostics, or make predictions
+# For example, to predict probabilities for new locations, you'd use the posterior means of beta_coeffs.
+# new_X = hcat(ones(1), new_temp_scaled, new_precip_scaled)
+# predicted_prob = StatsAPI.logistic(new_X * [mean(chain_sdm[:beta_coeffs___1]), ...])
+
+
+
+```
+
+
+
+
 
 ## Nonlinear Regression
 
@@ -3812,16 +4301,941 @@ end
 $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 ### Classification
+ 
+#### Discrete Functions Analysis
+Discriminant Functions Analysis (DFA) aims to find linear combinations of predictor variables that best separate two or more classes or groups. In a Bayesian context, especially when dealing with more than two groups, this is commonly achieved through Bayesian Multinomial Logistic Regression (also known as Softmax Regression).
+
+This model estimates the probability of an observation belonging to each of the several classes, based on a set of predictor variables. The 'discriminant functions' are essentially the linear predictors for each category, and the model estimates the coefficients for these functions.
+
+
+```{julia}
+%%julia
+# Pkg.add("Turing")
+# Pkg.add("Distributions")
+# Pkg.add("LinearAlgebra")
+# Pkg.add("StatsAPI")
+using Turing
+using Distributions
+using LinearAlgebra # For I (identity matrix)
+using StatsAPI # For softmax
+using Random
+
+# Set a seed for reproducibility
+Random.seed!(987);
+
+# 1. Generate Synthetic Data for Multinomial Logistic Regression (DFA-like scenario)
+num_samples = 300
+num_predictors = 2
+num_classes = 3 # Let's have 3 classes (0, 1, 2)
+
+# Predictor variables
+x1 = randn(num_samples) # Predictor 1
+x2 = randn(num_samples) # Predictor 2
+
+# Design matrix (including intercept)
+X_multinom = hcat(ones(num_samples), x1, x2)
+
+# True coefficients for each class. One class is typically used as a reference (e.g., class 1 is all zeros).
+# The coefficients represent the linear predictor for each class relative to the reference.
+# Size: (num_predictors + 1) x (num_classes - 1)
+
+# True coefficients for Class 2 vs Class 1 (reference)
+true_beta_class2 = [0.5, 1.0, -0.5] # Intercept, x1_coeff, x2_coeff
+
+# True coefficients for Class 3 vs Class 1 (reference)
+true_beta_class3 = [-0.8, -0.7, 1.2] # Intercept, x1_coeff, x2_coeff
+
+# Combine into a matrix of coefficients, where the first column is for the reference class (all zeros)
+true_betas_all = hcat(zeros(num_predictors + 1), true_beta_class2, true_beta_class3)
+
+# Calculate the linear predictors for each class for each observation
+linear_predictors = X_multinom * true_betas_all # num_samples x num_classes
+
+# Convert linear predictors to probabilities for each class using softmax
+# StatsAPI.softmax operates on columns by default, so we'll transpose
+probabilities_per_class = permutedims(StatsAPI.softmax(permutedims(linear_predictors)))
+
+# Generate class labels (y) based on these probabilities
+y_multinom = Vector{Int}(undef, num_samples)
+for i in 1:num_samples
+    # Categorical(p) expects probabilities for each category
+    y_multinom[i] = rand(Categorical(probabilities_per_class[i, :]))
+end
+
+println("Synthetic Multinomial Data Generated. First 10 observations:")
+display(hcat(round.(x1[1:10], digits=2), round.(x2[1:10], digits=2), round.(probabilities_per_class[1:10,:], digits=2), y_multinom[1:10]))
+
+println("\nCounts per class: ", StatsBase.countmap(y_multinom))
+
+  
+# Pkg.add("StatsBase") # For countmap in data generation
+using StatsBase # For countmap
+
+# 2. Define the Bayesian Multinomial Logistic Regression Model
+@model function bayesian_multinomial_logistic_regression(X, y, num_classes)
+    num_samples = length(y)
+    num_predictors_with_intercept = size(X, 2)
+
+    # Priors for the regression coefficients.
+    # One class (e.g., the first class, index 1) is typically set as the reference,
+    # so we only need coefficients for (num_classes - 1) comparisons.
+    # The coefficients for the reference class are implicitly zero.
+    
+    # `beta_coeffs` will be a matrix of size (num_predictors + 1) x (num_classes - 1).
+    # MvNormal is for vectors, so we declare individual coefficient vectors.
+    
+    # The coefficients for class 2 (relative to class 1)
+    beta_class2 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
+    # The coefficients for class 3 (relative to class 1)
+    beta_class3 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
+
+    # Construct the full matrix of coefficients for all classes
+    # The first column corresponds to the reference class (all zeros)
+    beta_matrix = hcat(Zeros(num_predictors_with_intercept), beta_class2, beta_class3)
+
+    # Calculate the linear predictors for each class for each observation
+    linear_predictors_model = X * beta_matrix # num_samples x num_classes
+
+    # Convert linear predictors to probabilities for each class using softmax
+    # StatsAPI.softmax operates on columns by default, so we permute (transpose) and then permute back
+    probabilities_per_class_model = permutedims(StatsAPI.softmax(permutedims(linear_predictors_model)))
+
+    # Likelihood: Each observed class label y[i] is a draw from a Categorical distribution
+    for i in 1:num_samples
+        y[i] ~ Categorical(probabilities_per_class_model[i, :])
+    end
+end
+
+# 3. Instantiate and Sample from the Model
+# Create an instance of the model with our data
+model_multinom = bayesian_multinomial_logistic_regression(X_multinom, y_multinom, num_classes);
+
+println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+chain_multinom = sample(model_multinom, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_multinom)
+
+println("\nTrue Coefficients (Class 2 vs Class 1):")
+println("Intercept: $(true_beta_class2[1])")
+println("X1 Coeff: $(true_beta_class2[2])")
+println("X2 Coeff: $(true_beta_class2[3])")
+
+println("\nPosterior Means for Coefficients (Class 2 vs Class 1):")
+println("Intercept (beta_class2[1]): ", round(mean(chain_multinom[:beta_class2___1]), digits=3))
+println("X1 Coeff (beta_class2[2]): ", round(mean(chain_multinom[:beta_class2___2]), digits=3))
+println("X2 Coeff (beta_class2[3]): ", round(mean(chain_multinom[:beta_class2___3]), digits=3))
+
+println("\nTrue Coefficients (Class 3 vs Class 1):")
+println("Intercept: $(true_beta_class3[1])")
+println("X1 Coeff: $(true_beta_class3[2])")
+println("X2 Coeff: $(true_beta_class3[3])")
+
+println("\nPosterior Means for Coefficients (Class 3 vs Class 1):")
+println("Intercept (beta_class3[1]): ", round(mean(chain_multinom[:beta_class3___1]), digits=3))
+println("X1 Coeff (beta_class3[2]): ", round(mean(chain_multinom[:beta_class3___2]), digits=3))
+println("X2 Coeff (beta_class3[3]): ", round(mean(chain_multinom[:beta_class3___3]), digits=3))
+
+# These posterior mean coefficients define your 'discriminant functions' for each class.
+# You can use them to predict class probabilities for new data points.
+
+```
+#### Softmax 
+
+Same as Bayesian multinomial regression (i.e. DFA)
+
+```{julia}
+%%julia
+# Pkg.add("Turing")
+# Pkg.add("Distributions")
+# Pkg.add("LinearAlgebra")
+# Pkg.add("Random")
+# Pkg.add("StatsAPI") # For softmax function
+# Pkg.add("StatsBase") # For countmap in data generation
+
+using Turing
+using Distributions
+using LinearAlgebra # For I (identity matrix) and Zeros
+using Random
+using StatsAPI # For softmax
+using StatsBase # For countmap
+
+# Set a seed for reproducibility
+Random.seed!(987);
+
+%%julia
+# 1. Generate Synthetic Data for Multinomial Logistic Regression (Softmax Regression)
+num_samples = 300
+num_predictors = 2
+num_classes = 3 # Let's have 3 classes (1, 2, 3)
+
+# Predictor variables
+x1 = randn(num_samples) # Predictor 1
+x2 = randn(num_samples) # Predictor 2
+
+# Design matrix (including intercept)
+X_softmax = hcat(ones(num_samples), x1, x2)
+
+# True coefficients for each class. One class is typically used as a reference (e.g., class 1 is all zeros).
+# The coefficients represent the linear predictor for each class relative to the reference.
+# Size: (num_predictors + 1) x (num_classes - 1)
+
+# True coefficients for Class 2 vs Class 1 (reference)
+true_beta_class2 = [0.5, 1.0, -0.5] # Intercept, x1_coeff, x2_coeff
+
+# True coefficients for Class 3 vs Class 1 (reference)
+true_beta_class3 = [-0.8, -0.7, 1.2] # Intercept, x1_coeff, x2_coeff
+
+# Combine into a matrix of coefficients, where the first column is for the reference class (all zeros)
+true_betas_all = hcat(zeros(num_predictors + 1), true_beta_class2, true_beta_class3)
+
+# Calculate the linear predictors for each class for each observation
+linear_predictors = X_softmax * true_betas_all # num_samples x num_classes
+
+# Convert linear predictors to probabilities for each class using softmax
+# StatsAPI.softmax operates on columns by default, so we'll transpose for row-wise operation
+probabilities_per_class = permutedims(StatsAPI.softmax(permutedims(linear_predictors)))
+
+# Generate class labels (y) based on these probabilities
+y_softmax = Vector{Int}(undef, num_samples)
+for i in 1:num_samples
+    # Categorical(p) expects probabilities for each category
+    y_softmax[i] = rand(Categorical(probabilities_per_class[i, :]))
+end
+
+println("Synthetic Softmax Regression Data Generated. First 10 observations (X1, X2, Probabilities for classes 1,2,3, Assigned Class):")
+display(hcat(round.(x1[1:10], digits=2), round.(x2[1:10], digits=2), round.(probabilities_per_class[1:10,:], digits=2), y_softmax[1:10]))
+
+println("\nCounts per class: ", StatsBase.countmap(y_softmax))
+
+%%julia
+# 2. Define the Bayesian Softmax Regression Model
+@model function bayesian_softmax_regression(X, y, num_classes)
+    num_samples = length(y)
+    num_predictors_with_intercept = size(X, 2)
+
+    # Priors for the regression coefficients.
+    # One class (e.g., the first class, index 1) is typically set as the reference,
+    # so we only need coefficients for (num_classes - 1) comparisons.
+    # The coefficients for the reference class are implicitly zero.
+
+    # `beta_coeffs` will be a matrix of size (num_predictors + 1) x (num_classes - 1).
+    # MvNormal is for vectors, so we declare individual coefficient vectors.
+
+    # Coefficients for class 2 (relative to class 1)
+    beta_class2 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
+    # Coefficients for class 3 (relative to class 1)
+    beta_class3 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
+
+    # Construct the full matrix of coefficients, where the first column is for the reference class (all zeros)
+    beta_matrix = hcat(Zeros(num_predictors_with_intercept), beta_class2, beta_class3)
+
+    # Calculate the linear predictors for each class for each observation
+    linear_predictors_model = X * beta_matrix # num_samples x num_classes
+
+    # Convert linear predictors to probabilities for each class using softmax
+    # StatsAPI.softmax operates on columns by default, so we permute (transpose) and then permute back
+    probabilities_per_class_model = permutedims(StatsAPI.softmax(permutedims(linear_predictors_model)))
+
+    # Likelihood: Each observed class label y[i] is a draw from a Categorical distribution
+    for i in 1:num_samples
+        y[i] ~ Categorical(probabilities_per_class_model[i, :])
+    end
+end
+
+# Instantiate the model with our data
+model_softmax = bayesian_softmax_regression(X_softmax, y_softmax, num_classes);
+
+println("Bayesian Softmax Regression model defined.")
+
+%%julia
+# 3. Sample from the Posterior Distribution
+println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
+chain_softmax = sample(model_softmax, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_softmax)
+
+println("\nTrue Coefficients (Class 2 vs Class 1):")
+println("  Intercept: $(true_beta_class2[1])")
+println("  X1 Coeff: $(true_beta_class2[2])")
+println("  X2 Coeff: $(true_beta_class2[3])")
+
+println("\nPosterior Means for Coefficients (Class 2 vs Class 1):")
+println("  Intercept (beta_class2[1]): ", round(mean(chain_softmax[:beta_class2___1]), digits=3))
+println("  X1 Coeff (beta_class2[2]): ", round(mean(chain_softmax[:beta_class2___2]), digits=3))
+println("  X2 Coeff (beta_class2[3]): ", round(mean(chain_softmax[:beta_class2___3]), digits=3))
+
+println("\nTrue Coefficients (Class 3 vs Class 1):")
+println("  Intercept: $(true_beta_class3[1])")
+println("  X1 Coeff: $(true_beta_class3[2])")
+println("  X2 Coeff: $(true_beta_class3[3])")
+
+println("\nPosterior Means for Coefficients (Class 3 vs Class 1):")
+println("  Intercept (beta_class3[1]): ", round(mean(chain_softmax[:beta_class3___1]), digits=3))
+println("  X1 Coeff (beta_class3[2]): ", round(mean(chain_softmax[:beta_class3___2]), digits=3))
+println("  X2 Coeff (beta_class3[3]): ", round(mean(chain_softmax[:beta_class3___3]), digits=3))
+
+println("\nInterpretation: These posterior mean coefficients represent the estimated linear effects of the predictors on the log-odds of belonging to a specific class (relative to the reference class). They can be used to calculate predicted class probabilities for new data points.")
+
+```
+
 
 #### K-means
 
-#### Random Forest
+K-Means is a classical clustering algorithm that aims to partition n observations into k clusters. A direct Bayesian probabilistic counterpart to K-Means is a Bayesian Gaussian Mixture Model (GMM). Instead of finding hard assignments and centroids through optimization, a Bayesian GMM models the data as being generated from a mixture of k Gaussian distributions, each representing a cluster. It estimates the parameters of these Gaussian distributions (means, covariances) and the mixing probabilities (weights) for each cluster, while also inferring the probabilistic assignment of each data point to a cluster.
 
-#### Discrete Functions Analysis
+```{julai}
 
-#### Clustering
+# Set a seed for reproducibility
+Random.seed!(1234);
+
+# 1. Generate Synthetic Data for GMM (with 3 clusters)
+num_samples = 300
+num_dims = 2
+num_clusters = 3
+
+# True cluster parameters
+true_μ = [
+    [1.0, 1.0],  # Mean for cluster 1
+    [5.0, 1.0],  # Mean for cluster 2
+    [3.0, 5.0]   # Mean for cluster 3
+]
+
+true_Σ = [
+    Matrix(Diagonal([0.5, 0.5])), # Covariance for cluster 1 (spherical)
+    Matrix(Diagonal([0.8, 0.8])), # Covariance for cluster 2
+    Matrix(Diagonal([0.6, 0.6]))  # Covariance for cluster 3
+]
+
+# True mixing proportions (how many points belong to each cluster)
+true_π = [0.3, 0.4, 0.3]
+
+# Generate cluster assignments for each sample
+cluster_assignments = [rand(Categorical(true_π)) for _ in 1:num_samples]
+
+# Generate data points based on assignments
+data_points = Matrix{Float64}(undef, num_samples, num_dims)
+for i in 1:num_samples
+    k = cluster_assignments[i]
+    data_points[i, :] = rand(MvNormal(true_μ[k], true_Σ[k]))
+end
+
+# Convert to a format suitable for plotting and Turing (e.g., 2 x N matrix)
+X_gmm = permutedims(data_points)
+
+println("Synthetic GMM Data Generated. First 10 observations:")
+display(data_points[1:10,:])
+
+# Plot the synthetic data to visualize clusters
+scatter(X_gmm[1,:], X_gmm[2,:],
+        group=cluster_assignments,
+        xlabel="Dimension 1",
+        ylabel="Dimension 2",
+        title="Synthetic Data for Bayesian GMM",
+        legend=:topleft,
+
+
+@model function bayesian_gmm(X, num_dims, num_clusters)
+    num_samples = size(X, 2)
+
+    # Priors for mixing proportions (weights) of clusters
+    # Dirichlet prior ensures sum to 1 and positivity
+    π ~ Dirichlet(num_clusters, 1.0) # Symmetric Dirichlet prior
+
+    # Priors for cluster means (μ)
+    # Each mean is a vector of num_dims dimensions
+    μ = [Vector{Float64}(undef, num_dims) for _ in 1:num_clusters]
+    for k in 1:num_clusters
+        μ[k] ~ MvNormal(Zeros(num_dims), 5.0 * I) # Broad Normal prior for means
+    end
+
+    # Priors for cluster covariances (Σ)
+    # For simplicity, we'll assume diagonal covariance matrices (independent dimensions)
+    # and model the standard deviations.
+    σ = [Vector{Float64}(undef, num_dims) for _ in 1:num_clusters]
+    for k in 1:num_clusters
+        for d in 1:num_dims
+            # InverseGamma prior for variance, then sqrt for std dev.
+            σ[k][d] ~ InverseGamma(2, 3) |> sqrt # Prior for standard deviations
+        end
+    end
+
+    # Create covariance matrices from standard deviations
+    Σ = [Matrix(Diagonal(σ[k].^2)) for k in 1:num_clusters]
+
+    # Latent variable for cluster assignment for each data point
+    # Each z[i] is a categorical variable indicating which cluster point i belongs to
+    z = Vector{Int}(undef, num_samples)
+
+    # Likelihood: Each data point is assigned to a cluster, then drawn from that cluster's Gaussian
+    for i in 1:num_samples
+        # Cluster assignment z[i] is drawn from Categorical distribution with probabilities π
+        z[i] ~ Categorical(π)
+        
+        # Data point X[:, i] is drawn from the Gaussian of its assigned cluster z[i]
+        X[:, i] ~ MvNormal(μ[z[i]], Σ[z[i]])
+    end
+end
+
+# 3. Instantiate and Sample from the Model
+# Create an instance of the model with our data and desired number of clusters
+model_gmm = bayesian_gmm(X_gmm, num_dims, num_clusters);
+
+println("\nSampling from posterior (this may take a moment, especially for GMMs)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+# Adjust number of samples and chains as needed for convergence
+chain_gmm = sample(model_gmm, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_gmm)
+
+println("\nTrue Cluster Means:")
+for k in 1:num_clusters
+    println("  Cluster $(k): $(true_μ[k])")
+end
+
+println("\nPosterior Means for Cluster Means (μ):")
+for k in 1:num_clusters
+    # Extract samples for μ[k]
+    μk_samples_dim1 = mean(chain_gmm["μ[" * string(k) * "]_1"])
+    μk_samples_dim2 = mean(chain_gmm["μ[" * string(k) * "]_2"])
+    println("  Cluster $(k): [ $(round(μk_samples_dim1, digits=2)), $(round(μk_samples_dim2, digits=2)) ]")
+end
+
+println("\nTrue Mixing Proportions (π): $(true_π)")
+println("Posterior Means for Mixing Proportions (π):")
+for k in 1:num_clusters
+    println("  π[$(k)]: $(round(mean(chain_gmm["π[" * string(k) * "]"]), digits=3))")
+end
+
+# Visualize the inferred cluster means on top of the data
+plot_gmm = scatter(X_gmm[1,:], X_gmm[2,:],
+                   xlabel="Dimension 1",
+                   ylabel="Dimension 2",
+                   title="Bayesian GMM: Data with Inferred Cluster Means",
+                   legend=:topleft,
+                   aspect_ratio=:equal,
+                   markersize=3,
+                   markeralpha=0.6,
+                   color=:lightgray,
+                   label="Data Points",
+                   dpi=300)
+
+# Plot inferred means
+inferred_means_dim1 = [mean(chain_gmm["μ[" * string(k) * "]_1"]) for k in 1:num_clusters]
+inferred_means_dim2 = [mean(chain_gmm["μ[" * string(k) * "]_2"]) for k in 1:num_clusters]
+
+scatter!(plot_gmm, inferred_means_dim1, inferred_means_dim2,
+         marker=:star5,
+         markersize=10,
+         markercolor=[:red, :blue, :green][1:num_clusters],
+         markerstrokecolor=:black,
+         markerstrokewidth=1,
+         label="Inferred Cluster Mean",
+         series_annotations=text.(1:num_clusters, :bottom, 8, :black))
+
+display(plot_gmm)
+
+```
+
+
+
+#### Cluster Analysis
 
 Using metrics of difference, distance or similarity, classify into groups ... numerous methods. Highly subjective.
+
+
+
+```{julia}
+
+using Turing
+using Distributions
+using LinearAlgebra # For I (identity matrix)
+using Random
+
+# Set a seed for reproducibility
+Random.seed!(5678);
+
+# 1. Generate Synthetic Mixed Data
+num_samples = 200
+num_clusters = 2
+
+# Parameters for data types:
+# Continuous: 1 dimension
+# Binomial: 1 dimension (e.g., number of successes out of 10 trials)
+# Multinomial: 1 dimension (e.g., counts in 3 categories)
+
+# True cluster parameters
+# Cluster 1
+μ_true_1 = [2.0]     # Continuous mean
+p_true_1 = 0.2      # Binomial success probability
+θ_true_1 = [0.6, 0.3, 0.1] # Multinomial probabilities for 3 categories
+
+# Cluster 2
+μ_true_2 = [7.0]
+p_true_2 = 0.8
+θ_true_2 = [0.1, 0.2, 0.7]
+
+# Combine into arrays for the model
+true_μ = [μ_true_1, μ_true_2]
+true_p = [p_true_1, p_true_2]
+true_θ = [θ_true_1, θ_true_2]
+
+true_π = [0.4, 0.6] # Mixing proportions
+
+# Binomial trials (fixed for all points)
+binomial_trials = 10
+# Multinomial categories (fixed)
+multinomial_categories = 3
+# Total count for multinomial (fixed for all points)
+multinomial_total_count = 20
+
+# Store generated data
+data_continuous = Vector{Float64}(undef, num_samples)
+data_binomial = Vector{Int}(undef, num_samples)
+data_multinomial = Matrix{Int}(undef, num_samples, multinomial_categories)
+cluster_assignments_true = Vector{Int}(undef, num_samples)
+
+for i in 1:num_samples
+    # Assign cluster
+    k = rand(Categorical(true_π))
+    cluster_assignments_true[i] = k
+
+    # Generate continuous data
+    data_continuous[i] = rand(Normal(true_μ[k][1], 1.0)) # Assuming fixed std dev for simplicity
+
+    # Generate binomial data
+    data_binomial[i] = rand(Binomial(binomial_trials, true_p[k]))
+
+    # Generate multinomial data
+    data_multinomial[i, :] = rand(Multinomial(multinomial_total_count, true_θ[k]))
+end
+
+println("Synthetic Mixed Data Generated. First 5 observations:")
+display(hcat(data_continuous[1:5], data_binomial[1:5], data_multinomial[1:5, :], cluster_assignments_true[1:5]))
+
+# For Turing, we'll pass these as separate arrays
+
+
+@model function bayesian_mixed_data_gmm(data_cont, data_binom, data_mult, 
+                                         num_clusters, num_cont_dims, binomial_trials, multinomial_total_count, multinomial_categories)
+    num_samples = length(data_cont)
+
+    # Priors for mixing proportions (weights) of clusters
+    π ~ Dirichlet(num_clusters, 1.0)
+
+    # Priors for continuous component parameters (mean and standard deviation)
+    μ_cont = [Vector{Float64}(undef, num_cont_dims) for _ in 1:num_clusters]
+    σ_cont = [Vector{Float64}(undef, num_cont_dims) for _ in 1:num_clusters]
+    for k in 1:num_clusters
+        μ_cont[k] ~ MvNormal(Zeros(num_cont_dims), 5.0 * I) # Broad Normal prior for means
+        for d in 1:num_cont_dims
+            σ_cont[k][d] ~ InverseGamma(2, 3) |> sqrt # Prior for standard deviations
+        end
+    end
+    Σ_cont = [Matrix(Diagonal(σ_cont[k].^2)) for k in 1:num_clusters]
+
+    # Priors for binomial component parameters (success probability)
+    p_binom = Vector{Float64}(undef, num_clusters)
+    for k in 1:num_clusters
+        p_binom[k] ~ Beta(1, 1) # Uniform Beta prior for success probability
+    end
+
+    # Priors for multinomial component parameters (category probabilities)
+    θ_mult = [Vector{Float64}(undef, multinomial_categories) for _ in 1:num_clusters]
+    for k in 1:num_clusters
+        θ_mult[k] ~ Dirichlet(multinomial_categories, 1.0) # Symmetric Dirichlet prior
+    end
+
+    # Latent variable for cluster assignment for each data point
+    z = Vector{Int}(undef, num_samples)
+
+    # Likelihood: Each data point's components are drawn from its assigned cluster's parameters
+    for i in 1:num_samples
+        # Cluster assignment z[i] is drawn from Categorical distribution with probabilities π
+        z[i] ~ Categorical(π)
+
+        # Continuous data component likelihood
+        data_cont[i] ~ MvNormal(μ_cont[z[i]], Σ_cont[z[i]])
+
+        # Binomial data component likelihood
+        data_binom[i] ~ Binomial(binomial_trials, p_binom[z[i]])
+
+        # Multinomial data component likelihood
+        data_mult[i, :] ~ Multinomial(multinomial_total_count, θ_mult[z[i]])
+    end
+end
+
+# Instantiate and Sample from the Model
+num_cont_dims = 1 # We generated 1 continuous dimension
+
+model_mixed = bayesian_mixed_data_gmm(data_continuous, data_binomial, data_multinomial,
+                                      num_clusters, num_cont_dims, binomial_trials, multinomial_total_count, multinomial_categories);
+
+println("\nSampling from posterior for mixed-data GMM (this will take longer!)...")
+chain_mixed = sample(model_mixed, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# Display and Interpret Results
+display(chain_mixed)
+
+println("\nTrue Mixing Proportions (π): $(true_π)")
+println("Posterior Means for Mixing Proportions (π):")
+for k in 1:num_clusters
+    println("  π[$(k)]: $(round(mean(chain_mixed["π[" * string(k) * "]"]), digits=3))")
+end
+
+println("\nTrue Continuous Means (μ_cont): $(true_μ)")
+println("Posterior Means for Continuous Means (μ_cont):")
+for k in 1:num_clusters
+    println("  μ_cont[$(k)]: [ $(round(mean(chain_mixed["μ_cont[" * string(k) * "]_1"]), digits=3)) ]")
+end
+
+println("\nTrue Binomial Success Probabilities (p_binom): $(true_p)")
+println("Posterior Means for Binomial Success Probabilities (p_binom):")
+for k in 1:num_clusters
+    println("  p_binom[$(k)]: $(round(mean(chain_mixed["p_binom[" * string(k) * "]"]), digits=3))")
+end
+
+println("\nTrue Multinomial Probabilities (θ_mult): $(true_θ)")
+println("Posterior Means for Multinomial Probabilities (θ_mult):")
+for k in 1:num_clusters
+    for c in 1:multinomial_categories
+        println("  θ_mult[$(k)][$(c)]: $(round(mean(chain_mixed["θ_mult[" * string(k) * "]_" * string(c)]), digits=3))")
+    end
+end
+
+
+
+```
+
+
+#### Random Forest
+
+This is frequentist.
+
+
+```{julia} 
+
+# Generate some synthetic data for regression
+num_samples = 200
+num_features = 3
+
+X = randn(num_samples, num_features) * 5 # Predictor variables
+
+# True function with some noise
+y_true = X[:, 1].^2 + 2 * X[:, 2] - 3 * X[:, 3] + 5
+y = y_true + randn(num_samples) * 2 # Add some noise
+
+println("Synthetic data generated (first 5 rows of X and y):")
+display(hcat(X[1:5,:], y[1:5]))
+ 
+# Split data into training and testing sets (simple split for demonstration)
+train_ratio = 0.7
+split_idx = floor(Int, num_samples * train_ratio)
+
+X_train = X[1:split_idx, :]
+y_train = y[1:split_idx]
+X_test = X[split_idx+1:end, :]
+y_test = y[split_idx+1:end]
+
+println("Data split into training and test sets.")
+println("Training samples: $(size(X_train, 1))")
+println("Test samples: $(size(X_test, 1))\n")
+
+# 1. Train a Random Forest Regressor
+# n_trees: number of trees in the forest
+# n_subfeatures: number of features to consider at each split (for feature bagging)
+# partial_sampling: fraction of samples to consider for each tree (for data bagging)
+# max_depth: maximum depth of each tree
+# min_samples_leaf: minimum number of samples required to be at a leaf node
+
+model = build_forest(
+    y_train, 
+    X_train,
+    20,                # n_trees (number of trees)
+    num_features,      # n_subfeatures (consider all features at each split for simplicity)
+    0.7,               # partial_sampling (fraction of samples per tree)
+    5,                 # max_depth
+    1                  # min_samples_leaf
+)
+
+println("Random Forest model trained.\n")
+
+# 2. Make predictions on the test set
+y_pred = apply_forest(model, X_test)
+
+# 3. Evaluate the model (e.g., Mean Squared Error)
+mse = sum((y_pred .- y_test).^2) / length(y_test)
+println("Mean Squared Error on test set: $(round(mse, digits=4))")
+
+# 4. Visualize actual vs. predicted values (simple scatter plot)
+plot(
+    y_test, y_pred, seriestype=:scatter, 
+    xlabel="Actual Values", ylabel="Predicted Values", 
+    title="Random Forest Regression: Actual vs. Predicted",
+    legend=false, aspect_ratio=:equal, markeralpha=0.6
+)
+
+# Add a diagonal line for perfect prediction
+plot!([minimum(y_test), maximum(y_test)], [minimum(y_test), maximum(y_test)], 
+    line=(:dash, 2, :red), label="Perfect Prediction")
+
+```
+
+Bayesian Decision Trees is similar: One could build a single Bayesian decision tree by placing priors on the splitting rules (e.g., probability of splitting, choice of feature and split point) and the leaf node parameters (e.g., a Normal distribution for regression output). The MCMC sampler would then explore the space of possible tree structures and parameters.
+
+
+#### Neural net models
+
+
+##### Standard
+
+
+```{julia}
+%%julia
+# Pkg.add("Flux")
+# Pkg.add("Plots")
+# Pkg.add("Random")
+
+using Flux
+using Flux: train!, mse
+using Plots
+using Random
+
+Random.seed!(42);
+
+%%julia
+# 1. Generate Synthetic Data
+num_samples = 100
+
+# Input features (1D for simplicity)
+X_data = rand(1, num_samples) * 10 .- 5 # Data between -5 and 5
+
+# True non-linear relationship with noise
+# y = 0.5 * X^2 + 2*X + 3 + noise
+y_true = 0.5 .* X_data.^2 .+ 2 .* X_data .+ 3
+y_data = y_true .+ randn(1, num_samples) .* 2 # Add some Gaussian noise
+
+println("Synthetic data generated. First 5 samples (X and y):")
+display(hcat(X_data[:,1:5]', y_data[:,1:5]'))
+
+# Plot the synthetic data
+scatter_plot = scatter(vec(X_data), vec(y_data),
+    label="Observed Data",
+    xlabel="X", ylabel="Y",
+    title="Synthetic Data for NN Regression",
+    legend=:topleft, markeralpha=0.7)
+display(scatter_plot);
+
+%%julia
+# 2. Define the Neural Network Architecture
+# A simple feedforward network with one hidden layer and tanh activation
+model = Chain(
+    Dense(1, 10, tanh), # Input layer (1 feature) to hidden layer (10 neurons), tanh activation
+    Dense(10, 1)        # Hidden layer to output layer (1 output for regression)
+)
+
+println("Neural Network model defined:")
+display(model)
+
+# Define the loss function (Mean Squared Error for regression)
+loss(x, y) = mse(model(x), y)
+
+# Define the optimizer
+optimizer = ADAM(0.01) # Adam optimizer with a learning rate of 0.01
+
+println("\nLoss function and optimizer defined.")
+
+%%julia
+# 3. Train the Network
+num_epochs = 200
+
+println("\nTraining the neural network for $(num_epochs) epochs...")
+
+# Store loss values for plotting
+training_losses = Float64[]
+
+for epoch in 1:num_epochs
+    # Flux's train! function updates model parameters based on loss and optimizer
+    # We pass the loss function, the parameters (model), the data, and the optimizer
+    train!(loss, Flux.params(model), [(X_data, y_data)], optimizer)
+
+    current_loss = loss(X_data, y_data)
+    push!(training_losses, current_loss)
+
+    if epoch % 50 == 0
+        println("Epoch $(epoch): Loss = $(round(current_loss, digits=4))")
+    end
+end
+
+println("Training complete.")
+
+# Plot training loss over epochs
+plot_loss = plot(training_losses,
+    xlabel="Epoch", ylabel="Loss (MSE)",
+    title="Training Loss over Epochs",
+    legend=false)
+display(plot_loss);
+
+%%julia
+# 4. Make Predictions and Visualize Results
+
+# Create a range of new X values for prediction
+X_test = collect(range(-5.0, stop=5.0, length=200))
+X_test_input = reshape(X_test, 1, length(X_test))
+
+# Make predictions with the trained model
+y_pred_mean = model(X_test_input)
+
+# Plot the results
+pred_plot = scatter(vec(X_data), vec(y_data),
+    label="Observed Data",
+    xlabel="X", ylabel="Y",
+    title="Standard Neural Network Regression",
+    legend=:topleft, markeralpha=0.7)
+
+plot!(pred_plot, vec(X_test_input), vec(y_pred_mean),
+    line=(:solid, 2, :blue), label="NN Prediction")
+
+display(pred_plot)
+
+println("\nInterpretation: The blue line shows the neural network's learned relationship between X and Y. Unlike the BNN, this plot doesn't show uncertainty, as the standard neural network provides a single point estimate for each prediction.")
+
+```
+
+
+
+##### Bayesian Neural Net (BNN)
+ 
+```{julia}
+# 1. Generate Synthetic Data
+num_samples = 100
+num_features = 1 # Simple 1D input
+
+# Input features
+X_data = rand(num_samples, num_features) * 10 .- 5 # Data between -5 and 5
+
+# True non-linear relationship with noise
+# y = 0.5 * X^2 + 2*X + 3 + noise
+y_true = 0.5 .* X_data[:,1].^2 .+ 2 .* X_data[:,1] .+ 3
+y_data = y_true .+ randn(num_samples) .* 2 # Add some Gaussian noise
+
+println("Synthetic data generated. First 5 samples:")
+display(hcat(X_data[1:5,:], y_data[1:5]))
+
+# Plot the synthetic data
+scatter_plot = scatter(X_data[:,1], y_data, 
+    label="Observed Data", 
+    xlabel="X", ylabel="Y", 
+    title="Synthetic Data for BNN Regression", 
+    legend=:topleft, markeralpha=0.7)
+display(scatter_plot);
+
+%%julia
+# 2. Define the Bayesian Neural Network Model
+@model function bnn_regression(X, y, num_hidden_nodes, num_output_nodes)
+    num_samples, num_features = size(X)
+
+    # Priors for weights and biases of the first layer (input to hidden)
+    # Each weight and bias drawn from a Normal distribution
+    weights1 ~ MvNormal(Zeros(num_features, num_hidden_nodes), I * 2.0)
+    bias1 ~ MvNormal(Zeros(num_hidden_nodes), I * 2.0)
+
+    # Priors for weights and biases of the second layer (hidden to output)
+    weights2 ~ MvNormal(Zeros(num_hidden_nodes, num_output_nodes), I * 2.0)
+    bias2 ~ MvNormal(Zeros(num_output_nodes), I * 2.0)
+
+    # Prior for the observation noise standard deviation
+    sigma ~ InverseGamma(2, 3) # A common prior for scale parameters
+
+    # Neural Network Forward Pass
+    # Input layer to Hidden layer with tanh activation
+    hidden_layer_output = tanh.(X * weights1 .+ bias1') # X*W1 + B1, then tanh
+
+    # Hidden layer to Output layer
+    y_pred_mean = hidden_layer_output * weights2 .+ bias2' # H*W2 + B2
+
+    # Likelihood: Observed y values are normally distributed around the network's predictions
+    # Assuming independent observations, so we iterate.
+    for i in 1:num_samples
+        y[i] ~ Normal(y_pred_mean[i,1], sigma) # y_pred_mean[i,1] because num_output_nodes is 1
+    end
+end
+
+# Set model parameters
+num_hidden_nodes = 5 # Number of neurons in the hidden layer
+num_output_nodes = 1 # For regression, typically 1 output
+
+# Instantiate the model
+model = bnn_regression(X_data, y_data, num_hidden_nodes, num_output_nodes);
+
+println("Bayesian Neural Network model defined with $(num_features) input features, $(num_hidden_nodes) hidden nodes, and $(num_output_nodes) output node.")
+
+%%julia
+# 3. Sample from the Posterior Distribution
+println("\nSampling from posterior (this may take a while for BNNs!)... Using NUTS sampler.")
+chain = sample(model, NUTS(0.65), 1000, 2); # 1000 samples per chain, 2 chains
+
+# Display the chain summary
+display(chain)
+
+%%julia
+# 4. Make Predictions and Visualize Uncertainty
+
+# Create a range of new X values for prediction
+X_test = collect(range(-5.0, stop=5.0, length=200)) # 200 points for smooth prediction line
+X_test_matrix = reshape(X_test, length(X_test), 1)
+
+# Extract sampled weights and biases from the chain
+# We'll collect a subset of samples to make predictions more efficient
+num_prediction_samples = 200 # Use 200 samples from the chain for predictions
+sampled_indices = rand(1:size(chain, 1), num_prediction_samples)
+
+# Initialize a matrix to store predictions from each sample
+all_y_preds = Matrix{Float64}(undef, length(X_test), num_prediction_samples)
+
+for (idx, sample_idx) in enumerate(sampled_indices)
+    # Get parameters for this sample
+    s_weights1 = chain[:weights1][sample_idx, :, :]
+    s_bias1 = chain[:bias1][sample_idx, :]
+    s_weights2 = chain[:weights2][sample_idx, :, :]
+    s_bias2 = chain[:bias2][sample_idx, :]
+
+    # Perform forward pass for test data
+    s_hidden_output = tanh.(X_test_matrix * s_weights1 .+ s_bias1')
+    s_y_pred_mean = s_hidden_output * s_weights2 .+ s_bias2'
+    
+    all_y_preds[:, idx] = s_y_pred_mean[:,1]
+end
+
+# Calculate mean and credible intervals for predictions
+mean_y_pred = mean(all_y_preds, dims=2)[:,1]
+lower_bound = [quantile(all_y_preds[i,:], 0.025) for i in 1:length(X_test)]
+upper_bound = [quantile(all_y_preds[i,:], 0.975) for i in 1:length(X_test)]
+
+# Plot the results
+pred_plot = plot(X_data[:,1], y_data, 
+    seriestype=:scatter, label="Observed Data", 
+    xlabel="X", ylabel="Y", 
+    title="Bayesian Neural Network Regression with Uncertainty", 
+    legend=:topleft, markeralpha=0.7)
+
+plot!(pred_plot, X_test, mean_y_pred, 
+    line=(:solid, 2, :blue), label="BNN Mean Prediction")
+
+plot!(pred_plot, X_test, lower_bound, 
+    fillrange=upper_bound, fillalpha=0.2, color=:blue, 
+    label="95% Credible Interval", 
+    line=(:none))
+
+display(pred_plot)
+
+println("\nInterpretation: The blue line represents the mean prediction of the BNN, and the shaded blue area represents the 95% credible interval, illustrating the model's uncertainty about its predictions. Notice how the uncertainty might increase in areas where there is less data.")
+
+```
+
 
 ### Finite and Infinite mixture models
 
@@ -4238,7 +5652,10 @@ Indeed, this *ecosystem variability* **induces** something very important: compl
 ### 1-D Models
 
 
-#### Discrete form (conditional, recursive) - AR1 Basic recursive form (aks, state space form)
+#### Discrete 
+
+
+##### Conditional discrete recursive - AR1 Basic recursive form (aks, state space form)
 
 Ecological systems also exist in a temporal frame. As such, similar to the above spatial considerations, there also exists some characteristic temporal scale upon which the processes internal to an area of interest and time period of interest, operate. The canonical example is how some quantity changes from one discrete-time period to another. This discrete-time notion of temporal autocorrelation is the slope parameter $\rho$ from a plot of a variable as a function of itself with an offset of one time unit. A simple way to treat autocorrelation is to look at a set of random variables indexed sequentially (eg., by time, assumed here):
 
@@ -4323,7 +5740,7 @@ pl = plot(pl, xd_mid, yg, label="ar1-recursive", lwd=2, legend=true, color="blue
 pl
 
 ```
-#### Discrete Gaussian Process (Unconditional)
+##### Unconditional Discrete Gaussian Process
 
 Aside: If we treat X as a time variable then the following is like a kernel matrix approach via a GP ... These were touched upon in the previous section as a bivariate model (Nonlinear Regression - Gaussian process - 7.  ApproximateGPs ) and are treated more as spatial processes in the section (Spatial Models - Continuous covariance/kernal models in 2D aka Kriging - ApproximateGPs)
 
@@ -4434,7 +5851,7 @@ scatter!(x, μ_latent,
  
 
 ```
-#### Alternative justification of AR1 as an ("Unconditional" Discrete) GP
+##### Unconditional Discrete GP (Susmann)
 
 Source: [Herb Susmann  (2019)](http://herbsusmann.com/2019/08/09/autoregressive-processes-are-gaussian-processes)
 
@@ -4596,7 +6013,7 @@ plot!(xd_mid, vec(yp) .+ mean(Y), label="AR(1) mean as GP -- faster", seriestype
  
 ```
 
-#### AR1 as a TemporalGPs, O(N)
+##### AR1 as a TemporalGPs, O(N)
 
 Use of TemporalGPs.jl is supposed to be fast .. but fails at the moment
 
@@ -4678,42 +6095,6 @@ pl
 
 
 ```
-#### Stochastic differential equation (Fourier transform)
-
-Rasmussen and Williams (2006) treats AR(1) processes in their Appendix B as a continuous, stochastic differential equation. They start with:
-
-$$
-X_t = \Sigma^p_{k=1} a_k X_{t-k} + b_0 Z_t
-$$
-
-where $Z_t \sim N(0, 1)$ is IID with order-$p=1$; $a =$ rho; and $b_0$ scales the $Z_t$
-
-which can be expressed as a SDE:
-
-$$
-X^\prime(t) + a_0 X(t) = b_0Z(t),
-$$
-
-with $a_0 >0$ for stationarity
-
-This gives a power spectrum for AR(1) (Rasmussen and Williams 2006, eq B.29):
-
-$$
-S(s) = \frac{b_0^2}{ (2 \pi s)^2+ a_0^2}
-$$
-
-or alternatively as (Rasmussen and Williams 2006: 214, eq. B.43):
-
-$$
-S(s) = \frac{b_0^2}{1-2a_1\cos(\omega_i s) + a_1^2}
-$$
-
-It has a Fourier transform:
-
-$$
-k(t) = \frac{b^2_0}{2 a_0} e^{-a_0|t|}
-$$
-
 #### Kernel density smoothing
 
 
@@ -5062,7 +6443,7 @@ Created Wednesday 07 March 2018
 
 
 
-#### Harmonic (Fourier) decomposition of time (deterministic)
+##### Harmonic (Fourier) decomposition of time (deterministic)
 
 Source: https://math.stackexchange.com/questions/3926007/least-squares-regression-of-sine-wave
 
@@ -5111,6 +6492,11 @@ with a Gaussian likelihood:
 $$
 y \sim \mathcal{N}(f_i(t), \sigma_i^2)
 $$
+
+
+
+##### Basic harmonic analysis
+
 
 ```{julia}
  
@@ -5202,6 +6588,121 @@ intercept = pm[:,:intercept]
 end
 
 ```
+
+Another example
+
+```{julia}
+
+# 1. Generate a Synthetic Time Series with known frequencies
+fs = 100       # Sampling frequency (samples per second)
+T = 2          # Duration of the signal (seconds)
+n = fs * T     # Number of samples
+t = range(0, T, length=n) # Time vector
+
+# True frequencies and amplitudes for the synthetic signal
+true_f1 = 5.0
+true_f2 = 12.0
+true_f3 = 20.0
+true_amp1 = 1.0
+true_amp2 = 0.5
+true_amp3 = 0.2
+true_phi1 = π/4  # Example phase
+true_phi2 = π/2
+true_phi3 = 0.0
+
+# Convert amplitude and phase to C and S coefficients for model
+true_C1 = true_amp1 * cos(true_phi1)
+true_S1 = true_amp1 * sin(true_phi1)
+true_C2 = true_amp2 * cos(true_phi2)
+true_S2 = true_amp2 * sin(true_phi2)
+true_C3 = true_amp3 * cos(true_phi3)
+true_S3 = true_amp3 * sin(true_phi3)
+
+true_noise_std = 0.1
+
+signal = (true_C1 * sin.(2π * true_f1 * t) + true_S1 * cos.(2π * true_f1 * t)) .+
+         (true_C2 * sin.(2π * true_f2 * t) + true_S2 * cos.(2π * true_f2 * t)) .+
+         (true_C3 * sin.(2π * true_f3 * t) + true_S3 * cos.(2π * true_f3 * t)) .+
+         true_noise_std * randn(n);
+
+plot(t, signal, label="Synthetic Time Series", xlabel="Time (s)", ylabel="Amplitude", title="Synthetic Signal for Bayesian Harmonic Decomposition", legend=:bottomleft)
+
+# 2. Define the Bayesian Harmonic Decomposition Model
+@model function bayesian_harmonic_decomposition(y, t, frequencies)
+    num_harmonics = length(frequencies)
+
+    # Priors for the sine and cosine coefficients for each harmonic
+    C = Vector{Float64}(undef, num_harmonics)
+    S = Vector{Float64}(undef, num_harmonics)
+    for i in 1:num_harmonics
+        C[i] ~ Normal(0, 2) # Broad prior for coefficients
+        S[i] ~ Normal(0, 2) # Broad prior for coefficients
+    end
+
+    # Prior for the observation noise standard deviation
+    σ ~ InverseGamma(2, 3) # A common prior for scale parameters
+
+    # Likelihood
+    # Reconstruct the expected signal based on current parameters
+    μ = zeros(length(t))
+    for k in 1:num_harmonics
+        f_k = frequencies[k]
+        μ .+= (C[k] * sin.(2π * f_k * t) + S[k] * cos.(2π * f_k * t))
+    end
+
+    y ~ MvNormal(μ, σ^2 * I) # Observed data follows a multivariate normal around the reconstructed signal
+end
+
+# 3. Prepare data for the model
+# We'll try to recover the frequencies we put in, or a selection of them
+candidate_frequencies = [true_f1, true_f2, true_f3] # Example: assuming we know the frequencies
+
+# Instantiate the model
+bayesian_model = bayesian_harmonic_decomposition(signal, t, candidate_frequencies);
+
+# 4. Sample from the posterior distribution using NUTS
+println("Sampling from posterior (this may take a moment)...")
+chain = sample(bayesian_model, NUTS(0.65), 1000, 4); # 1000 draws per chain, 4 chains
+
+# Display the chain summary
+display(chain)
+
+# 5. Extract and interpret results
+# Get posterior means of the coefficients
+mean_C = [mean(chain["C[" * string(i) * "]"]) for i in 1:length(candidate_frequencies)]
+mean_S = [mean(chain["S[" * string(i) * "]"]) for i in 1:length(candidate_frequencies)]
+mean_sigma = mean(chain[:σ])
+
+println("\nPosterior Mean of Coefficients C: ", round.(mean_C, digits=3))
+println("Posterior Mean of Coefficients S: ", round.(mean_S, digits=3))
+println("Posterior Mean of Noise Std (σ): ", round(mean_sigma, digits=3))
+
+# Convert C and S coefficients back to Amplitude and Phase
+posterior_amplitudes = [sqrt(mean_C[i]^2 + mean_S[i]^2) for i in 1:length(candidate_frequencies)]
+posterior_phases = [atan(mean_S[i], mean_C[i]) for i in 1:length(candidate_frequencies)] # atan(sin, cos)
+
+println("\nPosterior Estimated Amplitudes: ", round.(posterior_amplitudes, digits=3))
+println("Posterior Estimated Phases (radians): ", round.(posterior_phases, digits=3))
+
+# Reconstruct the signal using posterior mean parameters
+reconstructed_signal = zeros(length(t))
+for k in 1:length(candidate_frequencies)
+    f_k = candidate_frequencies[k]
+    reconstructed_signal .+= (mean_C[k] * sin.(2π * f_k * t) + mean_S[k] * cos.(2π * f_k * t))
+end
+
+# Plot original vs. reconstructed signal
+plot(t, signal, label="Original Signal", lw=2)
+plot!(t, reconstructed_signal, label="Reconstructed Signal (Posterior Mean)", lw=2, linestyle=:dash)
+xlabel!("Time (s)")
+ylabel!("Amplitude")
+title!("Bayesian Harmonic Decomposition: Original vs. Reconstructed")
+
+
+```
+
+
+
 Using the above with Mauna Loa CO2 data
 
 ```julia
@@ -5299,6 +6800,236 @@ histogram(vec(b[:,2]))
 
 
 ```
+
+##### Stochastic differential equation (Fourier transform)
+
+Rasmussen and Williams (2006) treats AR(1) processes in their Appendix B as a continuous, stochastic differential equation. They start with:
+
+$$
+X_t = \Sigma^p_{k=1} a_k X_{t-k} + b_0 Z_t
+$$
+
+where $Z_t \sim N(0, 1)$ is IID with order-$p=1$; $a =$ rho; and $b_0$ scales the $Z_t$
+
+which can be expressed as a SDE:
+
+$$
+X^\prime(t) + a_0 X(t) = b_0Z(t),
+$$
+
+with $a_0 >0$ for stationarity
+
+This gives a power spectrum for AR(1) (Rasmussen and Williams 2006, eq B.29):
+
+$$
+S(s) = \frac{b_0^2}{ (2 \pi s)^2+ a_0^2}
+$$
+
+or alternatively as (Rasmussen and Williams 2006: 214, eq. B.43):
+
+$$
+S(s) = \frac{b_0^2}{1-2a_1\cos(\omega_i s) + a_1^2}
+$$
+
+It has a Fourier transform:
+
+$$
+k(t) = \frac{b^2_0}{2 a_0} e^{-a_0|t|}
+$$
+
+##### Fast fourier transform 
+
+
+```{julia}
+
+using FFTW # For Fast Fourier Transform
+
+# 1. Generate a Synthetic Time Series
+# Define parameters
+fs = 100        # Sampling frequency (samples per second)
+T = 2           # Duration of the signal (seconds)
+n = fs * T      # Number of samples
+t = range(0, T, length=n) # Time vector
+
+# Create a signal with multiple sine waves (harmonics) and some noise
+f1 = 5          # Frequency 1 (Hz)
+f2 = 12         # Frequency 2 (Hz)
+f3 = 20         # Frequency 3 (Hz)
+
+signal = 1.0 * sin.(2π * f1 * t) .+ \
+         0.5 * sin.(2π * f2 * t) .+ \
+         0.2 * sin.(2π * f3 * t) .+ \
+         0.1 * randn(n) # Add some random noise
+
+# 2. Perform FFT
+Y = fft(signal) # Compute the FFT
+
+# Get the corresponding frequencies
+# The frequencies span from 0 to fs/2 for the positive frequencies
+frequencies = fftfreq(n, fs)
+
+# We are typically interested in the positive frequencies only
+# The FFT output is symmetric, so we take the first half (excluding the DC component at 0 if desired)
+positive_frequencies = frequencies[1:n÷2+1]
+
+# Calculate the magnitude/amplitude spectrum
+# Multiply by 2/n to get the actual amplitude (and compensate for the symmetric FFT output)
+# For the DC component and Nyquist frequency, it's just abs(Y[1])/n and abs(Y[n÷2+1])/n respectively
+amplitude_spectrum = abs.(Y[1:n÷2+1]) * 2.0 / n
+amplitude_spectrum[1] = abs(Y[1])/n # DC component
+
+# If n is even, the Nyquist component at n÷2+1 is unique
+if n % 2 == 0
+    amplitude_spectrum[n÷2+1] = abs(Y[n÷2+1])/n
+end
+
+# 3. Visualize the Results
+plot1 = plot(t, signal,
+             title="Synthetic Time Series",
+             xlabel="Time (s)",
+             ylabel="Amplitude",
+             legend=false)
+
+plot2 = plot(positive_frequencies, amplitude_spectrum,
+             title="Amplitude Spectrum (FFT)",
+             xlabel="Frequency (Hz)",
+             ylabel="Amplitude",
+             xlims=(0, fs/2),
+             legend=false,
+             seriestype=:stem) # Use stem plot for frequency spectrum
+
+# Combine plots
+plot(plot1, plot2, layout=(2, 1), size=(800, 600))
+
+```
+
+##### Bayesian FFT
+
+Likelihood in the Frequency Domain: Instead of modeling the time-domain signal y directly, you could define your likelihood in the frequency domain. For example:
+
+You could calculate Y_obs = fft(y_observed).
+Then, you could construct the expected frequency spectrum Y_model from your parameters (e.g., amplitudes, phases, or complex coefficients) and apply your likelihood function to Y_obs and Y_model.
+This approach is valid, but you need to be careful about the properties of noise in the frequency domain. If your time-domain noise is white Gaussian, then the frequency-domain noise will also be approximately white Gaussian (though complex-valued), allowing for a similar MvNormal likelihood but with complex numbers.
+Generative Model from Frequency Components: You could define your parameters directly in the frequency domain (e.g., complex FFT coefficients or spectral densities), and then use the Inverse FFT (ifft) within your generative model to construct the time-domain signal μ:
+
+complex_coefficients ~ Prior(...)
+μ = ifft(complex_coefficients)
+y ~ MvNormal(μ, σ^2 * I) This allows you to place priors directly on spectral properties. However, modeling complex coefficients or ensuring physically meaningful priors (e.g., Hermitian symmetry for real signals) can be more challenging than modeling real-valued C_k and S_k terms.
+Why is it not the default for basic harmonic decomposition?
+
+The harmonic decomposition model we implemented (using C_k * sin(...) + S_k * cos(...)) already performs a form of spectral analysis by building the signal from its harmonic components. For a fixed, small set of known frequencies, this parameterization (C_k, S_k) is often more intuitive, easier to assign priors to, and directly gives you amplitude and phase for each component.
+
+Using fft directly within the Turing model could be beneficial if:
+
+You have a very large number of frequencies to model, and you want to impose global priors on the spectral shape (e.g., smoothness of the spectrum).
+You are interested in modeling properties that are more naturally expressed in the frequency domain (e.g., specific spectral densities).
+However, performing the fft operation on the generated signal at every MCMC step can add computational overhead, especially for very long time series, although FFTW.jl is highly optimized.
+
+
+```{julia}
+
+using FFTW # For Fast Fourier Transform  
+
+# 1. Generate a Synthetic Time Series with a single dominant frequency
+fs = 100        # Sampling frequency (samples per second)
+T = 2           # Duration of the signal (seconds)
+n = fs * T      # Number of samples
+t = range(0, T, length=n) # Time vector
+
+# True parameters for the synthetic signal
+true_f = 5.0
+true_amp = 1.0
+true_phase = π/4
+true_noise_std = 0.1
+
+# Convert amplitude and phase to C and S coefficients for generating the signal
+true_C = true_amp * cos(true_phase)
+true_S = true_amp * sin(true_phase)
+
+signal = (true_C * sin.(2π * true_f * t) + true_S * cos.(2π * true_f * t)) .+
+         true_noise_std * randn(n);
+
+plot(t, signal, label="Synthetic Time Series", xlabel="Time (s)", ylabel="Amplitude", title="Synthetic Signal for Bayesian FFT Likelihood", legend=:bottomleft)
+
+# 2. Pre-process the observed signal for the model (FFT calculation)
+Y_obs_fft = fft(signal)
+fftfreqs = FFTW.fftfreq(n, fs) # Get the corresponding frequencies for FFT bins
+
+# Identify the FFT bin index corresponding to our true frequency (positive component)
+# atol is set to half a bin width to find the closest bin
+target_fft_bin_idx = findfirst(isapprox.(fftfreqs, true_f, atol=fs/(2n)))
+if isnothing(target_fft_bin_idx)
+    @warn "True frequency $true_f not found exactly in FFT bins. Using nearest instead." maxlog=1
+    target_fft_bin_idx = argmin(abs.(fftfreqs .- true_f))
+end
+
+# 3. Define the Bayesian Model with FFT-based Likelihood
+@model function bayesian_fft_likelihood_example(Y_obs_fft_target_bin, t_vec, target_freq, target_bin_index)
+    # Priors for the sine and cosine coefficients of the single harmonic
+    C ~ Normal(0, 2)
+    S ~ Normal(0, 2)
+
+    # Prior for the observation noise standard deviation in the frequency domain
+    # We model noise on the real and imaginary parts of the complex FFT coefficient
+    σ_fft ~ InverseGamma(2, 3) # A single std dev for both real and imag parts for simplicity
+
+    # Construct the expected time-domain signal based on current C, S parameters
+    μ_time = C * sin.(2π * target_freq * t_vec) + S * cos.(2π * target_freq * t_vec)
+
+    # Compute the FFT of this expected signal *inside the model*
+    Y_model_fft = fft(μ_time)
+
+    # Likelihood: Compare the real and imaginary parts of the target FFT bin
+    # Y_obs_fft_target_bin is a complex number (passed as observed data)
+    # Y_model_fft[target_bin_index] is the modeled complex number at that bin
+    real(Y_obs_fft_target_bin) ~ Normal(real(Y_model_fft[target_bin_index]), σ_fft)
+    imag(Y_obs_fft_target_bin) ~ Normal(imag(Y_model_fft[target_bin_index]), σ_fft)
+end
+
+# 4. Prepare data for the model
+# We pass the complex FFT coefficient at the target bin as observed data
+observed_fft_target_bin = Y_obs_fft[target_fft_bin_idx]
+
+# Instantiate the model
+bayesian_model_fft = bayesian_fft_likelihood_example(observed_fft_target_bin, t, true_f, target_fft_bin_idx);
+
+# 5. Sample from the posterior distribution using NUTS
+println("Sampling from posterior with FFT likelihood (this may take a moment)...")
+chain_fft = sample(bayesian_model_fft, NUTS(0.65), 1000, 2); # 1000 draws per chain, 2 chains
+
+# Display the chain summary
+display(chain_fft)
+
+# 6. Extract and interpret results
+# Get posterior means of the coefficients
+mean_C_fft = mean(chain_fft[:C])
+mean_S_fft = mean(chain_fft[:S])
+mean_sigma_fft = mean(chain_fft[:σ_fft])
+
+println("\nPosterior Mean of Coefficient C (FFT Likelihood): ", round(mean_C_fft, digits=3))
+println("Posterior Mean of Coefficient S (FFT Likelihood): ", round(mean_S_fft, digits=3))
+println("Posterior Mean of Noise Std (σ_fft): ", round(mean_sigma_fft, digits=3))
+
+# Convert C and S coefficients back to Amplitude and Phase
+posterior_amplitude_fft = sqrt(mean_C_fft^2 + mean_S_fft^2)
+posterior_phase_fft = atan(mean_S_fft, mean_C_fft)
+
+println("\nPosterior Estimated Amplitude (FFT Likelihood): ", round(posterior_amplitude_fft, digits=3))
+println("Posterior Estimated Phase (FFT Likelihood, radians): ", round(posterior_phase_fft, digits=3))
+
+# Reconstruct the signal using posterior mean parameters
+reconstructed_signal_fft = (mean_C_fft * sin.(2π * true_f * t) + mean_S_fft * cos.(2π * true_f * t))
+
+# Plot original vs. reconstructed signal
+plot(t, signal, label="Original Signal", lw=2)
+plot!(t, reconstructed_signal_fft, label="Reconstructed Signal (FFT Likelihood)", lw=2, linestyle=:dash)
+xlabel!("Time (s)")
+ylabel!("Amplitude")
+title!("Bayesian Harmonic Decomposition: Original vs. Reconstructed (FFT Likelihood)")
+
+```
+
+
 #### Continuous temporal autocorrelation
 
 In a completely identical approach to the spatial case (below), a temporal autocorrelation function can be used to describe the form of the temporal autocorrelation pattern. More specifically, we define a *temporal stochastic process*, $y_{t}$, that is, some latent, unobservable but real, *stochastic function* that generates observations $y_{t}\rightarrow Y_{t}$, where $Y_{t}$ are any temporally referenced observation at some time $t$, measured in a coordinate space whose domain $D$ has dimensionality 1 such that $\{t\in D\in\Re\}$ with $\{l=1,\dots,L\}$ temporal locations. The manner in which the variability of $Y_{t}$ changes as a function of the norm (distance), $h=\parallel t-t'\parallel$, is the temporal autocorrelation function $\rho(h)$. The latter can take any form including the same as the spatial autocorrelation functions.
@@ -5311,7 +7042,7 @@ $$
 
 At zero time difference, $C(0)=\text{Cov}(Y_{t},Y_{t})=\text{Var}(Y_{t})=^{\varepsilon}\sigma^{2}+^{\tau}\sigma^{2}$ (*i.e.*, global temporal variance), where $^{\varepsilon}\sigma$ is the nontemporal, unstructured error, $^{\tau}\sigma$ is the temporally structured error. The *temporal autocorrelation function* is defined as the covariance function scaled by the global variance: $\rho_{t}(h)=C(h)/C(0)$. Heuristically, the *temporal autocorrelation scale* is defined as the time difference at which the temporal autocorrelation decreases asymptotically to some low level. In this document, we will use the same threshold as the practical spatial range, $\rho_{t}(h)=0.1$, and refer to it as the temporal scale at which temporal autocorrelation approaches 0.1 (that is 10% of the total temporal variance). The *stmv* approach (see [\[subsec:Complex-spatiotemporal-models\]](#subsec:Complex-spatiotemporal-models){reference-type="ref" reference="subsec:Complex-spatiotemporal-models"}) permits estimation of these local autocorrelation parameters and the temporal scale.
 
-#### Example: GP of timeseries of Mauna Loa CO2
+##### Example: GP of timeseries of Mauna Loa CO2
 
 Data source:
 
@@ -5483,7 +7214,7 @@ plot!(fposterior(1990:0.1:2020); ribbon_scale=0, linewidth=1, label="posterior f
 
 
 ```
-#### RW2 Basic, Recursive
+##### RW2 Basic, Recursive
 
 Similar to AR1, but a Gaussian random walk -- second order difference
 
@@ -5554,7 +7285,7 @@ pl
 
 
 ```
-#### RW2 as a continuous GP model
+##### RW2 as a continuous GP model
 
 A simple approximation is to use a smoother Matern 3/2 kernel to mimic an RW2 process.
 
@@ -5641,7 +7372,7 @@ scatter!(x, μ_latent,
  
  
 ```
-#### RW2 as a TemporalGP
+##### RW2 as a TemporalGP
 
 Define the O(N) Gaussian Processes
 RW2 equivalent: Integrated Wiener Process (IWP) of order 2
@@ -8605,7 +10336,7 @@ $$
 
 where $\beta = \sigma_{\epsilon} \alpha$ due to identifiability issues.
 
-##### Example: spatial gussian process with AR1
+#### Space as a GP with AR1
 
 **Do not run** ... this is extremely slow and shown only to test/clarify method
 
@@ -8636,7 +10367,7 @@ rho = posterior_samples(res, sym=:rho)
 ar1_process_error = posterior_samples(res, sym=:ar1_process_error)
  
 ```
-##### Example: Space as GP and time as harmonic main effects only (no interaction)
+#### Space as a GP with time as harmonic main effects only (no interaction)
  
 Start with an ICAR/BYM2:
 
@@ -8730,7 +10461,7 @@ scatter(ti, y; color=2, label="Data")
 scatter!(ti, yph[:,1:100]; linewidth=1, alpha=0.5, color=1, label="", title="timeseries component")
 
 ```
-##### Example: Space time with interaction
+#### Space as GRMF and time harmonic with interaction
 
 ```{julia}
 
@@ -8804,7 +10535,7 @@ res = sample(m, Turing.NUTS(), 100)
 
 
 ```
-##### Combining kernel functions in space, time and other "features"
+#### Space as GP, time as GP and covariates 
 
 The nice thing about Gaussian processes is that we can combine multiple kernel functions to model processes with dependence from different sources. Two ways kernels can be combined are by multiplication and addition. Multiplying two kernels is like an "AND" operation: the correlation between points will be high if the correlation from both kernels is high. Adding two kernels together is like an "OR" operation: correlation is high if either kernel indicates high covariance.
 
@@ -8843,7 +10574,7 @@ And the spatial distribution over time of $Y_{c, t}$ is shown below:
 
 Visually we can see that the Gaussian process generates data that is correlated in both time and space.
 
-#### Modeling using the mean and the covariance
+#### Discrete Space and Time
 
 The spatio-temporal Gaussian process we defined in the previous section does its modeling through the variance/covariance matrix, with its mean function set to zero. An alternative way to think about a spatio-temporal process is akin to the first AR representation we looked at, and define $Y_t$ (the set of all $Y_{c, t}$ at time $t$t) relative to $Y_{t - 1}$:
 
@@ -8939,7 +10670,7 @@ https://storopoli.io/Bayesian-Julia/pages/11_multilevel_models/
 
 https://gist.github.com/luiarthur/7a1dfa6a980d11a00862152a371a5cf3
 
-#### Example: Kernelmatrix approach
+#### GP as a kernel matrix
 
 ```{julia}
 
@@ -10044,7 +11775,7 @@ res = sample(mygpreg, HMC(0.01, 100), 200)
 
 
 ```
-#### Example: SPDE via RandomFields (in R)
+#### SPDE via RandomFields (in R)
 
 ```r
 install.packages("RandomFieldsUtils")
@@ -10106,75 +11837,12 @@ coda::gelman.diag(m_draw)
 
 # NOTE: lost model code?
 
-```
-### Non-stationary spatiotemporal models
+``` 
 
-#### stmv
-
-The *stmv* approach permits a local
-estimation of these autocorrelation parameters and the spatial scale.
-
-All these approaches, including most operational spatiotemporal models, share a core assumption, that the mean and variance is stable throughout the domain (first and second order stationarity) and that a single autocorrelation function in space and a single autocorrelation function in time is sufficient to describe the full spatiotemporal pattern. The correctness of these rather important assumptions are seldom verified in the literature (I have never encountered them). When they are examined, there is little evidence to suggest this to be an appropriate assumption.
-
-One way to deal with such non-stationarity is to induce autocorrelation through covariates. By expanding the model to include time-varying and static covariates that can account for some of these discontinuities, the error distributions can become more stationary. That is, expanding the contents of $\boldsymbol{x}^{T}\boldsymbol{\beta}$ to include processes that represent *ecosystem variability*. The range of possibilities are of course quite large and as each component of *ecosystem variability* usually requires their own modelling and assessment, it can become very quickly an onerous exercise.
-
-Another solution is to identify a local sub-domain where they actually are stationary in space and potentially stationary in time as well. This reduces the problem into small manageable subdomains where assumptions of local stationarity are valid and modelling of spatiotemporal processes and associated parameters become computationally feasible. This approach is implemented in the *stmv* library (Choi et al. 2018; https://github.com/jae0/stmv). There is some conceptual similarity of this approach to geographically weighted regression (e.g., Fotheringham et al. 2002) in that each subdomain can have their own model parameters, $\beta_{st}$. However, geographically weighted regression permit only the model parameters $\beta_{st}$ to vary; however, here both the model parameters $\beta_{st}$ and the spatiotemporal errors $\omega_{st}$ and $\varepsilon_{st}$ are also varying in space.
-
-To be more precise, we define statistical nodes $\{N_{m=(1,\dots,M)}|m\in\mathfrak{R}^{d}\}$ in a spatial lattice that are the centres of areal units (Figure [18](#fig:stmv_grids){reference-type="ref" reference="fig:stmv_grids"}). The norm (distance) of data from each node is $h_{m}=||s_{m},s_{Y}||$. A local subdomain of a given node $m$ is $\{S_{m=(1,\dots,M)}\in D|h_{m}<h_{u}\}$ or more briefly as $\{S_{m}\}$ which represents all locations within some distance to the statistical node $\{h_{u}|\rho(h_{u})_{\text{Mat\'{e}rn}}>0.1\}$; that is, the distance at which the local spatial autocorrelation drops to a negligible value (arbitrarily taken as $\rho>0.1$) and associated parameter values are supported. The spatiotemporal data found within this subdomain $m$ is $\{Y_{st}|(s,t)\in D|h_{m}<h_{u}\}$ and is herein, notationally abbreviated as $^{m}Y_{st}$.
-
-![Spatial distribution of data (blue dots) overlaid by a statistical grid. The $m$ nodes represent the centers of each local subdomain $S_{m}$ which extends to a distance (right-facing arrows; solid squares) that varies depending upon the underlying spatial variability of the data, defined as the distance at which the spatial autocorrelation drops to some small value (e.g., $\rho_{s}=0.1$). Data within this distance and parameters obtained from the local analysis are, under the assumption of second order stationarity, used to complete the local model of the spatial or spatiotemporal processes and then predict/interpolate to some fraction of the distance between statistical grid nodes (stippled square). Every statistical node is visited for spatiotemporal modelling. Any overlapping predictions are locally averaged (weighted by number of predictions and prediction variance). As grid size decreases the number of computations increase while reducing computational load and RAM requirements; however, the utility of the model also declines due to small sample sizes entering analyses. Judicious choice of statistical grid density as well as maximum and minimum number of data points and upper and lower bounds of spatial bounds must be balanced. [\[fig:stmv_grids\]]{#fig:stmv_grids label="fig:stmv_grids"}](../stmv/concept1.pdf){#fig:stmv_grids}
-
-Operating upon all components of the regression model simultaneously is computationally prohibitive. Even with very simplistic Generalized Additive Model (GAM) or Generalized Additive Mixed effects Model (GAMM) parametrizations of spatial and temporal structure, the solutions require weeks on fast machines (5 GHz CPU, 64GB RAM in 2016), depending of course also upon the amount of data and resolution and model complexity. As a compromise between model complexity and computational speed, a global covariate model $\boldsymbol{x}^{T}\boldsymbol{\beta}_{st}+\varphi_{st}$ can be used to parameterize the covariate effects using a linear, generalized linear or generalized additive model. A low order penalized basis splines of the covariate predictors of 3 knots or less are biologically plausible as modality can often be expected:
-
-$$
-\begin{matrix}Y & \sim & \text{N}(\mu_{st},^{\varphi}\!\sigma^{2})\\
-g(\mu_{st}) & = & \boldsymbol{x}^{T}\boldsymbol{\beta}_{st}+\varphi_{st},\\
-\varphi_{st} & \sim & \text{N}(0,^{\varphi}\!\sigma^{2}).
-\end{matrix}
-$$
-
-The resultant residual spatiotemporal error $\varphi_{st}$ can be decomposed into other components in an approach similar to that of regression kriging and universal kriging with external drift (Hengl et al. 2004). First a local spatial autocorrelation scale is derived from a rapid (coarse grained) fit of the local residuals based upon an iteratively increasing guess of $^{m}\varphi_{st}$ to a Matérn autocorrelation function.
-
-To treat time in a similar manner, one would also need to determine temporal nodes and define appropriate temporal autocorrelation scales. In practice, temporal data are often sparse and limiting in survey data and so data from all time periods are used to determine a crude scaling, essentially amounting to a temporally averaged spatial autocorrelation. Once the approximate bounds of the subdomain (support) are estimated, the $^{m}\varphi_{st}$ are modelled as a Fourier series with two harmonics, one inter-annual and one sub-annual (seasonal): $f_{m}(\text{interannual, seasonal})$. In other words, a full temporal autocorrelation (covariance) model is not used but rather one that uses only a subset of the components at fixed wavelengths:
-
-$$
-\begin{matrix}^{m}\!\varphi_{st} & = & f_{m}(\cdot)+^{m}\!\zeta_{st},\\
-^{m}\!\zeta_{st} & \sim & \text{N}(0,^{\zeta}\!\sigma_{m}^{2}).
-\end{matrix}
-$$
-
-The temporal autocorrelation is, therefore, carried by the individual
-temporal processes at each spatial datum and the temporally structured
-error $^{\tau}\sigma_{m}^{2}$ is the variance component of the model
-$f_{m}(\cdot)$, that is,
-$^{\tau}\sigma_{m}^{2}= {{^{\varphi}\sigma_{m}^{2}}}-{}^{\zeta}\sigma_{m}^{2}$.
-
-The spatial autocorrelation function is parameterized as being derived from the subdomain mean Gaussian process with a Matérn covariance function with parameters $^{\omega}\theta_{m}=\{\phi_{m},\nu_{m}\}$ and a time-varying spatially structured standard error $^{\omega}\sigma_{m}$. As the data used to estimate the spatial autocorrelation structure are often sparse, the data are augmented by temporal predictions of the residual error process at each spatial datum (and notationally designated by an asterisk). These temporally augmented residual processes are modelled spatially at each time slice $^{m}\varphi_{st}^{*}$ as the sum of a time-varying spatial **Gaussian process** $^{m}\omega_{st}$ parameterized as a Matérn spatial covariance function:
-
-$$
-^{\omega}\sigma_{mt}^{2}\frac{1}{2^{\nu_{mt}-1}\Gamma(\nu_{mt})}(\sqrt{2\nu_{mt}}h/\phi_{mt})^{\nu_{mt}}\ K_{\nu_{mt}}(\sqrt{2\nu_{mt}}h/\phi_{mt})
-$$
-
-with a local spatial error $^{\omega}\sigma_{mt}$; and a spatially and
-temporally unstructured error process assumed to be derived from a
-Normal error process with mean zero and error $\sigma_{\varepsilon|m}$:
-
-$$
-\begin{matrix}\varphi_{mt}^{*} & = & \omega_{mt}+\varepsilon_{mt},\\
-\omega_{mt} & \sim & \text{GP}(0,C(\mathbf{s},\mathbf{s}';\mathbf{^{\boldsymbol{\omega}}\theta}_{mt}=\{\nu_{mt},\phi_{mt},^{\omega}\sigma_{mt}\})),\\
-\varepsilon_{mt} & \sim & \text{Normal}(0,{}^{\varepsilon}\sigma_{m}^{2}).
-\end{matrix}
-$$
-
-This approach represents a practical balance between computational time and model complexity/realism. For additional speed, an FFT-based Matérn convolution implementation is used. This solution focuses upon prediction using a mosaic of solutions in space, overall likelihood or AIC evaluation is a challenge. At present, predictive success is the only means to evaluate utility and eventually some form of Expectation-Maximization approaches through iteration once computational speeds improve would provide less biased parameter estimates.
-
- 
-
-## Complex mixed models
+#### Multiple processes--recursive form
 
 A variety of models can be flexibly implemented using Bayesian methods. The difficulty is often computational resources. Many approaches try to reduce this limitation. Some have already been encountered. Here some promising approaches are further discussed.
 
-### Multiple processes--recursive form
 
 ```{julia}
 #| label: model-all-recursive
@@ -10292,7 +11960,7 @@ pl
 
 
 ```
-### Multiple processes--Gaussian Process form
+#### Multiple processes--Gaussian Process form
 
 The Fixed Effect is modeled as a LinearKernel on variable u
 - Mathematically: f(u) = β*u where β ~ N(0, β_u)
@@ -10445,7 +12113,7 @@ plot!(
 )
   
 ```
-### TemporalGPs
+#### TemporalGPs
 
 For temporal GPs, this approach is optimized to scale as O(N), but seems to fail with unclear errors. Try again in future.
 
@@ -10454,7 +12122,6 @@ For temporal GPs, this approach is optimized to scale as O(N), but seems to fail
 
 ```{julia}
 
- 
 @model function model_all_gp(y, x_time, u, nu, ::Type{T}=Float64) where {T}
     # --- Hyperparameter Priors ---
     σ_obs ~ Exponential(1.0)
@@ -10501,7 +12168,72 @@ chain = sample(model, NUTS(), 500)
  
 
 ```
-### Gaussian Markov random fields (GMRFs)
+
+
+### Non-stationary spatiotemporal models
+
+#### stmv
+
+The *stmv* approach permits a local
+estimation of these autocorrelation parameters and the spatial scale.
+
+All these approaches, including most operational spatiotemporal models, share a core assumption, that the mean and variance is stable throughout the domain (first and second order stationarity) and that a single autocorrelation function in space and a single autocorrelation function in time is sufficient to describe the full spatiotemporal pattern. The correctness of these rather important assumptions are seldom verified in the literature (I have never encountered them). When they are examined, there is little evidence to suggest this to be an appropriate assumption.
+
+One way to deal with such non-stationarity is to induce autocorrelation through covariates. By expanding the model to include time-varying and static covariates that can account for some of these discontinuities, the error distributions can become more stationary. That is, expanding the contents of $\boldsymbol{x}^{T}\boldsymbol{\beta}$ to include processes that represent *ecosystem variability*. The range of possibilities are of course quite large and as each component of *ecosystem variability* usually requires their own modelling and assessment, it can become very quickly an onerous exercise.
+
+Another solution is to identify a local sub-domain where they actually are stationary in space and potentially stationary in time as well. This reduces the problem into small manageable subdomains where assumptions of local stationarity are valid and modelling of spatiotemporal processes and associated parameters become computationally feasible. This approach is implemented in the *stmv* library (Choi et al. 2018; https://github.com/jae0/stmv). There is some conceptual similarity of this approach to geographically weighted regression (e.g., Fotheringham et al. 2002) in that each subdomain can have their own model parameters, $\beta_{st}$. However, geographically weighted regression permit only the model parameters $\beta_{st}$ to vary; however, here both the model parameters $\beta_{st}$ and the spatiotemporal errors $\omega_{st}$ and $\varepsilon_{st}$ are also varying in space.
+
+To be more precise, we define statistical nodes $\{N_{m=(1,\dots,M)}|m\in\mathfrak{R}^{d}\}$ in a spatial lattice that are the centres of areal units (Figure [18](#fig:stmv_grids){reference-type="ref" reference="fig:stmv_grids"}). The norm (distance) of data from each node is $h_{m}=||s_{m},s_{Y}||$. A local subdomain of a given node $m$ is $\{S_{m=(1,\dots,M)}\in D|h_{m}<h_{u}\}$ or more briefly as $\{S_{m}\}$ which represents all locations within some distance to the statistical node $\{h_{u}|\rho(h_{u})_{\text{Mat\'{e}rn}}>0.1\}$; that is, the distance at which the local spatial autocorrelation drops to a negligible value (arbitrarily taken as $\rho>0.1$) and associated parameter values are supported. The spatiotemporal data found within this subdomain $m$ is $\{Y_{st}|(s,t)\in D|h_{m}<h_{u}\}$ and is herein, notationally abbreviated as $^{m}Y_{st}$.
+
+![Spatial distribution of data (blue dots) overlaid by a statistical grid. The $m$ nodes represent the centers of each local subdomain $S_{m}$ which extends to a distance (right-facing arrows; solid squares) that varies depending upon the underlying spatial variability of the data, defined as the distance at which the spatial autocorrelation drops to some small value (e.g., $\rho_{s}=0.1$). Data within this distance and parameters obtained from the local analysis are, under the assumption of second order stationarity, used to complete the local model of the spatial or spatiotemporal processes and then predict/interpolate to some fraction of the distance between statistical grid nodes (stippled square). Every statistical node is visited for spatiotemporal modelling. Any overlapping predictions are locally averaged (weighted by number of predictions and prediction variance). As grid size decreases the number of computations increase while reducing computational load and RAM requirements; however, the utility of the model also declines due to small sample sizes entering analyses. Judicious choice of statistical grid density as well as maximum and minimum number of data points and upper and lower bounds of spatial bounds must be balanced. [\[fig:stmv_grids\]]{#fig:stmv_grids label="fig:stmv_grids"}](../stmv/concept1.pdf){#fig:stmv_grids}
+
+Operating upon all components of the regression model simultaneously is computationally prohibitive. Even with very simplistic Generalized Additive Model (GAM) or Generalized Additive Mixed effects Model (GAMM) parametrizations of spatial and temporal structure, the solutions require weeks on fast machines (5 GHz CPU, 64GB RAM in 2016), depending of course also upon the amount of data and resolution and model complexity. As a compromise between model complexity and computational speed, a global covariate model $\boldsymbol{x}^{T}\boldsymbol{\beta}_{st}+\varphi_{st}$ can be used to parameterize the covariate effects using a linear, generalized linear or generalized additive model. A low order penalized basis splines of the covariate predictors of 3 knots or less are biologically plausible as modality can often be expected:
+
+$$
+\begin{matrix}Y & \sim & \text{N}(\mu_{st},^{\varphi}\!\sigma^{2})\\
+g(\mu_{st}) & = & \boldsymbol{x}^{T}\boldsymbol{\beta}_{st}+\varphi_{st},\\
+\varphi_{st} & \sim & \text{N}(0,^{\varphi}\!\sigma^{2}).
+\end{matrix}
+$$
+
+The resultant residual spatiotemporal error $\varphi_{st}$ can be decomposed into other components in an approach similar to that of regression kriging and universal kriging with external drift (Hengl et al. 2004). First a local spatial autocorrelation scale is derived from a rapid (coarse grained) fit of the local residuals based upon an iteratively increasing guess of $^{m}\varphi_{st}$ to a Matérn autocorrelation function.
+
+To treat time in a similar manner, one would also need to determine temporal nodes and define appropriate temporal autocorrelation scales. In practice, temporal data are often sparse and limiting in survey data and so data from all time periods are used to determine a crude scaling, essentially amounting to a temporally averaged spatial autocorrelation. Once the approximate bounds of the subdomain (support) are estimated, the $^{m}\varphi_{st}$ are modelled as a Fourier series with two harmonics, one inter-annual and one sub-annual (seasonal): $f_{m}(\text{interannual, seasonal})$. In other words, a full temporal autocorrelation (covariance) model is not used but rather one that uses only a subset of the components at fixed wavelengths:
+
+$$
+\begin{matrix}^{m}\!\varphi_{st} & = & f_{m}(\cdot)+^{m}\!\zeta_{st},\\
+^{m}\!\zeta_{st} & \sim & \text{N}(0,^{\zeta}\!\sigma_{m}^{2}).
+\end{matrix}
+$$
+
+The temporal autocorrelation is, therefore, carried by the individual
+temporal processes at each spatial datum and the temporally structured
+error $^{\tau}\sigma_{m}^{2}$ is the variance component of the model
+$f_{m}(\cdot)$, that is,
+$^{\tau}\sigma_{m}^{2}= {{^{\varphi}\sigma_{m}^{2}}}-{}^{\zeta}\sigma_{m}^{2}$.
+
+The spatial autocorrelation function is parameterized as being derived from the subdomain mean Gaussian process with a Matérn covariance function with parameters $^{\omega}\theta_{m}=\{\phi_{m},\nu_{m}\}$ and a time-varying spatially structured standard error $^{\omega}\sigma_{m}$. As the data used to estimate the spatial autocorrelation structure are often sparse, the data are augmented by temporal predictions of the residual error process at each spatial datum (and notationally designated by an asterisk). These temporally augmented residual processes are modelled spatially at each time slice $^{m}\varphi_{st}^{*}$ as the sum of a time-varying spatial **Gaussian process** $^{m}\omega_{st}$ parameterized as a Matérn spatial covariance function:
+
+$$
+^{\omega}\sigma_{mt}^{2}\frac{1}{2^{\nu_{mt}-1}\Gamma(\nu_{mt})}(\sqrt{2\nu_{mt}}h/\phi_{mt})^{\nu_{mt}}\ K_{\nu_{mt}}(\sqrt{2\nu_{mt}}h/\phi_{mt})
+$$
+
+with a local spatial error $^{\omega}\sigma_{mt}$; and a spatially and
+temporally unstructured error process assumed to be derived from a
+Normal error process with mean zero and error $\sigma_{\varepsilon|m}$:
+
+$$
+\begin{matrix}\varphi_{mt}^{*} & = & \omega_{mt}+\varepsilon_{mt},\\
+\omega_{mt} & \sim & \text{GP}(0,C(\mathbf{s},\mathbf{s}';\mathbf{^{\boldsymbol{\omega}}\theta}_{mt}=\{\nu_{mt},\phi_{mt},^{\omega}\sigma_{mt}\})),\\
+\varepsilon_{mt} & \sim & \text{Normal}(0,{}^{\varepsilon}\sigma_{m}^{2}).
+\end{matrix}
+$$
+
+This approach represents a practical balance between computational time and model complexity/realism. For additional speed, an FFT-based Matérn convolution implementation is used. This solution focuses upon prediction using a mosaic of solutions in space, overall likelihood or AIC evaluation is a challenge. At present, predictive success is the only means to evaluate utility and eventually some form of Expectation-Maximization approaches through iteration once computational speeds improve would provide less biased parameter estimates.
+
+ 
+
+## Gaussian Markov random fields (GMRFs)
 
 A class of spatial models in which a sparse matrix structure arises naturally involves
 data that is laid out on some sort of spatial lattice, of regular or irregular nature. A powerful
