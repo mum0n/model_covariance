@@ -48,18 +48,14 @@ Consider installing [Julia](https://julialang.org/)  through [juliaup](https://g
 #| output: false
 
 
-# define the local directory of the repository
-basedirectory = homedir()
-basedirectory = "C:\\home\\jae"  # windows
-project_directory = joinpath( basedirectory, "projects", "model_covariance") 
+# define 'project_directory' as the location of the repository -- required
+# project_directory = joinpath( "home", "jae", "projects", "model_covariance")  # linux
+# project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  # mswindows
+project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # mswindows generic
+ 
+# if this is your first run, this can take up to 1 hour to install and precompile libraries and their dependencies
+include( joinpath( project_directory, "scripts", "startup.jl" ) )   
 
-
-# load environment, libraries  
-using DrWatson  # install this if you do not have it
-
-quickactivate(project_directory) 
-
-include( scriptsdir( "startup.jl" ))   
 
 ```
 
@@ -444,7 +440,6 @@ We repeat the above using Julia.
 #| echo: false 
 #| code-fold: true
 
-Random.seed!(42)
 
 # basic approach
 
@@ -759,7 +754,7 @@ $$
 
 To use this formula, the variables cannot be scaled to unit variance, as we are trying to compute covariance. In the PCA, the eigenvalues provide the $\sigma$ and the covariance directly from the product of x and y.
 
-```julia
+```{julia}
 CM = cov( [ X  Y] )
 CM_12 = CM[1,2]
 
@@ -776,7 +771,7 @@ m = (ssy - ssx + sqrt( (ssy - ssx)^2 + 4 * cov_xy) ) / (2 * sqrt(cov_xy) )
 
 This is also known as: Orthogonal Regression or [Total Least Squares](https://en.wikipedia.org/wiki/Total_least_squares#Scale_invariant_methods) where the solution is approached from an SVD and solution is derived from the right matrix V and then multiplying by -1/V[2,2]
 
-```julia
+```{julia}
 
 function Total_Least_Squares( X, Y )
   # this is copied verbatim (almost) from https://en.wikipedia.org/wiki/Total_least_squares
@@ -1075,12 +1070,8 @@ If the probability of success p varies from observation to observation (e.g., du
  
 ```{julia}
 
-using StatsAPI # Provides logistic and logit functions
-using Random
-using LinearAlgebra # For I (identity matrix)
-
-# Set a seed for reproducibility
-Random.seed!(456);
+# using StatsAPI # Provides logistic and logit functions
+# using LinearAlgebra # For I (identity matrix)
 
 # 1. Generate Synthetic Data for Beta-Binomial Regression
 num_samples = 100
@@ -1550,7 +1541,7 @@ where $\phi(x)$ in this case, constructs a polynomial feature vector for each in
 
 As the number of higher order terms increases the fit becomes better. This can go to an infinite number of terms for an infinitely perfect fit. This would also be highly over parameterized as our test data is only fourth order. It also contains minimal mechansistic or "process" information other than perhaps the approximate or potential number of processes that may be involved (order). However, it is sufficient for simple "predictive" models.
 
-```julia
+```{julia}
 function featurize_poly(Xin, degree=1)
     # add higher order polynomials
     return repeat(Xin, 1, degree + 1) .^ (0:degree)'
@@ -1631,7 +1622,24 @@ A [Gaussian process](https://en.wikipedia.org/wiki/Gaussian_process) is a collec
 
   - speed ... computation of a determinant and inverse of a matrix in $R^{n×n}$, generally taking $O(n^3)$ operations to complete, and the computation of the Cholesky decomposition is typically a prerequisite for sampling from a multivariate normal, which also takes $O(n^3)$ time to complete (Golub & Van Loan 1996). Many spatial models, including those which tackle nonstationarity as in Bornn et al. (2012), parametrize the covariance matrix Σ, and hence for Monte Carlo-based inference require repeated recalculations of $Σ^{−1}$ and $|Σ|$.
 
-### Weight-space representation (kernel matrix)
+### References
+
+https://stor-i.github.io/GaussianProcesses.jl/latest/Regression/
+
+https://turing.ml/dev/tutorials/12-gaussian-process/
+
+https://github.com/STOR-i/GaussianProcesses.jl/blob/master/notebooks/Regression.ipynb eqs 2-4
+
+https://betanalpha.github.io/assets/case_studies/gaussian_processes.html
+
+see also:
+
+https://juliagaussianprocesses.github.io/Stheno.jl/stable/examples/extended_mauna_loa/
+
+https://juliagaussianprocesses.github.io/Stheno.jl/stable/examples/process_decomposition/
+
+
+### Weight space representation (kernel matrix)
 
 - fast approximations of covariance functions
 - good summary: https://www.cs.toronto.edu/~duvenaud/cookbook/
@@ -1693,6 +1701,7 @@ function kernel_ridge_regression(X, y, Xstar, lambda, kern)
     return kstar * ((K + lambda * I) \ y)
 end;
  
+
 # some possible kernels:
 fkernel = PolynomialKernel(; degree=1, c=1) #  polynomial feature expansion
 fkernel = PolynomialKernel(; degree=4, c=1)
@@ -1836,9 +1845,19 @@ In 2-D space, this is equivalent to Kriging.
 
 ```{julia}
 
-  lambda = 1e-4
-  kernel_var = 500
-  kernel_scale = 0.1
+lambda = 1e-4
+kernel_var = 500
+kernel_scale = 0.1
+
+function gp_kernel_ridge_regression_cholesky( v, s, r, Xobs, Xinducing, Yobs )
+    # Gaussian Process Kernel Ridge Regression
+    k = ( v * SqExponentialKernel() ) ∘ ScaleTransform(s)
+    ko = kernelmatrix(k, Xobs)
+    kp = kernelmatrix(k, Xinducing, Xobs)
+    L = cholesky(ko + r * I)
+    Yp = kp * ( L.U \ (L.L \ Yobs) )  # mean process  
+    return Yp 
+end
 
 # speed up with cholesky   
 @benchmark let
@@ -1854,7 +1873,7 @@ plot!(Xobs, Yobs; seriescolor=:orange, label="observations with error", seriesty
 plot!(Xinducing, yp;  marker=(:square,3),  label="functional cholesky \$\\lambda=$lambda\$", seriestype=:path)
   
 ```
-#### 1. Textbook example: Basic dense covariance kernel matrix
+#### Dense covariance kernel matrix inversion
 
 Solution is by default with QR decomposition of the covariance matrix
 
@@ -1887,9 +1906,7 @@ plot!(Xobs, Yobs; seriescolor=:orange, label="observations with error", seriesty
 plot!(Xobs, y_mean_process;  marker=(:star,3),  label="Textbook exact solution", seriestype=:path)
 plot!(Xobs, y_sample;  marker=(:square,3),  label="Textbook exact solution samples", seriestype=:path)
 
-
-# same as above but using a function call
-
+ 
 lambda = 1e-4
 kernel_var = 500
 kernel_scale = 0.1
@@ -1909,11 +1926,12 @@ end
 plot!( Xobs, ys.Yobs_sample;  marker=(:circle, 3),  label="$GPmethod function call", seriestype=:path)
 
 ```
-#### 2. Dense matrix, with Cholesky
+
+#### Dense matrix using Cholesky decomposition
 
 faster for larger problems, here, 2X
 
-```julia
+```{julia}
 
 L = cholesky(Ko + lambda * I)
 y_mean_process = Ko * ( L.U \ (L.L \ Yobs) )   # faster equivalent, # note:: A\B == inv(A)*B
@@ -1951,136 +1969,9 @@ plot!( Xobs, ys.Yobs_sample;  marker=(:square,3),   label="$GPmethod", seriestyp
 
 
 ```
-### Function space representation
-
-- A GP model is simply a set of variables that is multivariate normally distributed with mean $\mu$ and variance/covariance matrix $\Sigma$:
-
-$$
-y \sim \mathrm{MVN} (\mu, \Sigma)
-$$
-
-$$
-\Sigma_{i, j} = k (i, j)
-$$
-
-- Usually the mean vector is set to $0$, which means the Gaussian process is fully defined by its choice of variance/covariance matrix $\Sigma$.
-- The variance/covariance matrix is defined by a kernel function $k$ which defines the covariance between any two variables. Kernels are flexible ways of creating/defining the covariance functions that serve as the basis for GPs.
-
-$$
-\bold{X} = \{ x_i \} _{i=1}^{N} ∈ \Reals^d , \; \; \; \textnormal{predictor variables}
-$$
-
-$$
-y = \{ y_i \in \Reals \} ^{N} _{i=1} , \;  \; \; \textnormal{ response variables}
-$$
-
-$$
-y_i \sim N(f(x_i), \sigma^2), \; \; \; i=1, \dotsc, n
-$$
-
-and $f$ is a mapping function that has a distribution:
-
-$$
-f \sim GP(m(x), k(x, x'))
-$$
-
-where $m(\cdot)$ is a mean function and $k(\cdot,\cdot)$ is a kernel function, both dependent upon $x$ and $\sigma$ is observaton eror.
-
-New, unobserved (latent or inducing) points $\{ x^*, y^*\}$ conditional on the above (data, functions) can be predicted as follows (in GaussianProcesses.jl it is "predict_y"):
-
-$$
-y^*|x^*, \text{data} \sim N(\mu(x^*),\Sigma(x^*, x^{*^{T}}+ \sigma^2 \bold{I} )  )
-$$
-
-with:
-
-$$
-\mu(x^*) = k(x^*, X) (k(X,X) + \sigma^2_n\bold(I))^{-1} y
-$$
-
-$$
-\Sigma(x^*, x^*) = k(x^*, x^*) - k(x^*, X) (k(X,X) + \sigma^2_n\bold(I))^{-1} k(X, x^*)
-$$
-
-#### Kernel (using a function) -- Gaussian process models
-
-Same kernel function but use it as a function internal to computations rather than an upfront covariance realization.
-
-Conceptually beautiful. Problem is speed.
-
-Assumes, like kriging, 1st and 2nd order stationarity ... but heirarchical forms can address some of this, e.g., stmv
-
-```julia
-
-# there are 4 possible parameters to tune: lambda, variance components (2) and scale 
-# this example is about implementation and not tuning so, just picking a few values:
-
-  lambda = 1e-4
-  kernel_var = 500
-  kernel_scale = 0.1
-
-  # semantics of setting up the kernel function: 
-  fkernel = kernel_var *  SqExponentialKernel()  ∘ ScaleTransform(kernel_scale) 
-  # fkernel = with_lengthscale(kernel_var * SqExponentialKernel(), 1/kernel_scale )  # alternative .. careful with scaling
-  # fkernel = (kernel_var * SqExponentialKernel() + sigma_sq2 * Matern32Kernel()) ∘ ScaleTransform(kernel_scale)
-  # fkernel = (kernel_var * Matern52Kernel()) ∘ ScaleTransform( kernel_scale ) # ∘ ARDTransform(α)
-  # fkernel = (kernel_var * SqExponentialKernel() ) ∘ ScaleTransform( kernel_scale ) # ∘ ARDTransform(α)
-
-```
-
-#### 3: Dense matrix with AbstractGPs rather than kernel matrix (aka, "Exact GP")
-
-```julia
-
-using AbstractGPs, Stheno
-
-Xlatent, Ylatent, Xobs, Yobs = example_data("nonlinear") 
-
-# inducing_points for GP (for prediction)
-n_inducing = 10
-Xinducing = quantile(vec(Xobs), LinRange(0.01, 0.99, n_inducing))
-# Xinducing = reshape(Xinducing, 1, :)
- 
-
-lambda = 1e-4
-kernel_var = 500
-kernel_scale = 0.1
-gpc = GPC()
-
-fgp = atomic(GP( (kernel_var * SqExponentialKernel() ) ∘ ScaleTransform(kernel_scale)), gpc )
-
-fx = fgp(Xobs, lambda)
-logpdf(fx, Yobs)
-
-fposterior = posterior(fx, Yobs) 
-GPpostXp = fposterior(Xinducing, lambda)
-ym = mean(GPpostXp)
-yp = rand(GPpostXp)
 
 
-plot(Xlatent, Ylatent; label=raw"$f(x)$ latent 'truth'", legend=:top, seriestype=:path)  # latent "truth"
-plot!(Xobs, Yobs; seriescolor=:orange, label="observations with error", seriestype=:scatter)
-plot!(Xinducing, ym;  marker=(:star,3),  label="AbstractGPs mean", seriestype=:path)
-plot!(Xinducing, yp;  marker=(:square,3),  label="AbstractGPs sample", seriestype=:path)
-
- 
-GPmethod="GPexact"
-
-@benchmark let
-  #  fkernel = kernel_var * SqExponentialKernel()  ∘ ScaleTransform(kernel_scale)
-  ys = sample_gaussian_process( GPmethod=GPmethod, returntype="sample_loglik",
-    kerneltype="squared_exponential", kvar=kernel_var, kscale=kernel_scale,
-    Yobs=Yobs, Xobs=Xobs, lambda=lambda 
-  )
-  #  45.392 μs ± 46.479 μs   ; 113.38 KiB, allocs estimate: 108. 
-  #  1.077 μs ±   3.955 μs  ; 896 bytes, allocs estimate: 13.
-end
-
-plot!( Xobs, ys.Yobs_sample;  marker=(:star,3),  label="$GPmethod inducing", seriestype=:path)
-
-```
-
-#### 4. Using inducing points to speed up computations with kernel matrices
+#### Using inducing points to speed up computations
 
 Recall:
 
@@ -2100,7 +1991,7 @@ $$
 
 See also:  https://hua-zhou.github.io/teaching/biostatm280-2019spring/slides/10-chol/chol.html#Multivariate-normal-density
 
-```julia
+```{julia}
 
 
 lambda = 1e-4
@@ -2144,11 +2035,133 @@ plot!( Xobs, ys.Yobs_sample;  marker=(:star,3),  label="$GPmethod", seriestype=:
 
 
 ```
-#### 5. SparseFiniteGP
 
-```julia
 
-using AbstractGPs, Stheno
+### Function space representation
+
+- A GP model is simply a set of variables that is multivariate normally distributed with mean $\mu$ and variance/covariance matrix $\Sigma$:
+
+$$
+y \sim \mathrm{MVN} (\mu, \Sigma)
+$$
+
+$$
+\Sigma_{i, j} = k (i, j)
+$$
+
+- Usually the mean vector is set to $0$, which means the Gaussian process is fully defined by its choice of variance/covariance matrix $\Sigma$.
+
+- The variance/covariance matrix is defined by a kernel function $k$ which defines the covariance between any two variables. Kernels are flexible ways of creating/defining the covariance functions that serve as the basis for GPs.
+
+$$
+\bold{X} = \{ x_i \} _{i=1}^{N} ∈ \Reals^d , \; \; \; \textnormal{predictor variables}
+$$
+
+$$
+y = \{ y_i \in \Reals \} ^{N} _{i=1} , \;  \; \; \textnormal{ response variables}
+$$
+
+$$
+y_i \sim N(f(x_i), \sigma^2), \; \; \; i=1, \dotsc, n
+$$
+
+and $f$ is a mapping function that has a distribution:
+
+$$
+f \sim GP(m(x), k(x, x'))
+$$
+
+where $m(\cdot)$ is a mean function and $k(\cdot,\cdot)$ is a kernel function, both dependent upon $x$ and $\sigma$ is observaton eror.
+
+New, unobserved (latent or inducing) points $\{ x^*, y^*\}$ conditional on the above (data, functions) can be predicted as follows (in GaussianProcesses.jl it is "predict_y"):
+
+$$
+y^*|x^*, \text{data} \sim N(\mu(x^*),\Sigma(x^*, x^{*^{T}}+ \sigma^2 \bold{I} )  )
+$$
+
+with:
+
+$$
+\mu(x^*) = k(x^*, X) (k(X,X) + \sigma^2_n\bold(I))^{-1} y
+$$
+
+$$
+\Sigma(x^*, x^*) = k(x^*, x^*) - k(x^*, X) (k(X,X) + \sigma^2_n\bold(I))^{-1} k(X, x^*)
+$$
+
+
+#### A simple kernel function example (an "Exact" GP)
+
+The kernel function is internally for computations rather than an upfront covariance realization. It assumes, like kriging, 1st and 2nd order stationarity.
+
+```{julia}
+
+# using AbstractGPs, Stheno
+
+# there are 4 possible parameters to tune: lambda, variance components (2) and scale 
+# this example is about implementation and not tuning so, just picking a few values:
+
+lambda = 1e-4
+kernel_var = 500
+kernel_scale = 0.1
+
+# semantics of setting up the kernel function: 
+fkernel = kernel_var *  SqExponentialKernel() ∘ ScaleTransform(kernel_scale) 
+# fkernel = with_lengthscale(kernel_var * SqExponentialKernel(), 1/kernel_scale )  # alternative .. careful with scaling
+# fkernel = (kernel_var * SqExponentialKernel() + sigma_sq2 * Matern32Kernel()) ∘ ScaleTransform(kernel_scale)
+# fkernel = (kernel_var * Matern52Kernel()) ∘ ScaleTransform( kernel_scale ) # ∘ ARDTransform(α)
+# fkernel = (kernel_var * SqExponentialKernel() ) ∘ ScaleTransform( kernel_scale ) # ∘ ARDTransform(α)
+ 
+Xlatent, Ylatent, Xobs, Yobs = example_data("nonlinear") 
+
+# inducing_points for GP (for prediction)
+n_inducing = 10
+Xinducing = quantile(vec(Xobs), LinRange(0.01, 0.99, n_inducing))
+# Xinducing = reshape(Xinducing, 1, :)
+   
+
+gpc = GPC()  # container use by Stheno
+
+fgp = atomic( GP( (kernel_var * SqExponentialKernel() ) ∘ ScaleTransform(kernel_scale)), gpc )
+
+fx = fgp(Xobs, lambda)
+logpdf(fx, Yobs)
+
+fposterior = posterior(fx, Yobs) 
+GPpostXp = fposterior(Xinducing, lambda)
+ym = mean(GPpostXp)
+yp = rand(GPpostXp)
+
+plot(Xlatent, Ylatent; label=raw"$f(x)$ latent 'truth'", legend=:top, seriestype=:path)  # latent "truth"
+plot!(Xobs, Yobs; seriescolor=:orange, label="observations with error", seriestype=:scatter)
+plot!(Xinducing, ym;  marker=(:star,3),  label="AbstractGPs mean", seriestype=:path)
+plot!(Xinducing, yp;  marker=(:square,3),  label="AbstractGPs sample", seriestype=:path)
+
+ 
+GPmethod="GPexact"
+
+@benchmark let
+  #  fkernel = kernel_var * SqExponentialKernel()  ∘ ScaleTransform(kernel_scale)
+  ys = sample_gaussian_process( GPmethod=GPmethod, returntype="sample_loglik",
+    kerneltype="squared_exponential", kvar=kernel_var, kscale=kernel_scale,
+    Yobs=Yobs, Xobs=Xobs, lambda=lambda 
+  )
+  #  45.392 μs ± 46.479 μs   ; 113.38 KiB, allocs estimate: 108. 
+  #  1.077 μs ±   3.955 μs  ; 896 bytes, allocs estimate: 13.
+end
+
+plot!( Xobs, ys.Yobs_sample;  marker=(:star,3),  label="$GPmethod inducing", seriestype=:path)
+
+```
+
+
+#### Sparse Finite Gaussian Process 
+
+Using SparseFiniteGP
+
+```{julia}
+
+# using AbstractGPs, Stheno
 
 lambda = 1e-4
 kernel_var = 500
@@ -2187,10 +2200,10 @@ plot!( Xinducing, ys.Yinducing_sample;  marker=(:star,3),  label="$GPmethod", se
 plot!( Xobs, ys.Yobs_sample;  marker=(:star,3),  label="$GPmethod", seriestype=:path)
 
 
-  ys = sample_gaussian_process( GPmethod=GPmethod, returntype="fcovariance",
+ys = sample_gaussian_process( GPmethod=GPmethod, returntype="fcovariance",
     kerneltype="squared_exponential", kvar=kernel_var, kscale=kernel_scale,
     Yobs=Yobs, Xobs=Xobs, Xinducing=Xinducing, lambda=lambda 
-  )
+)
 
 using AbstractGPsMakie, CairoMakie
 plx = -10:0.01:10
@@ -2198,11 +2211,14 @@ AbstractGPsMakie.plot(plx, ys; bandscale=1 )
 AbstractGPsMakie.gpsample!(plx, ys; samples=10 )
 
 ```
-#### 6. VFE
+
+#### Variational Free Energy (VFE)
+
+Variational Free Energy method, using variational inference (Turing.Variational) ..
 
 Not much documentation ..
 
-```julia
+```{julia}
 
 lambda = 1e-4
 kernel_var = 500
@@ -2236,7 +2252,8 @@ fposterior = posterior( fsparse, fobs, Yobs)
 yp = rand(  fposterior(Xinducing, lambda) )
  
 
-using AbstractGPsMakie, CairoMakie
+# using AbstractGPsMakie, CairoMakie
+
 plx = -10:0.01:10
 AbstractGPsMakie.plot(plx, fposterior; bandscale=1 )
 AbstractGPsMakie.gpsample!(plx, fposterior; samples=10 )
@@ -2259,7 +2276,9 @@ m = SparseFinite_example( Yobs, Xobs, Xinducing )
 rand(m)
 
 # using variational inference:
-using Turing.Variational
+
+# using Turing.Variational
+
 res = variational_inference_solution(m, max_iters=1000 )
 pm = res.mmean
 # msol = res.msol
@@ -2294,16 +2313,16 @@ if false
 end
 
 ```
-#### 7.  ApproximateGPs  (SparseVariationalApproximation)
+#### Approximated Gaussian Process with Variational Inference
+
+ApproximateGPs  (SparseVariationalApproximation)
 
 not sure here ..
 
 the work flow permits more flexibility and likely reduced memory overhead
-but speed makes it not viable,
+but speed still limited? 
 
-but maybe I misundertand the implementation and use of the approximation
-
-```julia
+```{julia}
 
 using ApproximateGPs, Random, Stheno
 
@@ -2370,11 +2389,11 @@ After all the comparisons, the basic cholesky on a dense matrix is fastest ... t
 
 $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
-#### 8. Pseudo points regression (example)
+#### Pseudo points regression
 
 https://juliagaussianprocesses.github.io/Stheno.jl/stable/examples/gppp_and_pseudo_points/
 
-```julia
+```{julia}
 
 using AbstractGPs, Plots, Random, Stheno
 gr();
@@ -2517,3135 +2536,14 @@ plot(f₁′_plot, f₂′_plot, f₃′_plot; layout=(3, 1))
 
 
 ```
-#### References (GP implementations)
-
-https://stor-i.github.io/GaussianProcesses.jl/latest/Regression/
-
-https://turing.ml/dev/tutorials/12-gaussian-process/
-
-https://github.com/STOR-i/GaussianProcesses.jl/blob/master/notebooks/Regression.ipynb eqs 2-4
-
-https://betanalpha.github.io/assets/case_studies/gaussian_processes.html
-
-see also:
-
-https://juliagaussianprocesses.github.io/Stheno.jl/stable/examples/extended_mauna_loa/
-
-https://juliagaussianprocesses.github.io/Stheno.jl/stable/examples/process_decomposition/
-
-## Multivariate methods
-
-### Spectral (Eigen) decomposition
-
-Spectral (Eigen) decomposition of rectangular data is also known as Principal components analysis (PCA). It is a form of Major Axis (aka, model 2, see Linear Regression above) regression if one focuses upon the first Principal Axis and is even related to Gaussian Process models (see above).
-
-NOTE: This has been adapted from numerous sources. All credit to original authors (noted where found).
-
-(Source: https://en.wikipedia.org/wiki/Principal_component_analysis)
-
-An eigen-decomposition is a factorization of a square matrix
-$\mathbf{C} \in \Re^{n\times n}$ into an equivalent canonical (unique,
-characteristic, *eigen*) form of a diagonal matrix
-$\mathbf{\Lambda} = \text{diag}(\lambda)$ (eigenvalues, singular/scalar
-roots, standard deviations) and the transformations required
-$\mathbf{V}$ (eigenvectors):
-
-$$
-\mathbf{C} \mathbf{V} = \mathbf{V} \mathbf{\Lambda},
-$$
-
-which, when right or left multiplied by $\mathbf{V}^{-1}$ gives:
-
-$$
-\mathbf{C} = \mathbf{V} \mathbf{\Lambda}  \mathbf{V}^{-1} \quad \text{and} \quad \mathbf{V}^{-1} \mathbf{C} \mathbf{V} = \mathbf{\Lambda}
-$$
-
-and demonstrates that they are forward and backward rotations of
-$\mathbf{\Lambda} <=> \mathbf{C}.$
-
-Eigen-decomposition is also a way to compute the inverse of
-$\mathbf{C}$:
-
-$$
-\mathbf {C} ^{-1}=\mathbf {V} \mathbf {\Lambda } ^{-1}\mathbf {V} ^{-1}
-$$
-
-An eigen-decomposition of a complex square *normal* matrix (that is,
-$C^T C= C C^T$) results in:
-
-$$
-\mathbf{C} = \mathbf{V} \mathbf{\Lambda} \mathbf{V}^*
-$$
-
-where $\mathbf{U}$ is a *unitary matrix*:
-
-$$
-\mathbf{V}^*=\mathbf{V}^{-1}.
-$$
-
-### PCA
-
-A PCA (Principal components analysis) is a technique that identifies the rotations required to uniquely represent the structure in a symmetric matrix. If the matrix $C$ is a correlation or covariance matrix, the rotations represent the directions of maximum *variability* in the data. As such, it represents a powerful and often-used data reduction technique in many fields.
-
-More formally, if $n$ observations of $p$ variables are represented as a rectangular matrix $X_{n \times p}$, the corresponding *covariances* or *correlations* between variables $C_{p \times p}$ can be decomposed to the canonical rotations:
-
-$$
-\mathbf{C} \mathbf{V} = \mathbf{V} \mathbf{\Lambda} ,
-$$
-
-where $\mathbf{\Lambda} = \text{diag}(\lambda)$ are the eigenvalues (singular/scalar roots, standard deviations) and $\mathbf{V}$ are the eigenvectors (the rotations, transformations).
-
-PCA is, therefore, an eigen-decomposition of a
-(Gram) *symmetric matrix*, usually a correlation or covariance matrix.
-For some rectangular data matrix $X_{n \times p}$ with $n$ observations
-and $p$ features, the covariance between features, *centered to column
-(feature) means*, is computed as:
-
-$$
-\mathbf{C}_{p\times p} = \frac{1}{n−1} \mathbf{X}^T \mathbf{X}
-$$
-
-and the covariance between observations, *centered to row (observation)
-means*, is computed as:
-
-$$
-\mathbf{C}_{n\times n} = \frac{1}{p−1} \mathbf{X} \mathbf{X}^T
-$$
-
-Note, most PCAs focus upon the *between features* relationships:
-$\mathbf{C}_{p \times p}$ (after $\mathbf{X}$ is \*centered by features,
-that is, columns).
-
-The construction of the symmetric matrix $C$ is important. The standard approach assumes each observation (row) contributes equally towards the correlations. The issue with this is that all observations are not always equally important. For example, when a variable is repeatedly measured on a person, the observations are no longer independent -- some are clustered. If the majority of measurements come from one individual then the observations would be unduly giving important to one person's information. It is well understood that such repeated measures can inappropriately bias the estimation of the "real" (latent) correlation. Time-series analysis and decomposition of autocorrelation in time is used for this reason in Repeated measures analysis.
-
-Similarly in spatial processes, spatially clustered events can bias the estimation of the overall relationship between variables and processes. Spatial methods exists to decompose such autocorrelation in space.
-
-Thus, to estimate correlations between variables that are repeatedly measured in a space and/or time structured system, such autocorrelations need to be addressed, as latent biases can and usually do, exist, even in the best designed surveys. See model-based partial correlations (above).
-
-#### PCA through Eigen-decomposition
-
-Starting with eigen-decompostion of $\mathbf{C}$ (a real square
-*symmetric* *normal* matrix):
-
-$$
-\mathbf{C} \mathbf{V} = \mathbf{V} \mathbf{\Lambda}
-$$
-
-as $\mathbf{V} \mathbf{V}^T = \mathbf{I}$ for symmetric matrices, right
-or left multiplying by $\mathbf{V}^T$ gives:
-
-$$
-\mathbf{C} = \mathbf{V} \mathbf{\Lambda}  \mathbf{V}^T \quad \text{and} \quad \mathbf{V}^T \mathbf{C} \mathbf{V} = \mathbf{\Lambda}
-$$
-
-Using the left form gives:
-
-$$
-\mathbf{C}_{p \times p} = \frac{1}{n−1} \mathbf{X}^T \mathbf{X}= \frac{1}{n−1} \mathbf{V} \mathbf{\Lambda} \mathbf{V}^T
-$$
-
-#### PCA through Singular value decomposition (SVD)
-
-See:
-
-- https://en.wikipedia.org/wiki/Singular_value_decomposition
-- https://en.wikipedia.org/wiki/Principal_component_analysis#Principal_components_using_singular_value_decomposition
-- [Shlens 2014](./reference/pca_basics.pdf)
-
-SVD can also be used to decompose $\mathbf{X}^{n\times p}$ into
-eigenvalues and eigenvectors. It is also computationally faster and more
-stable:
-
-$$
-\mathbf{X} = \mathbf{U} \mathbf{\Sigma} \mathbf{V}^T
-$$
-
-The columns of $\mathbf{U}_{n\times p}$ are known as left singular
-vectors, $\mathbf{\Sigma}_{p \times p}$ is a diagonal matrix of
-*singular values* and columns of $\mathbf{V}_{p \times p}$ are right
-singular vectors.
-
-Using the definition of covariance $\mathbf{C}_{p \times p}$ and
-substituting the above definition for
-$\mathbf{X} = \mathbf{U} \mathbf{\Sigma} \mathbf{V}^T$:
-
-$$
-\begin{align*}
-\mathbf{C}_{p \times p} &= \frac{1}{n−1} \mathbf{X}^T \mathbf{X} \\
-&= \frac{1}{n-1}(\mathbf{U} \mathbf{\Sigma} \mathbf{V} ^T) ^T(\mathbf{U} \mathbf{\Sigma} \mathbf{V} ^T) \\ 
-&= \frac{1}{n-1}(\mathbf{V} \mathbf{\Sigma}^T \mathbf{U}^T)(\mathbf{U} \mathbf{\Sigma} \mathbf{V} ^T)
-\end{align*}
-$$
-
-and then noting the orthogonality of U, such that
-$\mathbf{U}^T \mathbf{U}=I$, and $\mathbf{\Sigma}$ is a diagonal matrix,
-gives:
-
-$$
-\mathbf{C} = \frac{1}{n-1}\mathbf{V} (\mathbf{\Sigma}^T \mathbf{\Sigma}) \mathbf{V}^T
-$$
-
-By similarity with the eigen-decomposition:
-$\mathbf{\Lambda}=\mathbf{\Sigma}^2$.
-
-Similarly, $\mathbf{X} \mathbf{X}^T=U(\Sigma \Sigma^T)\mathbf{U}^T$.
-$\mathbf{V}$ (right singular vectors) are the eigenvectors of $X^TX$,
-while $\mathbf{U}$ (left singular vectors) are eigenvectors of
-$\mathbf{X} \mathbf{X}^T$.
-
-Further, the projections of X on the principle axes (eigenvectors) are
-known as PC *scores*: $\mathbf{Z} = \mathbf{X} \mathbf{V}$. If using
-SVD, from its definition,
-$\mathbf{Z} = (\mathbf{U} \mathbf{\Sigma} \mathbf{V}^T) \mathbf{V} = \mathbf{U} \mathbf{\Sigma} = \mathbf{X} \mathbf{V}$.
-In addition, the PC *loadings* indicate the influence of each feature
-upon the principle axes, and is obtained as:
-$L=\mathbf{V} * diag(\sqrt{\Lambda}) = \mathbf{V} * diag( \Sigma)$ .
-
-If $C$ is a normal matrix (i.e., $C^T C = C C^T$), such as covariance or
-correlation matrix, then:
-
-$$
-\mathbf{C} = \mathbf{V} \mathbf{\Lambda} \mathbf{V}^T
-$$
-
-This method is used in *pca_basic* (below), to give more control to
-$\mathbf{C}$ (see below).
-
-Further, if $\mathbf{C}$ is positive semi-definite, all eigenvalues will
-be positive valued.
-
-See also:
-
-SVD in Wikipedia for more information (primary source of above).
-
-https://math.stackexchange.com/questions/3869/what-is-the-intuitive-relationship-between-svd-and-pca
-
-https://stats.stackexchange.com/questions/104306/what-is-the-difference-between-loadings-and-correlation-loadings-in-pca-and
-
-#### Basic PCA
-
-```{julia}
-
-# include( srcdir( "pca_functions.jl" ))   # support functions  
-   
-# X has an embedded nonlinear pattern 
-# id, sps, X, G, vn = example_data( "iris_pca_nonlinear" )  
-
-id, sps, X, G, vn = example_data("iris_pca")
-nData, nvar = size(X)   
-nz = 2  # no latent factors to use
-
-
-# test covariances...  
-isapprox(X'*X/(nData-1), cov(X) )  # ok
-
-XX = X .- mean(X, dims=2) # must center first (x is already centered by column)
-isapprox( XX*XX'/(nvar-1),  cov(XX') )  # ok
- 
-
- 
-# this is the core of eigendecompoistion
-
-eigen( cov(X) )
-
-# the "values" are the "eigenvalues", which are actually the standard deviations associated with each axis
- 0.02383509297344945
- 0.0782095000429192
- 0.24267074792863327
- 4.228241706034862
-
-# the "vectors" are the "eigenvectors", the coefficients for each variable (row) used to construct the new basis, in other words, the *rotations* to orient to the new basis:
-  0.315487   0.58203     0.656589  -0.361387
- -0.319723  -0.597911    0.730161   0.0845225
- -0.479839  -0.0762361  -0.173373  -0.856671
-  0.753657  -0.545831   -0.075481  -0.358289
-
-
-# the same can be accomplished with some additional formatted results:
-
-evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="cor", obs="rows")  # pca_sd is std dev, not variance.
-
-biplot(pcscores=pcscores, pcloadings=pcloadings, 
-    variancepct=variancepct, evecs=evecs, evals=evals,
-    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  # unstandardized by default
-
-variancepct # 4-element Vector{Float64}:
- 72.96
- 22.85
-  3.67
-  0.52
-
-
-# ----------------------
-# simple and direct pca on covariance matrix
-evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="cov", obs="rows")  # pca_sd is std dev, not variance.
-
-biplot(pcscores=pcscores, pcloadings=pcloadings, 
-    variancepct=variancepct, evecs=evecs, evals=evals,
-    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  # unstandardized by default
-
-variancepct # 4-element Vector{Float64}:
- 92.46
-  5.31
-  1.71
-  0.52
-
-
-# ----------------------
-# alternatively, operating directly on data and so ultimately the cov matrix  
-evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="direct_svd", obs="rows")  
-
-biplot(pcscores=pcscores, pcloadings=pcloadings, variancepct=variancepct, evecs=evecs, evals=evals,
-    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )   
-
-plot!(xlim=(-2.5, 2.5))
-
-variancepct # 4-element Vector{Float64}: (same as above)
- 92.46
-  5.31
-  1.71
-  0.52
-
-      
-# not tested
-if false
-    using FactorRotations # https://github.com/p-gw/FactorRotations.jl -- lots of options but seems incomplete ... check MultiVariateStats.jl  as they are also adding this functionality
-    nfactors =2 
-    L = pcloadings[:,1:nfactors]  # loadings
-    L_rotated = FactorRotations.rotate(L, Varimax()) 
-    # FactorRotations.factor_correlation(L_rotated)
-    # rotation(L_rotated)
-    # loadings(L_rotated )  # access rotated loadings
-    # following is R ::: ignore
-    # rotated_scores =  indat  %*% L_rotated'   # R
-    # out$rotated_variance = colSums(L_rotated^2) / sum( evals.^2 )
-end
-
-```
-Compare with solutions from MultivariateStats.jl
-
-```{julia}
-
-# using MultivariateStats 
-
-# note: MultivariateStats.jl operates on data matrices with rows as features and cols as observations
-
-M = fit(PCA, X'; method=:svd, pratio=1, maxoutdim=nvar )
-
-# other possible methods from MultivariateStats (need to be tested):
-# M = fit(KernelPCA, X; maxoutdim=nz )
-# M = fit(PPCA, X; method=:bayes, maxoutdim= nz) # no convergence
-# M = fit(MDS, X; distances=false)
-
-# some generic methods: (fit method is off . making some alternate assumptions)
-evals = eigvals(M)
-evecs = eigvecs(M)
-
-# proj[:,1] = weights or "loadings" for PC1, etc
-proj = MultivariateStats.projection(M) # eigenvectors
-pcloadings = MultivariateStats.loadings(M)
-
-# eigenvalues: normalize to give contributions of each principal component towards explaining the total variance,
-variancepct = principalvars(M) ./ tvar(M) .* 100
-
-# pcscores = MultivariateStats.transform(M, X')'  # scores
-pcscores = (projection(M)' * (X' .- mean(M)))' # scores (projection of data to new axes)
-
-# axis flipping occurs
-biplot(pcscores=pcscores, pcloadings=pcloadings, variancepct=variancepct, evecs=evecs, evals=evals,
-    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  
-
-```
-Testing for stability: a training and testing/validation set to examine
-stability:
-
-(Note PCscores need to be rotated back to original eigenspace to
-complete the comparison ... to do)
-
-```{julia}
-
-# check stability:  split half to training set
-training = 1:2:nData
-testing  = 2:2:nData
-
-Xtraining = X[training,:]
-Xtesting = X[testing,:]
-
-Xtestingid = Vector(sps[testing])
-
-Xmean = mean(Xtesting, dims=1)
-Xstd = std(Xtesting, dims=1)
-
-Xtesting = (Xtesting .- Xmean) ./ Xstd
-Xtraining = (Xtraining .- Xmean) ./ Xstd
-
-Mtraining = fit(PCA, Xtraining'; maxoutdim=nz )
-M = fit(PCA, X'; maxoutdim=nz ) # full
-
-# similar results:
-MultivariateStats.loadings(Mtraining)
-MultivariateStats.loadings(M)
-
-MultivariateStats.projection(Mtraining)     #  proj = evecs'
-MultivariateStats.projection(M)
-
-MultivariateStats.principalvars(Mtraining) ./ tvar(Mtraining) .* 100     # eigenvalues: normalize to give contributions of each principal component towards explaining the total variance,
-MultivariateStats.principalvars(M) ./ tvar(M) .* 100    # eigenvalues: normalize to give contributions of each principal component towards explaining the total variance,
-
-# simple check ... of scores ... ideally it should be reprojected to original fit of M ... todo
-PCscores_all = zeros(nData, nz)
-PCscores_all[training,:] = Matrix( MultivariateStats.predict(Mtraining, Xtraining') )'
-PCscores_all[testing,:]  = Matrix( MultivariateStats.predict(Mtraining, Xtesting') )'
-proj = projection(Mtraining) # evecs = proj'
-
-PCscores_all0 = zeros(nData, nz)
-PCscores_all0[training,:] = Matrix( MultivariateStats.predict(M, Xtraining') )'
-PCscores_all0[testing,:]  = Matrix( MultivariateStats.predict(M, Xtesting') )'
-proj0 = projection(M)
-
-# warning axis flipping occurs...
-h = plot(PCscores_all[:,1], PCscores_all[:,2], seriestype=:scatter, label="", alpha=0.5)
-plot!(xlabel="PC1", ylabel="PC2", framestyle=:box) # A few formatting options
-
-for i=1:4; 
-    plot!([0,proj[i,1]], [0,proj[i,2]], arrow=true, label=vn[i], legend=:topleft); 
-    plot!([0,proj0[i,1]], [0,proj0[i,2]], arrow=true, label=vn[i], legend=:topleft); 
-
-end
-display(h)
-
-plot!( PCscores_all[:,1], PCscores_all[:,2], 
-    group=["Setosa2", "Versicolor2", "Virginica2"][id],
-    markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-    seriesalpha=0.4, title="Ordination",
-    seriestype=:scatter
-)
-display(h)
-
-plot!( PCscores_all0[:,1], PCscores_all0[:,2], 
-    group=["Setosa2", "Versicolor2", "Virginica2"][id],
-    markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-    seriesalpha=0.4, title="Ordination",
-    seriestype=:scatter
-)
-display(h)
-
-# to reconstruct testing observations (approximately) to the original space
-Xrec = reconstruct(Mtraining, Xtesting[:,1:nz]' )
-
-idt = id[testing]
-plot( Xtesting[:,1], Xtesting[:,2], 
-    group=["Setosa", "Versicolor", "Virginica"][idt ],
-    markercolor=["orange", "green", "grey"][idt], markerstrokewidth=0,
-    seriesalpha=0.4, title="Ordination testing",
-    seriestype=:scatter,  xlabel="PC1", ylabel="PC2"
-)
-
-```
-### Probabilitic PCA
-
-Sources:
-
-https://www.cs.columbia.edu/\~blei/seminar/2020-representation/readings/TippingBishop1999.pdf
-
-Tipping, M. E., & Bishop, C. M. (1999). Probabilistic principal
-component analysis. Journal of the Royal Statistical Society: Series B
-(Statistical Methodology), 61(3), 611–622.
-
-https://stats.stackexchange.com/questions/208731/what-is-principal-subspace-in-probabilistic-pca
-
-In the same spirit as a classical PCA (and Factor Analysis),
-Probabilistic PCA is a projection of data $X$ to lower dimensional
-latent space $Z$ through the operation of an eigenvector-like
-transformation $\mathbf{W}$:
-
-$$
-\mathbf{X} \in \Re^{n\times p} \quad \rightleftharpoons  \quad \mathbf{Z} \in \Re^{n\times q}
-$$
-
-via the identification of the generative model that maps the latent
-space to data ($\mathbf{Z} = \mathbf{X} \mathbf{W}$; loadings, see
-above). Here we use $\mathbf{W}$ instead to represent the transformation
-instead of $\mathbf{V}$ as it is not exactly an eigenvector.
-
-$$
-\mathbf{X} \sim \text{N} (\mathbf{Z} \mathbf{W}^T + \mu, \sigma^2 \mathbf{I})
-$$
-
-$$
-\mathbf{Z} \sim \text{N} (\mathbf{0}, \mathbf{I})
-$$
-
-$$
-P(\mathbf{X} | \mathbf{W}) = \prod_{i=1}^{m} \text{N} (\mathbf{X}_{i,.}|0, \mathbf{W} \mathbf{W}^T + \sigma^2 \mathbf{I})
-$$
-
-$$
-\mathbf{W} \mathbf{R} \mathbf{R}^T \mathbf{W}^T  = \mathbf{W} \mathbf{W}^T
-$$
-
-#### Computation
-
-```{julia}
-
-# using MultivariateStats 
-
-# note: MultivariateStats.jl operates on data matrices with rows as features and cols as observations
-
-M = fit(PPCA, X; method=:bayes, maxoutdim= nz) # no convergence
-
-evals = eigvals(M)
-evecs = eigvecs(M)
-
-proj = MultivariateStats.projection(M) # eigenvectors
-pcloadings = MultivariateStats.loadings(M)
-
-# eigenvalues: normalize to give contributions of each principal component towards explaining the total variance,
-variancepct = principalvars(M) ./ tvar(M) .* 100
-
-# pcscores = MultivariateStats.transform(M, X')'  # scores
-pcscores = (projection(M)' * (X' .- mean(M)))' # scores (projection of data to new axes)
-
-# axis flipping occurs
-biplot(pcscores=pcscores, pcloadings=pcloadings, variancepct=variancepct, evecs=evecs, evals=evals,
-    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  
-
-```
-Great, but in an MCMC setting, PCAs create rotationally symmetric solutions, making posterior means useless. Latent values (PC scores) only show vector magnitude length (in 2D see latent means), smearing patterns (see posteriors):
-
-```{julia}
- 
-n_samples = 500  # posterior sampling
-sampler = Turing.NUTS()  
-
-
-    M = pPCA(X) ; # rand(M)
-
-    res = sample(M, sampler, n_samples);
- 
-    # Extract parameter estimates for plotting - mean of posterior
-    zm = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nz))
-    wm = posterior_summary(res, sym=:w, stat=:mean, dims=(nz, nvar))' # transpose to recover W
-    mm = posterior_summary(res, sym=:m, stat=:mean, dims=(1, nvar))  # close to zero as X is centered
-
-    scatter( zm[:,1], zm[:,2] ,
-        group=["Setosa", "Versicolor", "Virginica"][id],
-        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
- 
-    z = posterior_samples(res, sym=:z)
-    z = reshape(Array(z), (n_samples, nData, nz ) )
-    plot!(z[:,:,1], z[:,:,2],
-        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-        seriesalpha=0.05, label=:none, title="Ordination",
-        seriestype=:scatter
-    )
-
-    # posteriors for a single datum
-    plot!(z[:,1,1], z[:,1,2],
-        markercolor="black", markerstrokewidth=0,
-        seriesalpha=1, label=:none,
-        seriestype=:scatter
-    )
-
-    # NOTE: can also compute using multivariatestats.jl to compute probabilistic PCA using a Bayesian algorithm for a given sample covariance matrix S.
-    S = cov(X)
-    m =  mean(X, dims=1)   #means of each variable
-    nData, nvar =  size(X)
-
-    Mbp = bayespca(S, vec(m), nvar )
-
-    MultivariateStats.loadings(Mbp)  # not good = 0
-    MultivariateStats.projection(Mbp)  # good
- 
-```
-#### Number of components
-
-How many dimensions to keep in order to represent the latent structure
-in the data? In the pPCA model, Automatic Relevance Determination (ARD)
-priors on factor loadings W removes uninformative dimensions in the
-latent space. The prior is determined by a precision hyperparameter
-$\alpha$: smaller values of $\alpha$ indicate more important components (see
-Christopher M. Bishop, Pattern Recognition and Machine Learning, 2006).
-
-```{julia}
-
-    M = pPCA_ARD(X)  # slow as all factors need to be retained for ARD 
-    res = sample(M, Turing.NUTS(), n_samples)
-
-    α = posterior_summary(res, sym=:alpha, stat=:mean, dims=(nvar))
-    z = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nvar))
-    w = posterior_summary(res, sym=:w, stat=:mean, dims=(nvar, nvar))'
- 
-    # small alpha -> high relevance.
-    aj = sortperm(α)[1:2]  # to keep
-   
-    scatter( z[:,aj[1]], z[:,aj[2] ],
-        group=["Setosa", "Versicolor", "Virginica"][id],
-        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
- 
-    zp = posterior_samples(res, sym=:z)
-    zp = reshape(Array(zp), (n_samples, nvar, nData) )
-    plot!(zp[:,aj[1],:], zp[:,aj[2],:],
-        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-        seriesalpha=0.05, label=:none, title="Ordination",
-        seriestype=:scatter
-    )
- 
-```
-#### Confounding or Covariate (aka, "Batch") effects
-
-Unaccounted co-factors or covariates. Eg., different scientists using a
-different measurement methods .. systematic measurement bias, unrelated
-to the actual experimental variable:
-
-Simulate a covariate effect: two different rulers and they are slightly off.
-
-```{julia}
- 
-    ## Introduce covariate effect
-    covariate = rand(Binomial(1, 0.5), nData)
-    effect = rand(Normal(2.4, 0.6), nData)
-    batch_dat = (X .+ covariate .* effect)
-
-    M = pPCA(batch_dat)  # naive
-    res = sample(M, Turing.NUTS(), n_samples)
-    showall(res)
-  
-    zm = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nz))
-    wm = posterior_summary(res, sym=:w, stat=:mean, dims=(nz, nvar))' # transpose to recover W
-    mm = posterior_summary(res, sym=:m, stat=:mean, dims=(1, nvar))  # close to zero as X is centered
-
-    scatter( zm[:,1], zm[:,2] ,
-        group=["Setosa", "Versicolor", "Virginica"][id],
-        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
- 
-   
-  
-    # add covariate
-    ng =  size(covariate,2)
-    covariate = reshape( convert(Vector{Float64}, covariate), nData, ng ) 
-    bt = Integer.(covariate) .+ 1
-
-    M = pPCA(batch_dat, covariate)
-    res = sample(M, Turing.NUTS(), n_samples);
- 
-    zm = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nz))
-    wm = posterior_summary(res, sym=:w, stat=:mean, dims=(nz, nvar))' # transpose to recover W
-    mm = posterior_summary(res, sym=:m, stat=:mean, dims=(1, nvar))  # close to zero as X is centered
- 
-    scatter( zm[:,1], zm[:,2] ,
-        group=["Setosa", "Versicolor", "Virginica"][id],
-        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-        markershape=[:circle, :cross][bt],
-        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
- 
-
- 
-```
-#### Rotational control via the Householder transform
-
-The Householder transform helps to remove Rotational symmetry (GP in
-kernel matrix form) by making possible to keep track of rotations
-(eigenvalues are +/- 1) and back transforms them into a consistent
-state. This then improves and speeds up inference as well and improving
-precision in MCMC. [See the mathematical and historical write up here.](https://en.wikipedia.org/wiki/Householder_transformation)
-
-This is done by first using SVD of the transform weight $W$ and $W^T$ (assuming it is positive definite):
-
-$$
-\mathbf{W} \mathbf{W}^T = \mathbf{U} \mathbf{\Sigma} \mathbf{V}^T (\mathbf{U} \mathbf{\Sigma} \mathbf{V}^T)^T = \mathbf{U} \mathbf{\Sigma}^2 \mathbf{U}^T
-$$
-
-where $U$ and $V$ are orthogonal and $\Sigma$ is a diagonal with
-singular values (eigenvalues of $WW^T$). $V$ is the rotation symmetry to
-be removed by setting it to I (as is also the case in Clasical PCA). The
-$U$ is a member of the Stiefel manifold ($U^T U =I$) and thus:
-
-$$
-p(\mathbf{X} | \mathbf{U}, \mathbf{\Sigma}) = \prod_{i=1}^{m} \text{N} (\mathbf{X}_{i,.}|0, \mathbf{U} \mathbf{\Sigma}^2 \mathbf{U}^T + \sigma^2 \mathbf{I})
-$$
-
-where $U$ is uniformly distributed on the Stiefel manifold. The
-Householder transform reflects a vector such that all coordinates
-disappear except one (QR decomposition). So, for PCA, we have:
-
-$$
-p(\mathbf{W} | \mathbf{X}) = \frac{p(\mathbf{X} | \mathbf{W}) \enspace  p(\mathbf{W}) }{ p(\mathbf{X} )}
-$$
-
-```{julia}
- 
-    Random.seed!(1);
-
-    # refresh data in case of changes:
-    id, sps, X, G, vn = example_data("iris_pca")
-    nData, nvar =  size(X)
-    nz = 2  # no latent factors to use
- 
-    # basic form but a little simpler/versatile .. also uses sign_convention
-    evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="cov", obs="rows")  
-
-    # transform to householder vector to use as init value
-    nvh, hindex, iz, ltri = PCA_BH_indexes( nvar, nz )  # indices reused .. to avoid recalc ...
-
-    v_prior = eigenvector_to_householder(evecs )  
-    # householder_to_eigenvector( lower_triangle( v_prior, nvar,  nz, ltri ) ) .- evecs[:,1:nz] # inverse transform
-
-    # param sequence = sigma_noise, pca_sd(nz), v, r=norm(v)~ 1.0 (scaled)
-    sigma_prior = sqrt.(evals[1:nz])
-    # r = 1; # a dummay value, r is used as a soft prior in the model as a norm for the eigenvectors
- 
-    # note: this operates upon X' ... to save transposing repeatedly inside the model
-    M = PCA_BH(X')  # all dims == default form
-   
-    rand(M)
-    res = sample(M, Turing.Prior(), 10 );
-   
-    # use some informed starting conditions
-    ressumm = summarize(res)
-    vns = ressumm.nt.parameters
-    means = ressumm.nt[2]  # means
- 
-    u = findall(x-> occursin(r"^pca_sd\[", String(x)), vns ); vns[u]
-    means[u] = sigma_prior[1:nz]  # from basic pca
-  
-    u = findall(x-> occursin(r"^v\[", String(x)), vns ); vns[u]
-    means[u] = v_prior  # from basic pca
-
-    init_params = FillArrays.Fill( means )
- 
-    # turing_sampler = Turing.PG(10)   
-    turing_sampler = Turing.SMC()   #   
-    # turing_sampler = Turing.SGLD()   # Stochastic Gradient Langevin Dynamics (SGLD); slow, mixes poorly
-    turing_sampler = Turing.NUTS( 0.65 ) # , init_ϵ=0.001
-   
-    res = sample(M, turing_sampler, 10) # ; init_params=init_params, init_ϵ=0.01)
-  
-    res = sample(M, turing_sampler, 5000; init_params=init_params);
-    showall(res)
-
-    # sqrt(eigenvalues) 
-    #    note no sort order from chains 
-    # .. must access through PCA_posterior_samples to get the order properly
-    posterior_summary(res, sym=:pca_sd, stat=:mean, dims=(1, nz))
-
-    pca_sd, evals, evecs, pcloadings, scores = 
-        PCA_posterior_samples( res, X, nz=nz, model_type="householder" )
- 
-    evecs_mean = DataFrame( convert(Array{Float64}, mean(evecs, dims=1)[1,:,:]), :auto)
-    loadings_mean = DataFrame( convert(Array{Float64}, mean(pcloadings, dims=1)[1,:,:]), :auto)
-    scores_mean = DataFrame( convert(Array{Float64}, mean(scores, dims=1)[1,:,:]), :auto)
-    # scores_mean = reshape(mapslices( mean, scores, dims=1 ), (nData, nz))
- 
-    pl = plot( scores_mean[:,1], scores_mean[:,2], markercolor=["orange", "green", "grey"][id], 
-        label=:none, seriestype=:scatter,   group=["Setosa", "Versicolor", "Virginica"][id] )
-
-    j = 1  # observation index
-   
-        plot!(
-            scores[:, j, 1], scores[:, j, 2];
-            # xlim=(-6., 6.), ylim=(-6., 6.),
-            # group=["Setosa", "Versicolor", "Virginica"][id],
-            # markercolor=["orange", "green", "grey"][id[j]], markerstrokewidth=0,
-            seriesalpha=0.1, label=:none, title="Ordination",
-            seriestype=:scatter
-        )
-   
-    display(pl)
-
-    for i in 1:n_samples
-        plot!(
-            scores[i, :, 1], scores[i, :, 2];
-            # xlim=(-6., 6.), ylim=(-6., 6.),
-            # group=["Setosa", "Versicolor", "Virginica"][id],
-            markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-            seriesalpha=0.1, label=:none, title="Ordination",
-            seriestype=:scatter
-        )
-    end
-    display(pl)
-
-```
-#### Nonlinear data: separation is weaker
-
-NOTE:: most of this is copied directly from the Turing tutorials (all
-credit to the original authors)
-
-Get nonlinear data:
-
-```{julia}
-    # X has an embedded nonlinear pattern 
-    id, sps, X, G, vn = example_data("iris_pca_nonlinear")  
-    nData, nvar =  size(X)
-    nz = 2  # no latent factors to uses
-```
-#### Simple standard pca
-
-```{julia}
-
-    evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="cov", obs="rows")  
-
-    biplot(pcscores=pcscores, pcloadings=pcloadings, 
-        variancepct=variancepct, evecs=evecs, evals=evals,
-        id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  # unstandardized by default
-
-```
-Bottom line: Flexble, clean but slow
-
-Extend the mapping provided by pPCA to non-linear mappings between input and output. For more details about the Gaussian Process Latent Variable Model (GPLVM; https://jmlr.org/papers/v6/lawrence05a.html;
-http://proceedings.mlr.press/v9/titsias10a/titsias10a.pdf).
-
-GPVLM is a dimensionality reduction technique that allows us to embed a
-high-dimensional dataset in a lower-dimensional embedding. Mappings from the embedded space can be non-linearised through the use of Gaussian Processes.
-
-```{julia}
-
-    #  two different kernels, a simple linear kernel with an Automatic Relevance Determination transform and a squared exponential kernel.
-    linear_kernel(α) = LinearKernel() ∘ ARDTransform(α)
-    sekernel(α, σ) = σ * SqExponentialKernel() ∘ ARDTransform(α);
-
-    # normalize data
-    dt = fit(ZScoreTransform, X; dims=1);
-    StatsBase.transform!(dt, X);
- 
-```
-The basic pPCA solution has problems: fails to distinguish the groups
-(due to the added non-linearities).
-
-```{julia}
-  
-    M = pPCA(X)
-    res = sample(M, Turing.NUTS(), n_samples);
-
-   # Extract parameter estimates for plotting - mean of posterior
-    zm = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nz))
-    wm = posterior_summary(res, sym=:w, stat=:mean, dims=(nz, nvar))' # transpose to recover W
-    mm = posterior_summary(res, sym=:m, stat=:mean, dims=(1, nvar))  # close to zero as X is centered
-
-    pl = scatter( zm[:,1], zm[:,2] ,
-        group=["Setosa", "Versicolor", "Virginica"][id],
-        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
- 
-    z = posterior_samples(res, sym=:z)
-    z = reshape(Array(z), (n_samples, nData, nz ) )
-    for i in 1:n_samples
-        plot!(z[i,:,1], z[i,:,2],
-            markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
-            seriesalpha=0.05, label=:none, title="Ordination",
-            seriestype=:scatter
-        )
-    end
-    display( pl )
-
-    # posteriors for a single datum
-    plot!(z[:,1,1], z[:,1,2],
-        markercolor="black", markerstrokewidth=0,
-        seriesalpha=1, label=:none,
-        seriestype=:scatter
-    )
-
-```
-#### Latent Gaussian Process PCA Model (in functional form)
-
-Now a linear and nonlinear kernel function solution using GP. It also fails to distinguish between the groups:
-
-```{julia}
-
-    using Stheno  # for sparse method
-  
-    # both are too slow for operational use:
-    M = PCA_linearGP(X; nz=nz, noise= 1e-6 )   # linear model
-    M = PCA_nonlinearGP(X; nz=nz, noise= 1e-6 ) # nonlinear model 
-    M = PCA_sparseGP(X; nz=nz, noise= 1e-6) 
-
-    rand(M)
-
-    res = sample(M, Turing.NUTS(), n_samples)
-
-    zm = reshape(mean(group(res, :z))[:, 2], (nz, nData))
-    am = mean(group(res, :alpha))[:, 2]   # ARD
-      
-    o = DataFrame(zm', :auto)
-    rename!(o, Symbol.(["z" * string(i) for i in collect(1:ndim)]))
-
-    aj = sortperm(am; rev=true)[1:2]
-
-    o[!, :ard1] = zm[aj[1], :]
-    o[!, :ard2] = zm[aj[2], :]
-
-    pl = scatter(o,ard1, o.ard2)
-    pl
-
-```
-GP is powerful and flexible, its problem is speed.
-
-Naive implementation require operations in the order of $O(n^3)$ due to matrix inversion.
-
-### PLS, Partial Least Square Regression by SVD
-
-see R-package: guidedPLS, Koki Tsuyuzaki,
-
-https://cran.r-project.org/web/packages/guidedPLS/vignettes/guidedPLS-1.html
-
-See: Partial Least Squares by Singular Value Decomposition (PLS-SVD (Lê Cao 2008)
-
-aka: guided-PCA (Reese S E 2013))
-
-Two centered matrices $X^{n \times m}$ and $Y^{n \times p}$, each have "scores": $XV$ and $YW$, where the $V^{m \times k}$, $W^{l \times k}$ are the usual loading matrices, such that $V^{T}V = W^{T}W = I_{K}$.
-
-with the constraint that:
-
-$$
-\max_{V,W} \mathrm{tr} \left( V^{T}X^{T}YW \right)
-$$
-
-SVD can be used to solve this optimization problem by decomposing $X'Y$.
-
-### Issues:
-
-See the following good resources:
-
-- https://discourse.julialang.org/t/singular-exception-with-lkjcholesky/85020/6
-- https://github.com/TuringLang/Turing.jl/issues/1870
-
-@model function correlation_chol(J, N, y)
-sigma ~ filldist(truncated(Cauchy(0., 5.); lower = 0), J)
-F ~ LKJCholesky(J, 1.0)
-Σ_L = Diagonal(sigma) * F.L
-Sigma = PDMat(Cholesky(Σ_L + eps() * I))
-for i in 1:N
-y[i,:] ~ MvNormal(Sigma)
-end
-return (;Omega = Matrix(F))
-end
-
-### References
-
-Lê Cao, et al. 2008. “A Sparse PLS for Variable Selection When Integrating Omics Data.” Statistical Applications in Genetics and Molecular Biology 7(1).
-
-Reese S E, et al. 2013. “A New Statistic for Identifying Batch Effects in High-Throughput Genomic Data That Uses Guided Principal Component Analysis.” Bioinformatics 29(22): 2877–83.
-
-Rajbir S. Nirwan and Nils Bertschinger, 2019. Proceedings of the 36 th
-International Conference on Machine Learning, Long Beach, California,
-PMLR 97,
-
-- https://github.com/rsnirwan/HouseholderBPCA/blob/master/talk.pdf
-- Christopher M. Bishop, Pattern Recognition and Machine Learning,
-  2006.
-- https://turing.ml/v0.21/tutorials/11-probabilistic-pca
-- https://proceedings.mlr.press/v97/nirwan19a/nirwan19a.pdf
-- https://math.stackexchange.com/questions/4258281/understanding-householder-transformation-geometrically
-- https://proceedings.mlr.press/v97/nirwan19a.html
-
-### Principal Cordinates Analysis (PCoA)
-
-This is the same idea behind PCA in that an eigen decomposition of a matrix is used to summarize relationships. However, unlike a correlation or covariance matrix, one uses a distance matrix, such as Euclidean or other comparable metric of distance. Distances are normalized by row and column before decomposition and provide similar ordinations.
-
-Principal Coordinates Analysis (PCoA), also known as classical or metric Multidimensional Scaling (MDS), aims to find a lower-dimensional representation of data points given a dissimilarity matrix, preserving the original distances as much as possible.
-
-Bayesian PCoA is equivalent to Bayesian MDS and CA (below) but with alternative distance metrics. This model directly assumes that your observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise.
-
-
-
-```{julia}
-
-@model function bayesian_distance_ordination(D_obs, n_points, n_dims)
-    # Priors for the latent coordinates X
-    # X is a n_dims x n_points matrix
-    X ~ MvNormal(Zeros(n_dims), I(n_dims)) # Prior for each column (point) is a spherical multivariate normal
-
-    # Prior for the observation noise standard deviation
-    sigma ~ InverseGamma(2, 3) # A common prior for scale parameters
-
-    # Calculate pairwise Euclidean distances from the latent coordinates X
-    # Ensure X is in the correct format for pairwise (features x observations or observations x features)
-    # Transpose X to have points as columns for pairwise calculation from Distances.jl
-    D_latent = pairwise(Euclidean(), X, dims=2) 
-
-    # Likelihood: observed dissimilarities are normally distributed around the latent distances
-    # with standard deviation sigma.
-    # We only consider the upper triangle of the matrix to avoid duplicating observations.
-    # Also, exclude diagonal (distance of point to itself is 0).
-    for i in 1:n_points
-        for j in (i+1):n_points
-            D_obs[i, j] ~ Normal(D_latent[i, j], sigma)
-        end
-    end
-end
-
-
-# Generate some synthetic data
-n_points = 10
-n_true_dims = 2
-
-# True latent coordinates
-X_true = randn(n_true_dims, n_points) * 5
-
-# True distances
-D_true = pairwise(Euclidean(), X_true, dims=2)
-
-# Add some noise to create observed dissimilarities
-observed_noise_std = 1.0
-D_obs = D_true + observed_noise_std * randn(n_points, n_points)
-
-# Ensure symmetry and non-negativity for D_obs (and set diagonal to 0 if necessary)
-D_obs = max.(0, (D_obs + D_obs') / 2.0)
-for i in 1:n_points
-    D_obs[i, i] = 0.0
-end
-
-# Define the model with the observed data and desired embedding dimension
-model = bayesian_distance_ordination(D_obs, n_points, n_true_dims)
-
-# Sample from the posterior distribution using NUTS (No-U-Turn Sampler)
-# It's recommended to run a longer chain and check convergence for real applications.
-chain = sample(model, NUTS(), 1000) # 1000 samples
-
-# You can inspect the chain
-display(chain)
-
-# Extract mean of latent coordinates (posterior mean)
-# X will be a matrix of size n_dims x n_points, but Turing flattens it for sampling
-# We need to reshape the sampled 'X' back into a matrix form.
-mean_X_samples = mean(chain[:X].data, dims=1)
-posterior_X = reshape(mean_X_samples, n_true_dims, n_points)
-
-println("\nPosterior mean of latent coordinates (first 5 points):\n")
-display(posterior_X[:, 1:5])
-
-
-# Extract all samples for X
-# X_samples_raw will be num_samples x (n_true_dims * n_points)
-X_samples_raw = Array(chain[:X])
-
-# Get dimensions from the already computed posterior_X
-n_true_dims = size(posterior_X, 1) # Should be 2 for 2D visualization
-n_points = size(posterior_X, 2)
-
-# Create a plot object
-plot_posterior = plot(xlabel="Latent Dimension 1", ylabel="Latent Dimension 2",
-                     title="Posterior Distribution of Latent Coordinates",
-                     legend=false, aspect_ratio=:equal, size=(700, 600)) # Added size for better viewing
-
-# Plot each point's individual samples
-for i in 1:n_points
-    # Extract samples for the i-th point's x and y coordinates
-    # The flattened 'X' in Turing chain[:X] means that for point 'i' (1-indexed),
-    # its x-coordinates are at column (i-1)*n_true_dims + 1 and y-coordinates at (i-1)*n_true_dims + 2.
-    x_coords_samples = X_samples_raw[:, (i-1)*n_true_dims + 1]
-    y_coords_samples = X_samples_raw[:, (i-1)*n_true_dims + 2]
-
-    # Plot individual samples for this point with low alpha to show density
-    scatter!(plot_posterior, x_coords_samples, y_coords_samples,
-             marker=:circle, markersize=2, markeralpha=0.1,
-             markercolor=i, # Color by point index
-             label=nothing) # Don't add a label for each sample scatter
-end
-
-# Overlay the posterior mean for each point with larger markers
-scatter!(plot_posterior, posterior_X[1,:], posterior_X[2,:],
-         marker=:star5, markersize=8, markeralpha=0.9,
-         markerstrokewidth=1, markerstrokecolor=:black,
-         markercolor=1:n_points, # Color by point index
-         series_annotations=text.(1:n_points, :bottom, 8, :black), # Annotate points with their index
-         label="Posterior Mean") # Label for the mean points in legend (if legend=true)
-
-# Display the plot
-display(plot_posterior)
-
- 
-
-```
-
-
-### Correspondence Analysis (CA)
-
-Can be seen as a variation of PCoA where the distance metric is essentially a Chi-squared metric. That is, relative count data.
-
-#### Frequentist form
-
-
-```{julia}
-using MultivariateStats
-using Plots
-
-# Example data: A contingency table (rows = observations/categories, columns = variables/categories)
-# Let's say we have counts of different pet preferences across different age groups.
-# Rows could be Age Groups, Columns could be Pet Types
-contingency_table = [ # Cats Dogs Birds Fish Other
-    10  20  5   2   3;  # Young Adults
-    15  12  8   5   4;  # Middle-aged
-    8   10  12  7   6;  # Seniors
-    20  15  7   3   5   # Teenagers
-]
-
-println("Original Contingency Table:")
-display(contingency_table)
-
-# Perform Correspondence Analysis
-# `ndim` specifies the number of dimensions for the embedding
-ca_model = fit(CA, contingency_table; ndim=2)
-
-# Get the row and column coordinates for the biplot
-row_coords = rowprojection(ca_model)
-col_coords = colprojection(ca_model)
-
-# Get the variance explained by each dimension
-var_explained = principalvars(ca_model) / totalvar(ca_model)
-println("\nVariance explained by each dimension: ", round.(var_explained * 100, digits=2), "%")
-
-# Plotting the Biplot
-# We'll label rows and columns for clarity
-row_labels = ["Young Adults", "Middle-aged", "Seniors", "Teenagers"]
-col_labels = ["Cats", "Dogs", "Birds", "Fish", "Other"]
-
-# Create a scatter plot for row points
-biplot = scatter(row_coords[1,:], row_coords[2,:],
-    label="Row Points",
-    marker=:circle, markersize=6, markercolor=:blue,
-    xlabel="Dimension 1 (" * string(round(var_explained[1]*100, digits=2)) * "%)",
-    ylabel="Dimension 2 (" * string(round(var_explained[2]*100, digits=2)) * "%)",
-    title="Correspondence Analysis Biplot",
-    legend=:topleft,
-    aspect_ratio=:equal
-)
-
-# Add row labels
-annotate!([ (row_coords[1,i], row_coords[2,i], text(row_labels[i], :bottom, 8, :blue)) for i in 1:size(row_coords, 2) ]...)
-
-# Add column points to the same plot
-scatter!(biplot, col_coords[1,:], col_coords[2,:],
-    label="Column Points",
-    marker=:utriangle, markersize=6, markercolor=:red
-)
-
-# Add column labels
-annotate!([ (col_coords[1,i], col_coords[2,i], text(col_labels[i], :top, 8, :red)) for i in 1:size(col_coords, 2) ]...)
-
-# Display the plot
-display(biplot)
-
-
-```
-
-#### Bayesian form
-
-Bayesian CA is equivalent to Bayesian PCoA (above) and MDS (below), where the distance metric is the Chi-squared distance. This model directly assumes that your observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise. Simply replace the metric.
-
-
-
-
-### Nonmetric Multi-dimensional scaling
-
-Attempts to achieve similar goals of maximally representing similarities and differences in multidimensional data without resorting to Spectral Decomposition. Instead, the approach iteratively represents the higher distance between data points into a smaller user specified dimensional representation of those relative distances.  
-
-```{julia} 
- 
-using Distances, MultivariateStats
-
-# Example data (replace with your actual dissimilarity matrix)
-# This is a sample dissimilarity matrix, e.g., computed from some features.
-# For NMDS, you typically start with a dissimilarity matrix.
-data_points = rand(10, 5) # 10 observations, 5 features
-dissimilarities = pairwise(Euclidean(), data_points, dims=2) # Compute Euclidean distances as dissimilarities
-
-# Perform Nonmetric Multidimensional Scaling (NMDS)
-# The 'ndim' parameter specifies the number of dimensions for the embedding
-# The 'maxoutdim' parameter is typically used for PCA or similar, but for MDS,
-# we directly specify 'ndim' which becomes 'maxoutdim' in the context of `fit(MDS, ...)`
-# The `distance` parameter takes the dissimilarity matrix.
-nmds_model = fit(MDS, dissimilarities, maxoutdim=2, metric=false) # metric=false for Nonmetric MDS
-
-# Get the embedded coordinates (the lower-dimensional representation)
-coordinates = principalcomponents(nmds_model) # This gives the embedded coordinates
-
-println("Original dissimilarity matrix (first 5x5):")
-display(dissimilarities[1:5, 1:5])
-println("\nNMDS embedded coordinates (first 5 rows):")
-display(coordinates[:, 1:5]') # Transpose to show points as rows
-
-using Plots
-
-# Assuming 'coordinates' from the previous step is a 2xN matrix
-# where N is the number of data points and 2 is the number of dimensions
-
-# Create a scatter plot of the embedded coordinates
-# coordinates[1,:] gives the x-values, coordinates[2,:] gives the y-values
-scatter_plot = scatter(coordinates[1,:], coordinates[2,:],
-    xlabel="NMDS Dimension 1",
-    ylabel="NMDS Dimension 2",
-    title="NMDS Embedded Coordinates",
-    legend=false,
-    aspect_ratio=:equal # Keep the aspect ratio equal to avoid distortion
-)
-
-# Display the plot
-display(scatter_plot)
-
-``` 
-
-
-#### Bayesian form
-
-The simpler form of MDS is equivalent to the PCoA and CA, above.
-
-
-#### Extending to Nonmetric Bayesian MDS
-
-For a truly nonmetric Bayesian MDS, the main difference lies in how D_obs is related to D_latent. Instead of a direct Normal likelihood, you would introduce a monotonic function f such that f(D_obs) ~ Normal(D_latent, sigma). This function f itself would be part of the model and needs to be estimated. Common approaches for f include:
-
-Spline-based monotonic functions: Represent f using monotonic splines with priors on their coefficients.
-Isotonic Regression: Use an increasing sequence of values delta_i for each unique observed dissimilarity d_i, such that delta_i ~ Normal(D_latent_corresponding, sigma) and delta_i < delta_{i+1}. This is more complex to implement directly in a probabilistic programming language like Turing as it requires constrained sampling.
-Implementing these monotonic constraints within Turing.jl requires more advanced techniques, potentially involving custom samplers or careful parameterizations to enforce monotonicity.
-
-The core idea is to introduce a series of parameters (let's call them transformed_diss_params) that are forced to be monotonically increasing. Each observed dissimilarity D_obs[i,j] is then mapped to one of these transformed_diss_params based on its rank among the unique observed dissimilarities, and this transformed value is used in the likelihood.
-
-
-```{julia}
-@model function bayesian_nonmetric_mds(D_obs, n_points, n_dims, unique_D_obs_values_sorted, D_obs_to_unique_idx)
-    n_unique = length(unique_D_obs_values_sorted)
-
-    # Priors for the latent coordinates X
-    X ~ MvNormal(Zeros(n_dims), I(n_dims))
-
-    # Prior for the observation noise standard deviation
-    sigma ~ InverseGamma(2, 3) # A common prior for scale parameters
-
-    # Parameters for the monotonic transformation (transformed dissimilarities)
-    # We define `transformed_diss_params` such that they are monotonically increasing
-    transformed_diss_params = Vector{Real}(undef, n_unique)
-    transformed_diss_params[1] ~ Normal(0, 1) # Prior for the first transformed value
-
-    for k in 2:n_unique
-        # Sample unconstrained log-difference
-        log_diff_k ~ Normal(0, 1)
-        # Ensure positivity of difference: psi_k = psi_{k-1} + exp(log_diff_k)
-        transformed_diss_params[k] = transformed_diss_params[k-1] + exp(log_diff_k)
-    end
-
-    # Calculate pairwise Euclidean distances from the latent coordinates X
-    D_latent = pairwise(Euclidean(), X, dims=2)
-
-    # Likelihood: transformed observed dissimilarities are normally distributed around latent distances
-    # We only consider the upper triangle of the matrix to avoid duplicating observations.
-    # Also, exclude diagonal (distance of point to itself is 0).
-    for i in 1:n_points
-        for j in (i+1):n_points
-            # Map the observed dissimilarity D_obs[i,j] to its corresponding index
-            # in the unique sorted values, and get the transformed parameter.
-            idx = D_obs_to_unique_idx[D_obs[i, j]]
-            transformed_D_obs_ij = transformed_diss_params[idx]
-
-            # Likelihood connects the transformed observed dissimilarity to the latent distance
-            transformed_D_obs_ij ~ Normal(D_latent[i, j], sigma)
-        end
-    end
-end
-
-
-```
-
-we first need to pre-process the observed dissimilarity matrix to extract its unique, sorted values and create a mapping from original values to their indices in this sorted list. This allows the model to correctly apply the monotonic transformation.
-
-```{julia}
-
-# Using the same synthetic D_obs from the metric MDS example
-# (Assuming dce0c2fd has been executed and D_obs, n_points, n_true_dims are available)
-
-# 1. Get unique, sorted observed dissimilarities (excluding diagonal zeros)
-unique_D_obs = sort(unique(D_obs[triu(trues(size(D_obs)), 1)]))
-
-# 2. Create a mapping from each unique dissimilarity value to its index
-D_obs_to_unique_idx = Dict(unique_D_obs[k] => k for k in 1:length(unique_D_obs))
-
-# --- Define and Sample from the Nonmetric Model ---
-# Define the nonmetric model with the pre-processed data
-nonmetric_model = bayesian_nonmetric_mds(D_obs, n_points, n_true_dims, unique_D_obs, D_obs_to_unique_idx)
-
-# Sample from the posterior distribution
-# (This might take longer than the metric MDS due to the added complexity of monotonic parameters)
-nonmetric_chain = sample(nonmetric_model, NUTS(), 1000) # Reduced samples for quicker demonstration
-
-display(nonmetric_chain)
-
-# Extract posterior mean of latent coordinates from the nonmetric chain
-mean_X_samples_nonmetric = mean(nonmetric_chain[:X].data, dims=1)
-posterior_X_nonmetric = reshape(mean_X_samples_nonmetric, n_true_dims, n_points)
-
-println("\nPosterior mean of latent coordinates (Nonmetric MDS, first 5 points):\n")
-display(posterior_X_nonmetric[:, 1:5])
-
-```
-
-### Mantel Matrix Correlation
-
-A method to compare two similarity or dissimilarity matrices, essentially by comparing the correlation between corresponding bivariate metrics. As such, it is also known as matrix correlation. 
-
-#### Freqentist permutation approach
-
-The Mantel test calculates the Pearson correlation between the vectorized lower
-triangles of two distance matrices. Significance is assessed by randomly permuting the
-rows (and corresponding columns) of one of the original data matrices (which effectively
-permutes its distance matrix) and recalculating the correlation many times to build a
-null distribution. The p-value indicates how likely the observed correlation is
-under the null hypothesis of no relationship between the two matrices.
-
-Ad-hoc hypothsis testing is done by permutation (resampling).
-
-
-```{julia}
-
-using Distances, LinearAlgebra, Statistics, Random, Plots 
-
-"""
-mantel_test(data1::AbstractMatrix, data2::AbstractMatrix, num_permutations::Int=999;
-  dist_metric1=Euclidean(), dist_metric2=Euclidean(), rng::AbstractRNG=Random.GLOBAL_RNG)
-
-Performs a Mantel test to assess the correlation between two distance matrices.
-
-# Arguments
-- `data1`: A matrix where rows are observations (e.g., sites) and columns are variables
-           (e.g., species abundances, environmental measurements).
-- `data2`: A matrix with the same number of observations (rows) as `data1`, representing
-           another set of variables.
-- `num_permutations`: The number of permutations to perform for significance testing.
-- `dist_metric1`: The distance metric to use for `data1` (from `Distances.jl`).
-                  Common choices include `Euclidean()`, `BrayCurtis()`, `Jaccard()`.
-- `dist_metric2`: The distance metric to use for `data2` (from `Distances.jl`).
-- `rng`: A random number generator for reproducible permutations. Defaults to `Random.GLOBAL_RNG`.
-
-# Returns
-- `observed_r`: The observed Pearson correlation coefficient between the two distance matrices.
-- `p_value`: The p-value, representing the proportion of permuted correlations
-             greater than or equal to the observed correlation.
-- `permuted_r_values`: An array of correlation values obtained from permutations.
-
-"""
-function mantel_test(
-  data1::AbstractMatrix, data2::AbstractMatrix, num_permutations::Int=999;
-  dist_metric1=Euclidean(), dist_metric2=Euclidean(), rng::AbstractRNG=Random.GLOBAL_RNG
-)
-
-  size(data1, 1) == size(data2, 1) || throw(DimensionMismatch("Number of rows in data1 and data2 must be the same."))
-  n_obs = size(data1, 1)
-
-  # 1. Calculate distance matrices between observations (rows)
-  # `dims=1` specifies that distances are computed between rows.
-  D1 = pairwise(dist_metric1, data1, dims=1)
-  D2 = pairwise(dist_metric2, data2, dims=1)
-
-  # 2. Extract the unique elements from the lower triangle (excluding the diagonal)
-  # This avoids redundant comparisons and self-correlations.
-  idx_matrix = trues(n_obs, n_obs)
-  idx_matrix[diagind(idx_matrix)] .= false # Set diagonal to false
-  lower_tri_indices = tril(idx_matrix) # Get indices for the lower triangle
-
-  vec_D1 = D1[lower_tri_indices]
-  vec_D2 = D2[lower_tri_indices]
-
-  # 3. Calculate the observed Pearson correlation coefficient
-  observed_r = cor(vec_D1, vec_D2)
-
-  # 4. Perform permutations to build the null distribution
-  permuted_r_values = Vector{Float64}(undef, num_permutations)
-
-  for i in 1:num_permutations
-      # Permute the rows of one of the original data matrices.
-      # This breaks the spatial/site correspondence between the two datasets
-      # while preserving the internal structure of each dataset.
-      perm = shuffle(rng, 1:n_obs)
-      D2_perm = pairwise(dist_metric2, data2[perm, :], dims=1)
-      vec_D2_perm = D2_perm[lower_tri_indices]
-      permuted_r_values[i] = cor(vec_D1, vec_D2_perm)
-  end
-
-  # 5. Calculate the p-value
-  # The p-value is the proportion of permuted correlations that are
-  # greater than or equal to the observed correlation.
-  p_value = sum(permuted_r_values .>= observed_r) / num_permutations
-
-  return observed_r, p_value, permuted_r_values
-end
-
-
-Random.seed!(42)
-
-# Generate synthetic data for demonstration
-num_sites = 30       # Number of observations (e.g., ecological sites)
-num_species = 15     # Number of species
-num_env_vars = 7     # Number of environmental variables
-
-# Species abundance data (e.g., counts or biomass)
-# Rows are sites, columns are species
-species_data = rand(num_sites, num_species) .* 100
-
-# Environmental data (e.g., temperature, pH, etc.)
-# Rows are sites, columns are environmental variables
-environmental_data = rand(num_sites, num_env_vars) .* 20
-
-# Introduce some artificial correlation for demonstration purposes:
-# Let the abundance of the first few species be positively correlated with
-# the first environmental variable.
-for i in 1:num_sites
-    species_data[i, 1:3] .+= environmental_data[i, 1] * 50
-    species_data[i, 4:6] .+= environmental_data[i, 2] * 30
-end
-
-# Perform the Mantel test
-# Using Bray-Curtis distance for species data (common in ecology)
-# Using Euclidean distance for environmental data
-# Euclidean(): Standard straight-line distance. Good for physical environmental variables.
-# BrayCurtis(): Very popular for community abundance data because it accounts for differences in total abundance and composition without being overly sensitive to zeros.
-# Jaccard(): The standard for presence/absence (binary) data.
-# Cityblock(): Also known as Manhattan distance. Sum of absolute differences; less sensitive to outliers than Euclidean distance.
-# CosineDist(): Useful if you are more interested in the "angle" or proportion between variables rather than their absolute magnitude.
-
-observed_r, p_value, permuted_r_values = mantel_test(
-    species_data,
-    environmental_data,
-    9999, # Number of permutations (higher for better p-value resolution)
-    dist_metric1=BrayCurtis(),
-    dist_metric2=Euclidean(),
-    rng=MersenneTwister(123) # Use a specific RNG for reproducible permutations
-)
-
-println("\n--- Mantel Test Results ---")
-println("Observed Mantel r: ", round(observed_r, digits=4))
-println("P-value: ", round(p_value, digits=4))
-println("Number of permutations: ", length(permuted_r_values))
-
-# Optional: Visualize the distribution of permuted correlations
-# This helps to understand the null distribution and the position of the observed r.
-plot_title = "Mantel Test Permutation Distribution (Observed r = $(round(observed_r, digits=3)))"
-histogram(permuted_r_values, bins=50, label="Permuted r values",
-          title=plot_title,
-          xlabel="Correlation (r)", ylabel="Frequency",
-          legend=:topleft, color=:lightblue, linecolor=:black)
-vline!([observed_r], color=:red, linestyle=:dash, linewidth=2, label="Observed r")
- 
-```
-
-
-
-### Procrustes Analysis
-
-How similar two matrices are can be assessed by quantifying how much deformation (rotation and shear) is required to make the matrices similar. Again, useful for hypothesis testing.
-
-
-#### Deterministic (Least squares) Procrustes (SVD)
-
-This is the standard mathematical "computation" of the Procrustes problem. It finds the rotation matrix $R$, scale $s$, and translation $T$ that minimizes the squared distance between two point sets $X$ and $Y$.
-
-
-```{julia}
-
-using LinearAlgebra
-
-"""
-    procrustes_svd(X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
-
-Performs a deterministic Procrustes analysis using SVD to find the optimal
-scaling, rotation, and translation to superimpose matrix X onto matrix Y.
-
-# Arguments
-- `X`: The reference set of points (N points x D dimensions).
-- `Y`: The target set of points (N points x D dimensions).
-
-# Returns
-- `X_transformed`: The transformed X matrix.
-- `s`: The optimal scaling factor.
-- `R`: The optimal rotation matrix.
-- `T_vec`: The optimal translation vector.
-- `mse`: The mean squared error after transformation.
-
-# Throws
-- `DimensionMismatch`: If the dimensions of X and Y do not match.
-"""
-
-function procrustes_svd(X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
-    size(X) == size(Y) || throw(DimensionMismatch("Matrices X and Y must have the same dimensions."))
-    N, D = size(X)
-
-    # 1. Center the data
-    X_centroid = mean(X, dims=1)
-    Y_centroid = mean(Y, dims=1)
-
-    X_centered = X .- X_centroid
-    Y_centered = Y .- Y_centroid
-
-    # 2. Compute the covariance matrix H
-    H = X_centered' * Y_centered
-
-    # 3. Perform SVD on H
-    U, S, V = svd(H)
-
-    # 4. Compute the optimal rotation matrix R
-    # Handle reflection: If det(V * U') is -1, it implies a reflection.
-    # To ensure only rotation (and no reflection), we can adjust the last column of V.
-    # This is a common practice in Procrustes analysis to enforce proper rotation.
-    R = V * U'
-    if det(R) < 0
-        # Flip the sign of the last column of V
-        V_prime = copy(V)
-        V_prime[:, end] .*= -1
-        R = V_prime * U'
-    end
-
-    # 5. Compute the optimal scaling factor s
-    s = sum(S) / sum(abs2, X_centered)
-
-    # 6. Compute the optimal translation vector T_vec
-    T_vec = Y_centroid' - s * R * X_centroid'
-    T_vec = T_vec' # Convert back to row vector for consistency with centroids
-
-    # 7. Transform X
-    X_transformed = s .* (X_centered * R) .+ T_vec
-
-    # 8. Calculate Mean Squared Error
-    mse = sum(abs2, X_transformed - Y_centered) / N
-
-    return X_transformed, s, R, T_vec, mse
-end
-
-# --- Demonstration ---
-println("--- Deterministic Procrustes Analysis (SVD) ---")
-
-# Generate synthetic data
-# Original shape (e.g., a square)
-X_original = [
-    0.0 0.0;
-    1.0 0.0;
-    1.0 1.0;
-    0.0 1.0;
-]
-
-# Define true transformation parameters for Y
-true_s = 2.5
-true_theta = π / 6 # 30 degrees
-true_R_matrix = [cos(true_theta) -sin(true_theta); sin(true_theta) cos(true_theta)]
-true_T_vector = [3.0, -1.5]
-noise_std = 0.1
-
-# Create the target shape Y by transforming X_original and adding noise
-Y_true_transformed = true_s .* (X_original * true_R_matrix) .+ true_T_vector'
-Y_noisy = Y_true_transformed .+ noise_std .* randn(size(X_original))
-
-println("\nOriginal X:\n", X_original)
-println("\nTarget Y (noisy transformed X):\n", Y_noisy)
-
-# Perform Procrustes analysis
-X_transformed, s_opt, R_opt, T_vec_opt, final_mse = procrustes_svd(X_original, Y_noisy)
-
-println("\n--- Optimal Transformation Parameters ---")
-println("Optimal Scale (s): ", s_opt)
-println("Optimal Rotation Matrix (R):\n", R_opt)
-println("Optimal Translation Vector (T):\n", T_vec_opt)
-println("Final Mean Squared Error: ", final_mse)
-
-println("\nTransformed X:\n", X_transformed)
-
-# Verify the transformation by applying it manually and comparing with X_transformed
-X_manual_check = s_opt .* ((X_original .- mean(X_original, dims=1)) * R_opt) .+ T_vec_opt
-println("\nManual check of transformed X (should be very close to X_transformed):\n", X_manual_check)
-
-# --- Visualization (requires Plots.jl) ---
-using Plots
-gr() # Use the GR backend for Plots.jl
-
-plot(
-    X_original[:, 1], X_original[:, 2],
-    seriestype=:scatter, label="Original X", markersize=6, markercolor=:blue,
-    aspect_ratio=:equal, legend=:topleft, title="Procrustes Analysis (SVD)"
-)
-plot!(
-    Y_noisy[:, 1], Y_noisy[:, 2],
-    seriestype=:scatter, label="Target Y (Noisy)", markersize=6, markercolor=:red
-)
-plot!(
-    X_transformed[:, 1], X_transformed[:, 2],
-    seriestype=:scatter, label="Transformed X", markersize=6, markercolor=:green,
-    markeralpha=0.8
-)
-
-# Add lines to connect points for better shape visualization
-for i in 1:size(X_original, 1)
-    plot!([X_original[i,1], X_original[mod1(i+1, size(X_original,1)),1]],
-          [X_original[i,2], X_original[mod1(i+1, size(X_original,1)),2]],
-          line=(:blue, 1, :solid), label=false)
-    plot!([Y_noisy[i,1], Y_noisy[mod1(i+1, size(Y_noisy,1)),1]],
-          [Y_noisy[i,2], Y_noisy[mod1(i+1, size(Y_noisy,1)),2]],
-          line=(:red, 1, :solid), label=false)
-    plot!([X_transformed[i,1], X_transformed[mod1(i+1, size(X_transformed,1)),1]],
-          [X_transformed[i,2], X_transformed[mod1(i+1, size(X_transformed,1)),2]],
-          line=(:green, 1, :dash), label=false)
-end
-
-
-
-```
-
-#### Bayesian 2D Procrustes (Turing)
-
-This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when your data is noisy or you need a probabilistic estimate of how well two shapes align.
-
-
-
-```{julia}
-
-using Turing
-using Distributions
-using LinearAlgebra
-using Plots
-using StatsPlots # For density plots of chains
-
-"""
-    procrustes_analysis(X_obs::AbstractMatrix{T}, Y_obs::AbstractMatrix{T}) where {T}
-
-A Turing.jl model for Bayesian Procrustes analysis in 2D.
-
-Given two sets of points, X_obs and Y_obs, this model infers the optimal
-transformation (scale, rotation, translation) and observation noise
-to superimpose X_obs onto Y_obs.
-
-# Arguments
-- `X_obs`: The observed reference shape (N points x 2 dimensions).
-- `Y_obs`: The observed target shape (N points x 2 dimensions).
-
-# Latent Variables
-- `s`: Scale factor.
-- `theta`: Rotation angle in radians.
-- `R`: 2x2 Rotation matrix derived from `theta`.
-- `T_vec`: 2-element translation vector.
-- `sigma`: Standard deviation of the observation noise.
-"""
-
-@model function procrustes_analysis(X_obs::AbstractMatrix{T}, Y_obs::AbstractMatrix{T}) where {T}
-    N, D = size(X_obs) # N points, D dimensions
-
-    # Ensure the model is used for 2D data as rotation is parameterized by an angle
-    @assert D == 2 "This model currently supports only 2D Procrustes analysis for rotation."
-
-    # Priors for transformation parameters
-    s ~ LogNormal(0.0, 1.0) # Scale factor (must be positive)
-    theta ~ Uniform(-π, π) # Rotation angle in radians
-
-    # Construct the 2D rotation matrix from the angle
-    R = [cos(theta) -sin(theta); sin(theta) cos(theta)]
-
-    T_vec ~ MvNormal(zeros(D), 1.0) # Translation vector (D-dimensional)
-
-    # Prior for observation noise standard deviation (must be positive)
-    sigma ~ LogNormal(0.0, 1.0)
-
-    # Predicted Y coordinates based on the current transformation parameters
-    # Y_pred = s * (X_obs * R) .+ T_vec'
-    # The `.` operator ensures element-wise multiplication for `s` and broadcasting for `T_vec'`
-    Y_pred = s .* (X_obs * R) .+ T_vec'
-
-    # Likelihood: Each observed point in Y_obs is a noisy version of the predicted point
-    for i in 1:N
-        Y_obs[i, :] ~ MvNormal(Y_pred[i, :], sigma * I)
-    end
-end
-
-# 1. Generate synthetic data
-# Original shape (e.g., a square)
-X_original = [
-    0.0 0.0;
-    1.0 0.0;
-    1.0 1.0;
-    0.0 1.0;
-]
-
-# Define true transformation parameters
-true_s = 2.0
-true_theta = π / 4 # 45 degrees
-true_R = [cos(true_theta) -sin(true_theta); sin(true_theta) cos(true_theta)]
-true_T = [0.5, -0.3]
-true_sigma = 0.1
-
-# Create the true transformed shape
-Y_true_transformed = true_s .* (X_original * true_R) .+ true_T'
-
-# Add Gaussian noise to simulate observed data
-Y_noisy = Y_true_transformed .+ true_sigma .* randn(size(X_original))
-
-# 2. Instantiate the Turing model
-procrustes_model = procrustes_analysis(X_original, Y_noisy)
-
-# 3. Sample from the posterior distribution using NUTS (No-U-Turn Sampler)
-# NUTS is a gradient-based MCMC sampler, generally efficient for continuous parameters.
-num_samples = 2000 # Number of samples to draw
-num_chains = 4     # Number of parallel chains
-warmup_steps = 1000 # Warmup steps for adaptation
-target_acceptance = 0.8 # Target acceptance rate for NUTS
-
-println("Sampling from the posterior... This may take a moment.")
-chain = sample(
-    procrustes_model,
-    NUTS(warmup_steps, target_acceptance),
-    MCMCThreads(), # Use multiple threads for chains if available
-    num_samples,
-    num_chains,
-    progress=true
-)
-
-# 4. Summarize the results
-println("\n--- Posterior Summary ---")
-display(summary(chain))
-
-# 5. Extract posterior means for visualization and comparison
-posterior_s = mean(chain[:s])
-posterior_theta = mean(chain[:theta])
-posterior_R = [cos(posterior_theta) -sin(posterior_theta); sin(posterior_theta) cos(posterior_theta)]
-posterior_T = [mean(chain[:T_vec, 1]), mean(chain[:T_vec, 2])] # Access elements of T_vec
-posterior_sigma = mean(chain[:sigma])
-
-println("\n--- True Parameters ---")
-println("  Scale (s): ", true_s)
-println("  Rotation Angle (theta): ", true_theta, " radians (", rad2deg(true_theta), " degrees)")
-println("  Translation (T): ", true_T)
-println("  Noise Std Dev (sigma): ", true_sigma)
-
-println("\n--- Inferred Posterior Means ---")
-println("  Scale (s): ", posterior_s)
-println("  Rotation Angle (theta): ", posterior_theta, " radians (", rad2deg(posterior_theta), " degrees)")
-println("  Translation (T): ", posterior_T)
-println("  Noise Std Dev (sigma): ", posterior_sigma)
-
-# 6. Visualize the results
-plot(
-    X_original[:, 1], X_original[:, 2],
-    seriestype=:scatter, label="Original X", markersize=6, markercolor=:blue,
-    aspect_ratio=:equal, legend=:topleft, title="Bayesian Procrustes Analysis"
-)
-plot!(
-    Y_noisy[:, 1], Y_noisy[:, 2],
-    seriestype=:scatter, label="Noisy Y (Observed)", markersize=6, markercolor=:red
-)
-
-# Plot the transformed X using the inferred posterior mean parameters
-X_inferred_transformed = posterior_s .* (X_original * posterior_R) .+ posterior_T'
-plot!(
-    X_inferred_transformed[:, 1], X_inferred_transformed[:, 2],
-    seriestype=:scatter, label="Inferred Transformed X", markersize=6, markercolor=:green,
-    markeralpha=0.8
-)
-
-# Plot posterior distributions of the parameters
-StatsPlots.plot(chain, seriestype=:density, layout=(4,1), legend=false,
-    title=["Posterior of Scale" "Posterior of Angle" "Posterior of T_x" "Posterior of T_y" "Posterior of Sigma"],
-    xlabel=["s" "theta" "T_x" "T_y" "sigma"]
-)
-
-
-
-```
-
-#### Bayesian 3D Procrustes
-
-In 2D, rotation has only 1 degree of freedom (a single angle $\theta$). In 3D, rotation has 3 degrees of freedom. While you could use Euler angles (yaw, pitch, roll), they suffer from "gimbal lock" and discontinuities that can hinder MCMC sampling.
-
-A more robust approach for Turing is to use a Rotation Vector (also known as the Exponential Map). This represents rotation as a 3D vector where the direction is the axis of rotation and the magnitude is the angle. We then use Rodrigues' Rotation Formula to convert this vector into a $3 \times 3$ matrix.
-
-Parameterization: Instead of a single theta, we sample omega::Vector{3}.
-Helper Functions: The rodrigues and skew_3d functions are necessary to map the 3D vector space into the Special Orthogonal group $SO(3)$.
-Efficiency: Using the exponential map avoids the periodic boundary issues of Euler angles, allowing the NUTS sampler to move smoothly through the rotation space.
-
-
-This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when your data is noisy or you need a probabilistic estimate of how well two shapes align.
-
-```{julia}
-using Turing, LinearAlgebra
-
-function skew_3d(v)
-    return [0.0 -v[3] v[2]; v[3] 0.0 -v[1]; -v[2] v[1] 0.0]
-end
-
-function rotation_vector_to_matrix(omega)
-    theta = norm(omega)
-    if theta < 1e-12 return Matrix{eltype(omega)}(I, 3, 3) end
-    K = skew_3d(omega / theta)
-    return I + sin(theta) * K + (1 - cos(theta)) * K * K
-end
-
-@model function procrustes_analysis_3d(X_obs, Y_obs)
-    N, D = size(X_obs)
-    s ~ LogNormal(0.0, 1.0)
-    T_vec ~ MvNormal(zeros(D), 10.0)
-    
-    if D == 2
-        theta ~ Uniform(-π, π)
-        R = [cos(theta) -sin(theta); sin(theta) cos(theta)]
-    else
-        omega ~ MvNormal(zeros(3), π)
-        R = rotation_vector_to_matrix(omega)
-    end
-    
-    sigma ~ LogNormal(0.0, 1.0)
-    Y_pred = s .* (X_obs * R) .+ T_vec'
-
-    for i in 1:N
-        Y_obs[i, :] ~ MvNormal(Y_pred[i, :], sigma * I)
-    end
-end
-
-
-
-```
-
-$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
-
-### Classification
- 
-#### Discrete Functions Analysis
-Discriminant Functions Analysis (DFA) aims to find linear combinations of predictor variables that best separate two or more classes or groups. In a Bayesian context, especially when dealing with more than two groups, this is commonly achieved through Bayesian Multinomial Logistic Regression (also known as Softmax Regression).
-
-This model estimates the probability of an observation belonging to each of the several classes, based on a set of predictor variables. The 'discriminant functions' are essentially the linear predictors for each category, and the model estimates the coefficients for these functions.
-
-
-```{julia}
-%%julia
-# Pkg.add("Turing")
-# Pkg.add("Distributions")
-# Pkg.add("LinearAlgebra")
-# Pkg.add("StatsAPI")
-using Turing
-using Distributions
-using LinearAlgebra # For I (identity matrix)
-using StatsAPI # For softmax
-using Random
-
-# Set a seed for reproducibility
-Random.seed!(987);
-
-# 1. Generate Synthetic Data for Multinomial Logistic Regression (DFA-like scenario)
-num_samples = 300
-num_predictors = 2
-num_classes = 3 # Let's have 3 classes (0, 1, 2)
-
-# Predictor variables
-x1 = randn(num_samples) # Predictor 1
-x2 = randn(num_samples) # Predictor 2
-
-# Design matrix (including intercept)
-X_multinom = hcat(ones(num_samples), x1, x2)
-
-# True coefficients for each class. One class is typically used as a reference (e.g., class 1 is all zeros).
-# The coefficients represent the linear predictor for each class relative to the reference.
-# Size: (num_predictors + 1) x (num_classes - 1)
-
-# True coefficients for Class 2 vs Class 1 (reference)
-true_beta_class2 = [0.5, 1.0, -0.5] # Intercept, x1_coeff, x2_coeff
-
-# True coefficients for Class 3 vs Class 1 (reference)
-true_beta_class3 = [-0.8, -0.7, 1.2] # Intercept, x1_coeff, x2_coeff
-
-# Combine into a matrix of coefficients, where the first column is for the reference class (all zeros)
-true_betas_all = hcat(zeros(num_predictors + 1), true_beta_class2, true_beta_class3)
-
-# Calculate the linear predictors for each class for each observation
-linear_predictors = X_multinom * true_betas_all # num_samples x num_classes
-
-# Convert linear predictors to probabilities for each class using softmax
-# StatsAPI.softmax operates on columns by default, so we'll transpose
-probabilities_per_class = permutedims(StatsAPI.softmax(permutedims(linear_predictors)))
-
-# Generate class labels (y) based on these probabilities
-y_multinom = Vector{Int}(undef, num_samples)
-for i in 1:num_samples
-    # Categorical(p) expects probabilities for each category
-    y_multinom[i] = rand(Categorical(probabilities_per_class[i, :]))
-end
-
-println("Synthetic Multinomial Data Generated. First 10 observations:")
-display(hcat(round.(x1[1:10], digits=2), round.(x2[1:10], digits=2), round.(probabilities_per_class[1:10,:], digits=2), y_multinom[1:10]))
-
-println("\nCounts per class: ", StatsBase.countmap(y_multinom))
-
-  
-# Pkg.add("StatsBase") # For countmap in data generation
-using StatsBase # For countmap
-
-# 2. Define the Bayesian Multinomial Logistic Regression Model
-@model function bayesian_multinomial_logistic_regression(X, y, num_classes)
-    num_samples = length(y)
-    num_predictors_with_intercept = size(X, 2)
-
-    # Priors for the regression coefficients.
-    # One class (e.g., the first class, index 1) is typically set as the reference,
-    # so we only need coefficients for (num_classes - 1) comparisons.
-    # The coefficients for the reference class are implicitly zero.
-    
-    # `beta_coeffs` will be a matrix of size (num_predictors + 1) x (num_classes - 1).
-    # MvNormal is for vectors, so we declare individual coefficient vectors.
-    
-    # The coefficients for class 2 (relative to class 1)
-    beta_class2 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
-    # The coefficients for class 3 (relative to class 1)
-    beta_class3 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
-
-    # Construct the full matrix of coefficients for all classes
-    # The first column corresponds to the reference class (all zeros)
-    beta_matrix = hcat(Zeros(num_predictors_with_intercept), beta_class2, beta_class3)
-
-    # Calculate the linear predictors for each class for each observation
-    linear_predictors_model = X * beta_matrix # num_samples x num_classes
-
-    # Convert linear predictors to probabilities for each class using softmax
-    # StatsAPI.softmax operates on columns by default, so we permute (transpose) and then permute back
-    probabilities_per_class_model = permutedims(StatsAPI.softmax(permutedims(linear_predictors_model)))
-
-    # Likelihood: Each observed class label y[i] is a draw from a Categorical distribution
-    for i in 1:num_samples
-        y[i] ~ Categorical(probabilities_per_class_model[i, :])
-    end
-end
-
-# 3. Instantiate and Sample from the Model
-# Create an instance of the model with our data
-model_multinom = bayesian_multinomial_logistic_regression(X_multinom, y_multinom, num_classes);
-
-println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
-# Sample from the posterior distribution using NUTS
-chain_multinom = sample(model_multinom, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
-
-# 4. Display and Interpret Results
-display(chain_multinom)
-
-println("\nTrue Coefficients (Class 2 vs Class 1):")
-println("Intercept: $(true_beta_class2[1])")
-println("X1 Coeff: $(true_beta_class2[2])")
-println("X2 Coeff: $(true_beta_class2[3])")
-
-println("\nPosterior Means for Coefficients (Class 2 vs Class 1):")
-println("Intercept (beta_class2[1]): ", round(mean(chain_multinom[:beta_class2___1]), digits=3))
-println("X1 Coeff (beta_class2[2]): ", round(mean(chain_multinom[:beta_class2___2]), digits=3))
-println("X2 Coeff (beta_class2[3]): ", round(mean(chain_multinom[:beta_class2___3]), digits=3))
-
-println("\nTrue Coefficients (Class 3 vs Class 1):")
-println("Intercept: $(true_beta_class3[1])")
-println("X1 Coeff: $(true_beta_class3[2])")
-println("X2 Coeff: $(true_beta_class3[3])")
-
-println("\nPosterior Means for Coefficients (Class 3 vs Class 1):")
-println("Intercept (beta_class3[1]): ", round(mean(chain_multinom[:beta_class3___1]), digits=3))
-println("X1 Coeff (beta_class3[2]): ", round(mean(chain_multinom[:beta_class3___2]), digits=3))
-println("X2 Coeff (beta_class3[3]): ", round(mean(chain_multinom[:beta_class3___3]), digits=3))
-
-# These posterior mean coefficients define your 'discriminant functions' for each class.
-# You can use them to predict class probabilities for new data points.
-
-```
-#### Softmax 
-
-Same as Bayesian multinomial regression (i.e. DFA)
-
-```{julia}
-%%julia
-# Pkg.add("Turing")
-# Pkg.add("Distributions")
-# Pkg.add("LinearAlgebra")
-# Pkg.add("Random")
-# Pkg.add("StatsAPI") # For softmax function
-# Pkg.add("StatsBase") # For countmap in data generation
-
-using Turing
-using Distributions
-using LinearAlgebra # For I (identity matrix) and Zeros
-using Random
-using StatsAPI # For softmax
-using StatsBase # For countmap
-
-# Set a seed for reproducibility
-Random.seed!(987);
-
-%%julia
-# 1. Generate Synthetic Data for Multinomial Logistic Regression (Softmax Regression)
-num_samples = 300
-num_predictors = 2
-num_classes = 3 # Let's have 3 classes (1, 2, 3)
-
-# Predictor variables
-x1 = randn(num_samples) # Predictor 1
-x2 = randn(num_samples) # Predictor 2
-
-# Design matrix (including intercept)
-X_softmax = hcat(ones(num_samples), x1, x2)
-
-# True coefficients for each class. One class is typically used as a reference (e.g., class 1 is all zeros).
-# The coefficients represent the linear predictor for each class relative to the reference.
-# Size: (num_predictors + 1) x (num_classes - 1)
-
-# True coefficients for Class 2 vs Class 1 (reference)
-true_beta_class2 = [0.5, 1.0, -0.5] # Intercept, x1_coeff, x2_coeff
-
-# True coefficients for Class 3 vs Class 1 (reference)
-true_beta_class3 = [-0.8, -0.7, 1.2] # Intercept, x1_coeff, x2_coeff
-
-# Combine into a matrix of coefficients, where the first column is for the reference class (all zeros)
-true_betas_all = hcat(zeros(num_predictors + 1), true_beta_class2, true_beta_class3)
-
-# Calculate the linear predictors for each class for each observation
-linear_predictors = X_softmax * true_betas_all # num_samples x num_classes
-
-# Convert linear predictors to probabilities for each class using softmax
-# StatsAPI.softmax operates on columns by default, so we'll transpose for row-wise operation
-probabilities_per_class = permutedims(StatsAPI.softmax(permutedims(linear_predictors)))
-
-# Generate class labels (y) based on these probabilities
-y_softmax = Vector{Int}(undef, num_samples)
-for i in 1:num_samples
-    # Categorical(p) expects probabilities for each category
-    y_softmax[i] = rand(Categorical(probabilities_per_class[i, :]))
-end
-
-println("Synthetic Softmax Regression Data Generated. First 10 observations (X1, X2, Probabilities for classes 1,2,3, Assigned Class):")
-display(hcat(round.(x1[1:10], digits=2), round.(x2[1:10], digits=2), round.(probabilities_per_class[1:10,:], digits=2), y_softmax[1:10]))
-
-println("\nCounts per class: ", StatsBase.countmap(y_softmax))
-
-%%julia
-# 2. Define the Bayesian Softmax Regression Model
-@model function bayesian_softmax_regression(X, y, num_classes)
-    num_samples = length(y)
-    num_predictors_with_intercept = size(X, 2)
-
-    # Priors for the regression coefficients.
-    # One class (e.g., the first class, index 1) is typically set as the reference,
-    # so we only need coefficients for (num_classes - 1) comparisons.
-    # The coefficients for the reference class are implicitly zero.
-
-    # `beta_coeffs` will be a matrix of size (num_predictors + 1) x (num_classes - 1).
-    # MvNormal is for vectors, so we declare individual coefficient vectors.
-
-    # Coefficients for class 2 (relative to class 1)
-    beta_class2 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
-    # Coefficients for class 3 (relative to class 1)
-    beta_class3 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
-
-    # Construct the full matrix of coefficients, where the first column is for the reference class (all zeros)
-    beta_matrix = hcat(Zeros(num_predictors_with_intercept), beta_class2, beta_class3)
-
-    # Calculate the linear predictors for each class for each observation
-    linear_predictors_model = X * beta_matrix # num_samples x num_classes
-
-    # Convert linear predictors to probabilities for each class using softmax
-    # StatsAPI.softmax operates on columns by default, so we permute (transpose) and then permute back
-    probabilities_per_class_model = permutedims(StatsAPI.softmax(permutedims(linear_predictors_model)))
-
-    # Likelihood: Each observed class label y[i] is a draw from a Categorical distribution
-    for i in 1:num_samples
-        y[i] ~ Categorical(probabilities_per_class_model[i, :])
-    end
-end
-
-# Instantiate the model with our data
-model_softmax = bayesian_softmax_regression(X_softmax, y_softmax, num_classes);
-
-println("Bayesian Softmax Regression model defined.")
-
-%%julia
-# 3. Sample from the Posterior Distribution
-println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
-chain_softmax = sample(model_softmax, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
-
-# 4. Display and Interpret Results
-display(chain_softmax)
-
-println("\nTrue Coefficients (Class 2 vs Class 1):")
-println("  Intercept: $(true_beta_class2[1])")
-println("  X1 Coeff: $(true_beta_class2[2])")
-println("  X2 Coeff: $(true_beta_class2[3])")
-
-println("\nPosterior Means for Coefficients (Class 2 vs Class 1):")
-println("  Intercept (beta_class2[1]): ", round(mean(chain_softmax[:beta_class2___1]), digits=3))
-println("  X1 Coeff (beta_class2[2]): ", round(mean(chain_softmax[:beta_class2___2]), digits=3))
-println("  X2 Coeff (beta_class2[3]): ", round(mean(chain_softmax[:beta_class2___3]), digits=3))
-
-println("\nTrue Coefficients (Class 3 vs Class 1):")
-println("  Intercept: $(true_beta_class3[1])")
-println("  X1 Coeff: $(true_beta_class3[2])")
-println("  X2 Coeff: $(true_beta_class3[3])")
-
-println("\nPosterior Means for Coefficients (Class 3 vs Class 1):")
-println("  Intercept (beta_class3[1]): ", round(mean(chain_softmax[:beta_class3___1]), digits=3))
-println("  X1 Coeff (beta_class3[2]): ", round(mean(chain_softmax[:beta_class3___2]), digits=3))
-println("  X2 Coeff (beta_class3[3]): ", round(mean(chain_softmax[:beta_class3___3]), digits=3))
-
-println("\nInterpretation: These posterior mean coefficients represent the estimated linear effects of the predictors on the log-odds of belonging to a specific class (relative to the reference class). They can be used to calculate predicted class probabilities for new data points.")
-
-```
-
-
-#### K-means
-
-K-Means is a classical clustering algorithm that aims to partition n observations into k clusters. A direct Bayesian probabilistic counterpart to K-Means is a Bayesian Gaussian Mixture Model (GMM). Instead of finding hard assignments and centroids through optimization, a Bayesian GMM models the data as being generated from a mixture of k Gaussian distributions, each representing a cluster. It estimates the parameters of these Gaussian distributions (means, covariances) and the mixing probabilities (weights) for each cluster, while also inferring the probabilistic assignment of each data point to a cluster.
-
-```{julai}
-
-# Set a seed for reproducibility
-Random.seed!(1234);
-
-# 1. Generate Synthetic Data for GMM (with 3 clusters)
-num_samples = 300
-num_dims = 2
-num_clusters = 3
-
-# True cluster parameters
-true_μ = [
-    [1.0, 1.0],  # Mean for cluster 1
-    [5.0, 1.0],  # Mean for cluster 2
-    [3.0, 5.0]   # Mean for cluster 3
-]
-
-true_Σ = [
-    Matrix(Diagonal([0.5, 0.5])), # Covariance for cluster 1 (spherical)
-    Matrix(Diagonal([0.8, 0.8])), # Covariance for cluster 2
-    Matrix(Diagonal([0.6, 0.6]))  # Covariance for cluster 3
-]
-
-# True mixing proportions (how many points belong to each cluster)
-true_π = [0.3, 0.4, 0.3]
-
-# Generate cluster assignments for each sample
-cluster_assignments = [rand(Categorical(true_π)) for _ in 1:num_samples]
-
-# Generate data points based on assignments
-data_points = Matrix{Float64}(undef, num_samples, num_dims)
-for i in 1:num_samples
-    k = cluster_assignments[i]
-    data_points[i, :] = rand(MvNormal(true_μ[k], true_Σ[k]))
-end
-
-# Convert to a format suitable for plotting and Turing (e.g., 2 x N matrix)
-X_gmm = permutedims(data_points)
-
-println("Synthetic GMM Data Generated. First 10 observations:")
-display(data_points[1:10,:])
-
-# Plot the synthetic data to visualize clusters
-scatter(X_gmm[1,:], X_gmm[2,:],
-        group=cluster_assignments,
-        xlabel="Dimension 1",
-        ylabel="Dimension 2",
-        title="Synthetic Data for Bayesian GMM",
-        legend=:topleft,
-
-
-@model function bayesian_gmm(X, num_dims, num_clusters)
-    num_samples = size(X, 2)
-
-    # Priors for mixing proportions (weights) of clusters
-    # Dirichlet prior ensures sum to 1 and positivity
-    π ~ Dirichlet(num_clusters, 1.0) # Symmetric Dirichlet prior
-
-    # Priors for cluster means (μ)
-    # Each mean is a vector of num_dims dimensions
-    μ = [Vector{Float64}(undef, num_dims) for _ in 1:num_clusters]
-    for k in 1:num_clusters
-        μ[k] ~ MvNormal(Zeros(num_dims), 5.0 * I) # Broad Normal prior for means
-    end
-
-    # Priors for cluster covariances (Σ)
-    # For simplicity, we'll assume diagonal covariance matrices (independent dimensions)
-    # and model the standard deviations.
-    σ = [Vector{Float64}(undef, num_dims) for _ in 1:num_clusters]
-    for k in 1:num_clusters
-        for d in 1:num_dims
-            # InverseGamma prior for variance, then sqrt for std dev.
-            σ[k][d] ~ InverseGamma(2, 3) |> sqrt # Prior for standard deviations
-        end
-    end
-
-    # Create covariance matrices from standard deviations
-    Σ = [Matrix(Diagonal(σ[k].^2)) for k in 1:num_clusters]
-
-    # Latent variable for cluster assignment for each data point
-    # Each z[i] is a categorical variable indicating which cluster point i belongs to
-    z = Vector{Int}(undef, num_samples)
-
-    # Likelihood: Each data point is assigned to a cluster, then drawn from that cluster's Gaussian
-    for i in 1:num_samples
-        # Cluster assignment z[i] is drawn from Categorical distribution with probabilities π
-        z[i] ~ Categorical(π)
-        
-        # Data point X[:, i] is drawn from the Gaussian of its assigned cluster z[i]
-        X[:, i] ~ MvNormal(μ[z[i]], Σ[z[i]])
-    end
-end
-
-# 3. Instantiate and Sample from the Model
-# Create an instance of the model with our data and desired number of clusters
-model_gmm = bayesian_gmm(X_gmm, num_dims, num_clusters);
-
-println("\nSampling from posterior (this may take a moment, especially for GMMs)... Using NUTS sampler.")
-# Sample from the posterior distribution using NUTS
-# Adjust number of samples and chains as needed for convergence
-chain_gmm = sample(model_gmm, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
-
-# 4. Display and Interpret Results
-display(chain_gmm)
-
-println("\nTrue Cluster Means:")
-for k in 1:num_clusters
-    println("  Cluster $(k): $(true_μ[k])")
-end
-
-println("\nPosterior Means for Cluster Means (μ):")
-for k in 1:num_clusters
-    # Extract samples for μ[k]
-    μk_samples_dim1 = mean(chain_gmm["μ[" * string(k) * "]_1"])
-    μk_samples_dim2 = mean(chain_gmm["μ[" * string(k) * "]_2"])
-    println("  Cluster $(k): [ $(round(μk_samples_dim1, digits=2)), $(round(μk_samples_dim2, digits=2)) ]")
-end
-
-println("\nTrue Mixing Proportions (π): $(true_π)")
-println("Posterior Means for Mixing Proportions (π):")
-for k in 1:num_clusters
-    println("  π[$(k)]: $(round(mean(chain_gmm["π[" * string(k) * "]"]), digits=3))")
-end
-
-# Visualize the inferred cluster means on top of the data
-plot_gmm = scatter(X_gmm[1,:], X_gmm[2,:],
-                   xlabel="Dimension 1",
-                   ylabel="Dimension 2",
-                   title="Bayesian GMM: Data with Inferred Cluster Means",
-                   legend=:topleft,
-                   aspect_ratio=:equal,
-                   markersize=3,
-                   markeralpha=0.6,
-                   color=:lightgray,
-                   label="Data Points",
-                   dpi=300)
-
-# Plot inferred means
-inferred_means_dim1 = [mean(chain_gmm["μ[" * string(k) * "]_1"]) for k in 1:num_clusters]
-inferred_means_dim2 = [mean(chain_gmm["μ[" * string(k) * "]_2"]) for k in 1:num_clusters]
-
-scatter!(plot_gmm, inferred_means_dim1, inferred_means_dim2,
-         marker=:star5,
-         markersize=10,
-         markercolor=[:red, :blue, :green][1:num_clusters],
-         markerstrokecolor=:black,
-         markerstrokewidth=1,
-         label="Inferred Cluster Mean",
-         series_annotations=text.(1:num_clusters, :bottom, 8, :black))
-
-display(plot_gmm)
-
-```
-
-
-
-#### Cluster Analysis
-
-Using metrics of difference, distance or similarity, classify into groups ... numerous methods. Highly subjective.
-
-
-
-```{julia}
-
-using Turing
-using Distributions
-using LinearAlgebra # For I (identity matrix)
-using Random
-
-# Set a seed for reproducibility
-Random.seed!(5678);
-
-# 1. Generate Synthetic Mixed Data
-num_samples = 200
-num_clusters = 2
-
-# Parameters for data types:
-# Continuous: 1 dimension
-# Binomial: 1 dimension (e.g., number of successes out of 10 trials)
-# Multinomial: 1 dimension (e.g., counts in 3 categories)
-
-# True cluster parameters
-# Cluster 1
-μ_true_1 = [2.0]     # Continuous mean
-p_true_1 = 0.2      # Binomial success probability
-θ_true_1 = [0.6, 0.3, 0.1] # Multinomial probabilities for 3 categories
-
-# Cluster 2
-μ_true_2 = [7.0]
-p_true_2 = 0.8
-θ_true_2 = [0.1, 0.2, 0.7]
-
-# Combine into arrays for the model
-true_μ = [μ_true_1, μ_true_2]
-true_p = [p_true_1, p_true_2]
-true_θ = [θ_true_1, θ_true_2]
-
-true_π = [0.4, 0.6] # Mixing proportions
-
-# Binomial trials (fixed for all points)
-binomial_trials = 10
-# Multinomial categories (fixed)
-multinomial_categories = 3
-# Total count for multinomial (fixed for all points)
-multinomial_total_count = 20
-
-# Store generated data
-data_continuous = Vector{Float64}(undef, num_samples)
-data_binomial = Vector{Int}(undef, num_samples)
-data_multinomial = Matrix{Int}(undef, num_samples, multinomial_categories)
-cluster_assignments_true = Vector{Int}(undef, num_samples)
-
-for i in 1:num_samples
-    # Assign cluster
-    k = rand(Categorical(true_π))
-    cluster_assignments_true[i] = k
-
-    # Generate continuous data
-    data_continuous[i] = rand(Normal(true_μ[k][1], 1.0)) # Assuming fixed std dev for simplicity
-
-    # Generate binomial data
-    data_binomial[i] = rand(Binomial(binomial_trials, true_p[k]))
-
-    # Generate multinomial data
-    data_multinomial[i, :] = rand(Multinomial(multinomial_total_count, true_θ[k]))
-end
-
-println("Synthetic Mixed Data Generated. First 5 observations:")
-display(hcat(data_continuous[1:5], data_binomial[1:5], data_multinomial[1:5, :], cluster_assignments_true[1:5]))
-
-# For Turing, we'll pass these as separate arrays
-
-
-@model function bayesian_mixed_data_gmm(data_cont, data_binom, data_mult, 
-                                         num_clusters, num_cont_dims, binomial_trials, multinomial_total_count, multinomial_categories)
-    num_samples = length(data_cont)
-
-    # Priors for mixing proportions (weights) of clusters
-    π ~ Dirichlet(num_clusters, 1.0)
-
-    # Priors for continuous component parameters (mean and standard deviation)
-    μ_cont = [Vector{Float64}(undef, num_cont_dims) for _ in 1:num_clusters]
-    σ_cont = [Vector{Float64}(undef, num_cont_dims) for _ in 1:num_clusters]
-    for k in 1:num_clusters
-        μ_cont[k] ~ MvNormal(Zeros(num_cont_dims), 5.0 * I) # Broad Normal prior for means
-        for d in 1:num_cont_dims
-            σ_cont[k][d] ~ InverseGamma(2, 3) |> sqrt # Prior for standard deviations
-        end
-    end
-    Σ_cont = [Matrix(Diagonal(σ_cont[k].^2)) for k in 1:num_clusters]
-
-    # Priors for binomial component parameters (success probability)
-    p_binom = Vector{Float64}(undef, num_clusters)
-    for k in 1:num_clusters
-        p_binom[k] ~ Beta(1, 1) # Uniform Beta prior for success probability
-    end
-
-    # Priors for multinomial component parameters (category probabilities)
-    θ_mult = [Vector{Float64}(undef, multinomial_categories) for _ in 1:num_clusters]
-    for k in 1:num_clusters
-        θ_mult[k] ~ Dirichlet(multinomial_categories, 1.0) # Symmetric Dirichlet prior
-    end
-
-    # Latent variable for cluster assignment for each data point
-    z = Vector{Int}(undef, num_samples)
-
-    # Likelihood: Each data point's components are drawn from its assigned cluster's parameters
-    for i in 1:num_samples
-        # Cluster assignment z[i] is drawn from Categorical distribution with probabilities π
-        z[i] ~ Categorical(π)
-
-        # Continuous data component likelihood
-        data_cont[i] ~ MvNormal(μ_cont[z[i]], Σ_cont[z[i]])
-
-        # Binomial data component likelihood
-        data_binom[i] ~ Binomial(binomial_trials, p_binom[z[i]])
-
-        # Multinomial data component likelihood
-        data_mult[i, :] ~ Multinomial(multinomial_total_count, θ_mult[z[i]])
-    end
-end
-
-# Instantiate and Sample from the Model
-num_cont_dims = 1 # We generated 1 continuous dimension
-
-model_mixed = bayesian_mixed_data_gmm(data_continuous, data_binomial, data_multinomial,
-                                      num_clusters, num_cont_dims, binomial_trials, multinomial_total_count, multinomial_categories);
-
-println("\nSampling from posterior for mixed-data GMM (this will take longer!)...")
-chain_mixed = sample(model_mixed, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
-
-# Display and Interpret Results
-display(chain_mixed)
-
-println("\nTrue Mixing Proportions (π): $(true_π)")
-println("Posterior Means for Mixing Proportions (π):")
-for k in 1:num_clusters
-    println("  π[$(k)]: $(round(mean(chain_mixed["π[" * string(k) * "]"]), digits=3))")
-end
-
-println("\nTrue Continuous Means (μ_cont): $(true_μ)")
-println("Posterior Means for Continuous Means (μ_cont):")
-for k in 1:num_clusters
-    println("  μ_cont[$(k)]: [ $(round(mean(chain_mixed["μ_cont[" * string(k) * "]_1"]), digits=3)) ]")
-end
-
-println("\nTrue Binomial Success Probabilities (p_binom): $(true_p)")
-println("Posterior Means for Binomial Success Probabilities (p_binom):")
-for k in 1:num_clusters
-    println("  p_binom[$(k)]: $(round(mean(chain_mixed["p_binom[" * string(k) * "]"]), digits=3))")
-end
-
-println("\nTrue Multinomial Probabilities (θ_mult): $(true_θ)")
-println("Posterior Means for Multinomial Probabilities (θ_mult):")
-for k in 1:num_clusters
-    for c in 1:multinomial_categories
-        println("  θ_mult[$(k)][$(c)]: $(round(mean(chain_mixed["θ_mult[" * string(k) * "]_" * string(c)]), digits=3))")
-    end
-end
-
-
-
-```
-
-
-#### Random Forest
-
-This is frequentist.
-
-
-```{julia} 
-
-# Generate some synthetic data for regression
-num_samples = 200
-num_features = 3
-
-X = randn(num_samples, num_features) * 5 # Predictor variables
-
-# True function with some noise
-y_true = X[:, 1].^2 + 2 * X[:, 2] - 3 * X[:, 3] + 5
-y = y_true + randn(num_samples) * 2 # Add some noise
-
-println("Synthetic data generated (first 5 rows of X and y):")
-display(hcat(X[1:5,:], y[1:5]))
- 
-# Split data into training and testing sets (simple split for demonstration)
-train_ratio = 0.7
-split_idx = floor(Int, num_samples * train_ratio)
-
-X_train = X[1:split_idx, :]
-y_train = y[1:split_idx]
-X_test = X[split_idx+1:end, :]
-y_test = y[split_idx+1:end]
-
-println("Data split into training and test sets.")
-println("Training samples: $(size(X_train, 1))")
-println("Test samples: $(size(X_test, 1))\n")
-
-# 1. Train a Random Forest Regressor
-# n_trees: number of trees in the forest
-# n_subfeatures: number of features to consider at each split (for feature bagging)
-# partial_sampling: fraction of samples to consider for each tree (for data bagging)
-# max_depth: maximum depth of each tree
-# min_samples_leaf: minimum number of samples required to be at a leaf node
-
-model = build_forest(
-    y_train, 
-    X_train,
-    20,                # n_trees (number of trees)
-    num_features,      # n_subfeatures (consider all features at each split for simplicity)
-    0.7,               # partial_sampling (fraction of samples per tree)
-    5,                 # max_depth
-    1                  # min_samples_leaf
-)
-
-println("Random Forest model trained.\n")
-
-# 2. Make predictions on the test set
-y_pred = apply_forest(model, X_test)
-
-# 3. Evaluate the model (e.g., Mean Squared Error)
-mse = sum((y_pred .- y_test).^2) / length(y_test)
-println("Mean Squared Error on test set: $(round(mse, digits=4))")
-
-# 4. Visualize actual vs. predicted values (simple scatter plot)
-plot(
-    y_test, y_pred, seriestype=:scatter, 
-    xlabel="Actual Values", ylabel="Predicted Values", 
-    title="Random Forest Regression: Actual vs. Predicted",
-    legend=false, aspect_ratio=:equal, markeralpha=0.6
-)
-
-# Add a diagonal line for perfect prediction
-plot!([minimum(y_test), maximum(y_test)], [minimum(y_test), maximum(y_test)], 
-    line=(:dash, 2, :red), label="Perfect Prediction")
-
-```
-
-Bayesian Decision Trees is similar: One could build a single Bayesian decision tree by placing priors on the splitting rules (e.g., probability of splitting, choice of feature and split point) and the leaf node parameters (e.g., a Normal distribution for regression output). The MCMC sampler would then explore the space of possible tree structures and parameters.
-
-
-#### Neural net models
-
-
-##### Standard
-
-
-```{julia}
-%%julia
-# Pkg.add("Flux")
-# Pkg.add("Plots")
-# Pkg.add("Random")
-
-using Flux
-using Flux: train!, mse
-using Plots
-using Random
-
-Random.seed!(42);
-
-%%julia
-# 1. Generate Synthetic Data
-num_samples = 100
-
-# Input features (1D for simplicity)
-X_data = rand(1, num_samples) * 10 .- 5 # Data between -5 and 5
-
-# True non-linear relationship with noise
-# y = 0.5 * X^2 + 2*X + 3 + noise
-y_true = 0.5 .* X_data.^2 .+ 2 .* X_data .+ 3
-y_data = y_true .+ randn(1, num_samples) .* 2 # Add some Gaussian noise
-
-println("Synthetic data generated. First 5 samples (X and y):")
-display(hcat(X_data[:,1:5]', y_data[:,1:5]'))
-
-# Plot the synthetic data
-scatter_plot = scatter(vec(X_data), vec(y_data),
-    label="Observed Data",
-    xlabel="X", ylabel="Y",
-    title="Synthetic Data for NN Regression",
-    legend=:topleft, markeralpha=0.7)
-display(scatter_plot);
-
-%%julia
-# 2. Define the Neural Network Architecture
-# A simple feedforward network with one hidden layer and tanh activation
-model = Chain(
-    Dense(1, 10, tanh), # Input layer (1 feature) to hidden layer (10 neurons), tanh activation
-    Dense(10, 1)        # Hidden layer to output layer (1 output for regression)
-)
-
-println("Neural Network model defined:")
-display(model)
-
-# Define the loss function (Mean Squared Error for regression)
-loss(x, y) = mse(model(x), y)
-
-# Define the optimizer
-optimizer = ADAM(0.01) # Adam optimizer with a learning rate of 0.01
-
-println("\nLoss function and optimizer defined.")
-
-%%julia
-# 3. Train the Network
-num_epochs = 200
-
-println("\nTraining the neural network for $(num_epochs) epochs...")
-
-# Store loss values for plotting
-training_losses = Float64[]
-
-for epoch in 1:num_epochs
-    # Flux's train! function updates model parameters based on loss and optimizer
-    # We pass the loss function, the parameters (model), the data, and the optimizer
-    train!(loss, Flux.params(model), [(X_data, y_data)], optimizer)
-
-    current_loss = loss(X_data, y_data)
-    push!(training_losses, current_loss)
-
-    if epoch % 50 == 0
-        println("Epoch $(epoch): Loss = $(round(current_loss, digits=4))")
-    end
-end
-
-println("Training complete.")
-
-# Plot training loss over epochs
-plot_loss = plot(training_losses,
-    xlabel="Epoch", ylabel="Loss (MSE)",
-    title="Training Loss over Epochs",
-    legend=false)
-display(plot_loss);
-
-%%julia
-# 4. Make Predictions and Visualize Results
-
-# Create a range of new X values for prediction
-X_test = collect(range(-5.0, stop=5.0, length=200))
-X_test_input = reshape(X_test, 1, length(X_test))
-
-# Make predictions with the trained model
-y_pred_mean = model(X_test_input)
-
-# Plot the results
-pred_plot = scatter(vec(X_data), vec(y_data),
-    label="Observed Data",
-    xlabel="X", ylabel="Y",
-    title="Standard Neural Network Regression",
-    legend=:topleft, markeralpha=0.7)
-
-plot!(pred_plot, vec(X_test_input), vec(y_pred_mean),
-    line=(:solid, 2, :blue), label="NN Prediction")
-
-display(pred_plot)
-
-println("\nInterpretation: The blue line shows the neural network's learned relationship between X and Y. Unlike the BNN, this plot doesn't show uncertainty, as the standard neural network provides a single point estimate for each prediction.")
-
-```
-
-
-
-##### Bayesian Neural Net (BNN)
- 
-```{julia}
-# 1. Generate Synthetic Data
-num_samples = 100
-num_features = 1 # Simple 1D input
-
-# Input features
-X_data = rand(num_samples, num_features) * 10 .- 5 # Data between -5 and 5
-
-# True non-linear relationship with noise
-# y = 0.5 * X^2 + 2*X + 3 + noise
-y_true = 0.5 .* X_data[:,1].^2 .+ 2 .* X_data[:,1] .+ 3
-y_data = y_true .+ randn(num_samples) .* 2 # Add some Gaussian noise
-
-println("Synthetic data generated. First 5 samples:")
-display(hcat(X_data[1:5,:], y_data[1:5]))
-
-# Plot the synthetic data
-scatter_plot = scatter(X_data[:,1], y_data, 
-    label="Observed Data", 
-    xlabel="X", ylabel="Y", 
-    title="Synthetic Data for BNN Regression", 
-    legend=:topleft, markeralpha=0.7)
-display(scatter_plot);
-
-%%julia
-# 2. Define the Bayesian Neural Network Model
-@model function bnn_regression(X, y, num_hidden_nodes, num_output_nodes)
-    num_samples, num_features = size(X)
-
-    # Priors for weights and biases of the first layer (input to hidden)
-    # Each weight and bias drawn from a Normal distribution
-    weights1 ~ MvNormal(Zeros(num_features, num_hidden_nodes), I * 2.0)
-    bias1 ~ MvNormal(Zeros(num_hidden_nodes), I * 2.0)
-
-    # Priors for weights and biases of the second layer (hidden to output)
-    weights2 ~ MvNormal(Zeros(num_hidden_nodes, num_output_nodes), I * 2.0)
-    bias2 ~ MvNormal(Zeros(num_output_nodes), I * 2.0)
-
-    # Prior for the observation noise standard deviation
-    sigma ~ InverseGamma(2, 3) # A common prior for scale parameters
-
-    # Neural Network Forward Pass
-    # Input layer to Hidden layer with tanh activation
-    hidden_layer_output = tanh.(X * weights1 .+ bias1') # X*W1 + B1, then tanh
-
-    # Hidden layer to Output layer
-    y_pred_mean = hidden_layer_output * weights2 .+ bias2' # H*W2 + B2
-
-    # Likelihood: Observed y values are normally distributed around the network's predictions
-    # Assuming independent observations, so we iterate.
-    for i in 1:num_samples
-        y[i] ~ Normal(y_pred_mean[i,1], sigma) # y_pred_mean[i,1] because num_output_nodes is 1
-    end
-end
-
-# Set model parameters
-num_hidden_nodes = 5 # Number of neurons in the hidden layer
-num_output_nodes = 1 # For regression, typically 1 output
-
-# Instantiate the model
-model = bnn_regression(X_data, y_data, num_hidden_nodes, num_output_nodes);
-
-println("Bayesian Neural Network model defined with $(num_features) input features, $(num_hidden_nodes) hidden nodes, and $(num_output_nodes) output node.")
-
-%%julia
-# 3. Sample from the Posterior Distribution
-println("\nSampling from posterior (this may take a while for BNNs!)... Using NUTS sampler.")
-chain = sample(model, NUTS(0.65), 1000, 2); # 1000 samples per chain, 2 chains
-
-# Display the chain summary
-display(chain)
-
-%%julia
-# 4. Make Predictions and Visualize Uncertainty
-
-# Create a range of new X values for prediction
-X_test = collect(range(-5.0, stop=5.0, length=200)) # 200 points for smooth prediction line
-X_test_matrix = reshape(X_test, length(X_test), 1)
-
-# Extract sampled weights and biases from the chain
-# We'll collect a subset of samples to make predictions more efficient
-num_prediction_samples = 200 # Use 200 samples from the chain for predictions
-sampled_indices = rand(1:size(chain, 1), num_prediction_samples)
-
-# Initialize a matrix to store predictions from each sample
-all_y_preds = Matrix{Float64}(undef, length(X_test), num_prediction_samples)
-
-for (idx, sample_idx) in enumerate(sampled_indices)
-    # Get parameters for this sample
-    s_weights1 = chain[:weights1][sample_idx, :, :]
-    s_bias1 = chain[:bias1][sample_idx, :]
-    s_weights2 = chain[:weights2][sample_idx, :, :]
-    s_bias2 = chain[:bias2][sample_idx, :]
-
-    # Perform forward pass for test data
-    s_hidden_output = tanh.(X_test_matrix * s_weights1 .+ s_bias1')
-    s_y_pred_mean = s_hidden_output * s_weights2 .+ s_bias2'
-    
-    all_y_preds[:, idx] = s_y_pred_mean[:,1]
-end
-
-# Calculate mean and credible intervals for predictions
-mean_y_pred = mean(all_y_preds, dims=2)[:,1]
-lower_bound = [quantile(all_y_preds[i,:], 0.025) for i in 1:length(X_test)]
-upper_bound = [quantile(all_y_preds[i,:], 0.975) for i in 1:length(X_test)]
-
-# Plot the results
-pred_plot = plot(X_data[:,1], y_data, 
-    seriestype=:scatter, label="Observed Data", 
-    xlabel="X", ylabel="Y", 
-    title="Bayesian Neural Network Regression with Uncertainty", 
-    legend=:topleft, markeralpha=0.7)
-
-plot!(pred_plot, X_test, mean_y_pred, 
-    line=(:solid, 2, :blue), label="BNN Mean Prediction")
-
-plot!(pred_plot, X_test, lower_bound, 
-    fillrange=upper_bound, fillalpha=0.2, color=:blue, 
-    label="95% Credible Interval", 
-    line=(:none))
-
-display(pred_plot)
-
-println("\nInterpretation: The blue line represents the mean prediction of the BNN, and the shaded blue area represents the 95% credible interval, illustrating the model's uncertainty about its predictions. Notice how the uncertainty might increase in areas where there is less data.")
-
-```
-
-
-### Finite and Infinite mixture models
-
-NOTE:: This section is mostly copied from the [Turing tutorial on KMM](https://turinglang.org/dev/tutorials/06-infinite-mixture-model) .
-
-- Unidimensional Kernel Mixture model with K pre-specified components that cover the space
-- $\alpha$ = concentration parameter of 1 (or k, the dimension of the Dirichlet distribution, by the definition used in the topic modelling literature) results in all sets of probabilities being equally likely, i.e., in this case the Dirichlet distribution of dimension k is equivalent to a uniform distribution over a k-1-dimensional simplex. This is not the same as what happens when the concentration parameter tends towards infinity. In the former case, all resulting distributions are equally likely (the distribution over distributions is uniform). In the latter case, only near-uniform distributions are likely (the distribution over distributions is highly peaked around the uniform distribution).
-
-The labeling non-identifiability inherent to degenerate mixture models yields multimodal distributions that even the most start-of-the-art computational algorithms cannot fit. In order to ensure accurate fits we need to break the labeling degeneracy in some way.
-
-From the perspective of Bayesian mixture models we can break this degeneracy by complementing the mixture likelihood with non-exchangeable prior information. A principled prior that assigns each mixture component to a specific responsibility will break the degeneracy, but unless that prior is incredibly strong the modes corresponding to disfavored assignments will maintain enough posterior mass to require exploration. Alternatively, a non-exchangeable prior that enforces a standard parameter ordering exactly removes the labeling degeneracy without compromising inferences.
-
-Even with the labeling degeneracy removed, however, Bayesian mixture models can still be troublesome to fit. As components begin to collapse into each other, for example, the posterior geometry becomes more and more pathological. Furthermore, mixture models often exhibit multimodalities beyond just those induced by the labeling degeneracy. Resolving the degeneracy does not eliminate these tangible modes and the computational issues they beget.
-
-As with so many modeling techniques, mixture models can be powerful in practice, provided that they are employed with great care.
-
-#### Example
-
-First a small example showing simplest case. Generate data and fit it.
-
-```julia
-
-# using Graphs, Distances, Peaks, 
-using KernelDensity
-# , Interpolations 
-
-# generate data
-
-# Simulate data from a bimodal distribution
-# data = vcat(rand(Normal(-1, 0.1), 500), rand(Normal(1, 0.1), 500))
-data = vcat(rand(Normal(-1.0, 0.5), 500), rand(Normal( 2.0, 0.5), 1000))
-
-function fit_function(p::NamedTuple{(:a, :mu, :sigma)}, x::Real)
-    # a (peak areas) and mu (peak means)  sigma (peak width) 
-    p.a[1] * pdf(Normal(p.mu[1], p.sigma), x) +
-    p.a[2] * pdf(Normal(p.mu[2], p.sigma), x)
-end
-
-true_par_values = (a = [500, 1000], mu = [-1.0, 2.0], sigma = 0.5)
-
-hist = append!(Histogram(-2:0.1:4), data)
-
-pl = Plots.plot( normalize(hist, mode=:density), st = :steps, label = "Data", 
-    title = "Data and True Statistical Model" )
-pl = Plots.plot!( pl, -4:0.01:4, x -> fit_function(true_par_values, x), label = "Truth" )
- 
-# example work with kernel density smoothes and characterizing them:
-hist = append!(Histogram(-2:0.1:4), data)
-dens = normalize(hist, mode=:density)
-weights = repeat([1], length(data) )
-
-U = kde(data; weights= weights, bandwidth=0.1)  #normal kernal by default
-# sum(U.density)*0.00410418834246899 == 1 # .. small value is the increment of U.x
-
-pl = plot(pl, U.x, U.density .* length(data) )  # KD smooth
-
-w = 5  # length of window in one direction (index, not x-value)
-pks = findmaxima(U.density, w )
-DataFrame(pks[Not(:data)])
-
-plotpeaks(U.x, U.density; peaks=pks.indices)
-
-pks = peakproms( pks; min=0.001)  # compute prominences
-DataFrame(pks[Not(:data)])
-
-pks = peakwidths( pks; min=0.1)  # compute widths at 50% prominences
-DataFrame(pks[Not(:data)])
-
-filterpeaks!( pks, :proms; min=0.001)
-
-# Now re-estimate parameters of mixtures distributions via Turing (assume 8 nodes)
-
-  
-Turing.@model function kmm(x, imodes, n_imodes, N )
-    σ² ~ filldist( InverseGamma(2, 3), n_imodes)  # variance prior 
-    μ ~ arraydist( [Normal(imodes[i], sqrt(σ²[i])) for i in 1:n_imodes] )  # inital guess of approx mean location of modal groups
-    kernels = map( i -> Normal(μ[i], sqrt(σ²[i])), 1:n_imodes )
-    α ~ Dirichlet(n_imodes, 1.0)
-    mixdist = MixtureModel(kernels, α)
-    x ~ filldist(mixdist, N)
-end
-
-# Define a kernel mixture with 10 gaussian components, with means covering -2:2
-# and Estimate weights
-
-N = size(data, 1)
-n_imodes = 8  # every 0.5 x
-sd_imodes = 0.5 # approx magnitude of variability of size classes
-imodes =  range(-4, stop=4, length=n_imodes)   # imodes
-M = kmm(data, imodes, n_imodes, N)
-
-nsamps = 1000
-chain = sample(M, Turing.NUTS(0.65), nsamps)
-
-v = zeros(n_imodes)
-v[4] = 1.0
-mp = predict( kmm(missing, v, n_imodes, N), chain)
-k = mp.value.data[1:1000,:,:]
-pl = Plots.plot()
-for i in 1:N 
-    Plots.density!( pl, k[:,i,:], color="red")
-end
-Plots.density!(pl, data; legend=false, xlim=(minimum(data), maximum(data)) )
-
-
-```
-#### Generative Model:
-
-$$
-\begin{equation*}
-\begin{aligned}
-\pi_1 &\sim \mathrm{Beta}(a, b) \\
-\pi_2 &= 1-\pi_1 \\
-\mu_1 &\sim \mathrm{Normal}(\mu_0, \Sigma_0) \\
-\mu_2 &\sim \mathrm{Normal}(\mu_0, \Sigma_0) \\
-z_i &\sim \mathrm{Categorical}(\pi_1, \pi_2) \\
-x_i &\sim \mathrm{Normal}(\mu_{z_i}, \Sigma)
-\end{aligned}
-\end{equation*}
-$$
-
-where π_i are mixing weights such they sum to 1
-and z_i is a latent assignment of observation x_i to class i
-
-```julia
-
-@model function two_model(x)
-  # Hyper-parameters
-  μ0 = 0.0
-  σ0 = 1.0
-
-  # Draw weights.
-  π1 ~ Beta(1, 1)
-  π2 = 1 - π1
-
-  # Draw locations of the components.
-  μ1 ~ Normal(μ0, σ0)
-  μ2 ~ Normal(μ0, σ0)
-
-  # Draw latent assignment.
-  z ~ Categorical([π1, π2])
-
-  # Draw observation from selected component.
-  if z == 1
-      x ~ Normal(μ1, 1.0)
-  else
-      x ~ Normal(μ2, 1.0)
-  end
-end
-
-```
-For large finite mixture models, it expands to:
-
-See also [https://turinglang.org/stable/tutorials/01-gaussian-mixture-model/]
-
-$$
-\begin{align}
-(\pi_1, \dots, \pi_K) &\sim Dirichlet(K, \alpha) \\
-\mu_k &\sim \mathrm{Normal}(\mu_0, \Sigma_0), \;\; \forall k \\
-z &\sim Categorical(\pi_1, \dots, \pi_K) \\
-x &\sim \mathrm{Normal}(\mu_z, \Sigma)
-\end{align}
-$$
-
-Require a generalization of Dirichlet for K = \Inf
-
-This is done by integrating out the weights:
-[https://groups.seas.harvard.edu/courses/cs281/papers/rasmussen-1999a.pdf]
-
-to provide the conditional prior for the latent z:
-
-$$
-p(z_i = k \mid z_{\not i}, \alpha) = \frac{n_k + \alpha K}{N - 1 + \alpha}
-$$
-
-where,  $z_{\not i}$  are the latent assignments of all observations except observation i
-$n_k$ are the number of observations at component/group k (excluding observation i). $\alpha$
-is the concentration parameter of the Dirichlet distribution (used as prior over the mixing weights).
-
-This gives the ("Chinese restaurant processes")[https://en.wikipedia.org/wiki/Chinese_restaurant_process]
-
-"
-a discrete-time stochastic process, analogous to seating customers at tables in a restaurant. Imagine a restaurant with an infinite number of circular tables, each with infinite capacity. Customer 1 sits at the first table. The next customer either sits at the same table as customer 1, or the next table. This continues, with each customer choosing to either sit at an occupied table with a probability proportional to the number of customers already there (i.e., they are more likely to sit at a table with many customers than few), or an unoccupied table. At time n, the n customers have been partitioned among m ≤ n tables (or blocks of the partition). The results of this process are exchangeable, meaning the order in which the customers sit does not affect the probability of the final distribution. This property greatly simplifies a number of problems in population genetics, linguistic analysis, and image recognition.
-
-The restaurant analogy first appeared in a 1985 write-up by David Aldous,[1] where it was attributed to Jim Pitman (who additionally credits Lester Dubins).[2]
-"
-
-Ultimately: it is a "rich get richer property" and the number of clusters is logarithmic in the number of observations and data points. This is a side-effect of the "rich-get-richer" phenomenon, i.e. we expect large clusters and thus the number of clusters has to be smaller than the number of observations.
-
-The conditional priors are respectively for n_k > 0 and all infinitely many empty clusters (combined)
-
-$$
-p(z_i = k \mid z_{\not i}, \alpha) = \frac{n_k}{N - 1 + \alpha} \\
-~ \\
-p(z_i = k \mid z_{\not i}, \alpha) = \frac{\alpha}{N - 1 + \alpha}
-$$
-
-The expected number of clusters or groups is approximated as:
-
-$$
-\mathbb{E}[K \mid N] \approx \alpha \cdot log \big(1 + \frac{N}{\alpha}\big)
-$$
-
-where, the concentration parameter $\alpha$ allows us to control the number of clusters formed a priori.
-
-```julia
-using Turing.RandomMeasures  #  nonparametric tools
-
-# Concentration parameter.
-α = 10.0
-
-# Random measure, e.g. Dirichlet process.
-rpm = Turing.RandomMeasures.DirichletProcess(α)
-
-# Cluster assignments for each observation.
-z = Vector{Int}()
-
-# Maximum number of observations we observe.
-Nmax = 500
-
-for i in 1:Nmax
-    # Number of observations per cluster.
-    K = isempty(z) ? 0 : maximum(z)
-    nk = Vector{Int}(map(k -> sum(z .== k), 1:K))
-
-    # Draw new assignment.
-    push!(z, rand(ChineseRestaurantProcess(rpm, nk)))
-end
-
-using Plots
-
-# Plot the cluster assignments over time 
-@gif for i in 1:Nmax
-    scatter(
-        collect(1:i),
-        z[1:i];
-        markersize=2,
-        xlabel="observation (i)",
-        ylabel="cluster (k)",
-        legend=false,
-    )
-end
-
-
-```
-The infinite process is as follows:
-
-```julia
-
-@model function infiniteGMM(x)
-    # Hyper-parameters, i.e. concentration parameter and parameters of H.
-    α = 1.0
-    μ0 = 0.0
-    σ0 = 1.0
-
-    # Define random measure, e.g. Dirichlet process.
-    rpm = Turing.RandomMeasures.DirichletProcess(α)
-
-    # Define the base distribution, i.e. expected value of the Dirichlet process.
-    H = Normal(μ0, σ0)
-
-    # Latent assignment.
-    z = tzeros(Int, length(x))
-
-    # Locations of the infinitely many clusters.
-    μ = tzeros(Float64, 0)
-
-    for i in 1:length(x)
-
-        # Number of clusters.
-        K = maximum(z)
-        nk = Vector{Int}(map(k -> sum(z .== k), 1:K))
-
-        # Draw the latent assignment.
-        z[i] ~ ChineseRestaurantProcess(rpm, nk)
-
-        # Create a new cluster?
-        if z[i] > K
-            push!(μ, 0.0)
-
-            # Draw location of new cluster.
-            μ[z[i]] ~ H
-        end
-
-        # Draw observation.
-        x[i] ~ Normal(μ[z[i]], 1.0)
-    end
-end 
-
- 
-# Generate some test data.
-Random.seed!(1)
-data = vcat(randn(10), randn(10) .- 5, randn(10) .+ 10)
-data .-= mean(data)
-data /= std(data);
-
-# MCMC sampling
-Random.seed!(2)
-iterations = 1000
-model_fun = infiniteGMM(data);
-chain = sample(model_fun, SMC(), iterations);
-
-# Extract the number of clusters for each sample of the Markov chain.
-k = map(
-    t -> length(unique(vec(chain[t, MCMCChains.namesingroup(chain, :z), :].value))),
-    1:iterations,
-);
-
-# Visualize the number of clusters.
-plot(k; xlabel="Iteration", ylabel="Number of clusters", label="Chain 1")
-```
-#### Finite mixtures model (Gaussian)
-
-https://turinglang.org/stable/tutorials/01-gaussian-mixture-model/
-
-https://mc-stan.org/users/documentation/case-studies/identifying_mixture_models.html
-
-we want to infer the mixture weights, the parameters \mu_i and the assignment of each datum to a cluster i
-
-standard normal distributions as priors for \mu and a Dirichlet distribution with parameters \alpha_i as prior for w
-
-$$
-\begin{align*}
-\mu_k &\sim \mathcal{N}(0, 1) \qquad (k = 1,\ldots,K) \\
-w &\sim \operatorname{Dirichlet}(\alpha_1, \ldots, \alpha_K) \\
-z_i &\sim \operatorname{Categorical}(w) \qquad (i = 1,\ldots,N), \\
-x_i &\sim \mathcal{N}([\mu_{z_i}, \mu_{z_i}]^\mathsf{T}, I) \qquad (i=1,\ldots,N).
-\end{align*}
-$$
-
-```julia
- 
-# Define Gaussian mixture model.
-
-w = [0.5, 0.5]
-μ = [-3.5, 0.5]
-mixturemodel = MixtureModel([MvNormal(Fill(μₖ, 2), I) for μₖ in μ], w)
-
-N = 60
-x = rand(mixturemodel, N);
-
-scatter(x[1, :], x[2, :]; legend=false, title="Synthetic Dataset")
-
-@model function gaussian_mixture_model(x)
-    # Draw the parameters for each of the K=2 clusters from a standard normal distribution.
-    K = 2
-    μ ~ MvNormal(Zeros(K), I)
-
-    # Draw the weights for the K clusters from a Dirichlet distribution with parameters αₖ = 1.
-    w ~ Dirichlet(K, 1.0)
-    # Alternatively, one could use a fixed set of weights.
-    # w = fill(1/K, K)
-
-    # Construct categorical distribution of assignments.
-    distribution_assignments = Categorical(w)
-
-    # Construct multivariate normal distributions of each cluster.
-    D, N = size(x)
-    distribution_clusters = [MvNormal(Fill(μₖ, D), I) for μₖ in μ]
-
-    # Draw assignments for each datum and generate it from the multivariate normal distribution.
-    k = Vector{Int}(undef, N)
-    for i in 1:N
-        k[i] ~ distribution_assignments
-        x[:, i] ~ distribution_clusters[k[i]]
-    end
-
-    return k
-end
-
-model = gaussian_mixture_model(x);
-
-sampler = Gibbs(PG(100, :k), HMC(0.05, 10, :μ, :w))
-chains = sample(model, sampler, 100);
-
-plot(chains[["μ[1]", "μ[2]"]]; colordim=:parameter, legend=true)
-
-chain = chains[:, :, 1];
-
-# Model with mean of samples as parameters.
-μ_mean = [mean(chain, "μ[$i]") for i in 1:2]
-w_mean = [mean(chain, "w[$i]") for i in 1:2]
-mixturemodel_mean = MixtureModel([MvNormal(Fill(μₖ, 2), I) for μₖ in μ_mean], w_mean)
-
-contour(
-    range(-7.5, 3; length=1_000),
-    range(-6.5, 3; length=1_000),
-    (x, y) -> logpdf(mixturemodel_mean, [x, y]);
-    widen=false,
-)
-
-assignments = [mean(chain, "k[$i]") for i in 1:N]
-scatter(
-    x[1, :],
-    x[2, :];
-    legend=false,
-    title="Assignments on Synthetic Dataset",
-    zcolor=assignments,
-)
- 
-```
-$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 ## Autocorrelation
 
-Autocorrelation models can also be seen as functional data smoothing algorithms and usually used as an arbitary pattern identification tools. However, the question needs to be asked, why, how much, and what kind, if at all should be used?
-
 Correlation and partial correlations between variables has already been discussed. Autocorrelation is a similar concept, except it expresses the correlation of a variable with itself, but across time (1-D), space (2-D or higher) or both. Self-correlation due to proximity in time and/or space is an important trait that sometimes (almost always?) prevents clear undertanding of overall inter-variable relationships, even in the best statistical designs that attempt to factor it out. As such they are usually considered nuisance factors, factors of no importance that need to be "controlled" in some fashion, by a good statistical sampling design.
 
-However, another way to treat autocorrelation is to embrace it, rather than factor it out. [Autoregressive models](https://en.wikipedia.org/wiki/Autoregressive_model) attempt to do this. This is because, in reality, these nuisance factors are, actually highly informative and actually facilitate understanding of the focal process(es) of interest. If carefully measured and treated, they can support more precise and accurate predictions. Recall, that in the case of snow crab, sampling is 1 part in 10 billion. Additional information helps to improve the scale of this sampling. Further, when they operate on spatiotemporal scales similar to those of the focal process(es) they can become highly influential such that ignoring them can cause poor precision and accuracy. As such, in the snow crab assessment, we embrace these factors rather than try to ignore all the variability in the processes that influence biota; herein we will refer to this as *ecosystem variability*. Examples of *ecosystem variability* in the marine context include the interactions of organisms with variations in ambient temperatures, light levels, pH, redox potential, salinity, food/nutrient availability, shelter space, predator abundance, disease prevalence, etc. Characterizing *ecosystem variability* is indeed difficult and time-consuming due to their numerous and interacting nature; however, as they, by definition, directly and indirectly influence a population's status, they cannot and should not be ignored. This is especially the case if this information pre-exists or is cheaper to sample extensively than the population density.
+However, another way to treat autocorrelation is to embrace it, rather than factor it out. [Autoregressive models](https://en.wikipedia.org/wiki/Autoregressive_model) attempt to do this. This is because, in reality, these nuisance factors are, actually highly informative and actually facilitate understanding of the focal process(es) of interest. If carefully measured and treated, they can support more precise and accurate predictions. As such,autocorrelation models can also be seen as functional data smoothing algorithms that integrate across all such factors, or simply used as an agnostic pattern identification approach. However, the question needs to be asked, why, how much, and what kind, if at all should be used?
+
+Recall, that in the case of snow crab, sampling is 1 part in 10 billion. Additional information helps to improve the scale of this sampling. Further, when they operate on spatiotemporal scales similar to those of the focal process(es) they can become highly influential such that ignoring them can cause poor precision and accuracy. As such, in the snow crab assessment, we embrace these factors rather than try to ignore all the variability in the processes that influence biota; herein we will refer to this as *ecosystem variability*. Examples of *ecosystem variability* in the marine context include the interactions of organisms with variations in ambient temperatures, light levels, pH, redox potential, salinity, food/nutrient availability, shelter space, predator abundance, disease prevalence, etc. Characterizing *ecosystem variability* is indeed difficult and time-consuming due to their numerous and interacting nature; however, as they, by definition, directly and indirectly influence a population's status, they cannot and should not be ignored. This is especially the case if this information pre-exists or is cheaper to sample extensively than the population density.
 
 Indeed, this *ecosystem variability* **induces** something very important: complex spatiotemporal autocorrelations in the abundance of the organism of interest (). As stated by *Tobler's First law of geography*: *everything is related to everything else, but near things are more related than distant things* (Tobler 1970). This of course applies to time as well. If it were not the case, then everywhere we look would be completely chaotic and discontinuous, without localized areas of homogeneity. Similar arguments can be made for time. As such, experimental design must pay careful attention to *ecosystem variability* and the spatiotemporal autocorrelation that they induce. If the strategy is to "block out" nuisance factors, then each such AU must also be independent of each other, that is, without spatial (and temporal) autocorrelation. If a survey's experimental design is inadequate to guarantee such independence between AUs, then an appropriate spatiotemporal model can be used to attempt to rectify these biases and begin the process of (1) iteratively improving the experimental design and/or (2) improving the data collection required to analytically correct any biases induced by *ecosystem variability.* This point of view, we will herein refer to as a *Lagrangian* perspective, one that perceives AUs as being more fluid in definition than the static *Cartesian* view identified previously.
 
@@ -6097,6 +2995,7 @@ pl
 ```
 #### Kernel density smoothing
 
+This technique is, in the naive form, used for histogram smoothing. However, underlying the approach is a more general concept of matrix convolution which has a direct relationship with autocorrelation models in that both use  (convolution) kernels to define the strength of local structure.    
 
 Source: [https://onlinecourses.science.psu.edu/stat510](https://onlinecourses.science.psu.edu/stat510)
 
@@ -6106,8 +3005,9 @@ $Y(s) = \{ y(s), s \in D \}$
 
 ${y} = \{ y(s_i), ... y(s_n) \}$
 
-Timeseries:
 
+##### Periodogram, spectral density and auto-covariance
+ 
 The periodogram is a sample estimate of a population function called the spectral density, which is a frequency domain characterization of a population stationary time series.  The spectral density is a frequency domain representation of a time series that is directly related to the autocovariance time domain representation.  In essence the spectral density and the autocovariance function contain the same information, but express it in different ways.
 
 [Review Note: The autocovariance is the numerator of the autocorrelation.  The autocorrelation is the autocovariance divided by the variance.]
@@ -6199,11 +3099,12 @@ coef[ 2] = 0.12500
 coef[ 3] = 0.06250
 coef[ 4] = 0.01563
 ```
+
 Thus the center values are weighted slightly more heavily than in the unmodified Daniell kernel.
 
 When we smooth a periodogram, we are smoothing across a frequency interval rather than a time interval.  Remember that the periodogram is determined at the fundamental frequencies ωj = j/n for j = 1, 2, …, n/2.  Let I(ωj ) denote the periodogram value at frequency ωj = j/n.  When we use a Daniell kernel with parameter m to smooth a periodogram, the smoothed value \(\hat{I}(\omega_j)\) is a weighted average of periodogram values for frequencies in the range (j-m)/n to (j+m)/n.
 
-##### Bandwidth
+##### Bandwidth choice
 
 There are L = 2m+1 fundamental frequency values in the range (j-m)/n to (j+m)/n, the range of values used for smoothing.  The bandwidth for the smoothed periodogram is defined as
 
@@ -6705,7 +3606,7 @@ title!("Bayesian Harmonic Decomposition: Original vs. Reconstructed")
 
 Using the above with Mauna Loa CO2 data
 
-```julia
+```{julia}
   
 function featurize_poly(Xin, degree=1)
     # add higher order polynomials
@@ -7055,7 +3956,7 @@ https://nbviewer.org/github/JuliaGaussianProcesses/AbstractGPs.jl/blob/gh-pages/
 
 Note: check out LaplaceRedux.jl and do a MAP version
 
-```julia
+```{julia}
   
 
 # download and save from: https://scrippsco2.ucsd.edu/data/atmospheric_co2/primary_mlo_co2_record.html
@@ -7433,7 +4334,7 @@ with constant offsets $\boldsymbol{O=}(o_{1},...,o_{S}\boldsymbol{)}$, if any; a
 
 Rapid visualization methods such as linear, or inverse-square distance weighted interpolation or simple spline-based smoothing attempt to address *Tobler's First law* in an *ad hoc* manner. However, these methods run a high risk of producing biased spatial patterns as they focus solely upon magnitude effects (first order) and/or make strong *ad hoc* assumptions such as the patterns of residual error or the location and order of inflection points. As producing biased estimates is anathema in stock assessments, naive application of these methods are not recommended as a tool for assessment and should only be used as quick visualization tools. Usually, as a result of the simplicity of the methods, time variation is also treated independently (i.e., totally ignored or at least the temporal autocorrelation is ignored).
 
-#### Static models
+#### Factorial models, ignoring autocorrelation
 
 Ignoring spatiotemporal autocorrelation altogether is perhaps the most frequently encountered approach. This might seem to be the simplest and assumption free. But it is actually the approach with the strongest assumptions on data; it assumes Tobler's First law is not applicable such that survey experimental design is static, always correct and unbiased and most precise. What this means is that snow crab are expected to be distributed inside of areal (i.e., 10  10 minute areal grid) and temporal units (5 minutes) in a regular manner while distributions between adjacent areal and temporal units are completely random and chaotic. These are, however, untenable assumptions as they are not supported by observations. Adjacent areal units and temporal units tend to be have some form of autocorrelation. Of course, one can still invoke the Central limit theorem, and some measure of central tendency of a random sample would provide an estimate of density and therefore overall abundance even in this situation. But the implicit assumptions are are actually not simple, though the explicit part of the model may be.
 
@@ -7480,7 +4381,7 @@ with $I_{S}$ an identity matrix of size $S$.
 
 This *spatial model*  also known as *kriging*, was used in the early snow crab assessments. However, it necessitated the repeated calculation of the autocorrelation function for each year (actually, the covariance matrix; see below). What was notable was that the form of the autocorrelation function was not constant. It varied due to variations in spatiotemporal abundance and distributions. Especially *alarming* was that it was not possible to obtain a reliable estimate of an autocorrelation function when densities and spatial distributions contracted (e.g. in 2005), a condition where in fact one needs more precise and accurate estimate, rather than less. Indeed, it was not clear if one should model the spatial autocorrelation function itself as a time-autocorrelated feature or to embed time autocorrelation to the model or simply to default to a time-averaged autocorrelation function (all were attempted).
 
-#### Space as an autocorrelated discrete neighbourhood process (I)CAR
+#### Space as a discrete neighbourhood (autocorrelated) process (I)CAR
 
 Also known as (Intrinsic) Conditional autoregressive (I)CAR models, the CAR model is an extension of the generalized regression model. The study region $D={D_{11},...,D_{U1},\dots,D_{UV}}$ is a set of $u=1,...,U$ areal units. Observations $\boldsymbol{Y}$ on such a set $D$, generally demonstrate spatial and temporal autocorrelation and can be modelled as the same extension of a Generalized linear model (Eq: [\[eq:basic_glm\]](#eq:basic_glm){reference-type="ref" reference="eq:basic_glm"}):
 
@@ -7622,12 +4523,10 @@ https://www.sciencedirect.com/science/article/abs/pii/S1877584518301175
 https://github.com/ConnorDonegan/Stan-IAR
 
 
-##### CAR with Turing (in Julia)
+##### (I)CAR - precision, sparse form
 
-This is a simple Julia implementation of a binomial CAR model.
-
-We use randomly generated data (created through R, to also show how to use RCall).
-
+This is a simple Julia implementation of a binomial (I)CAR model.
+ 
 ```{julia}
  
 # this file was saved from R  (above) .. import it
@@ -7704,9 +4603,10 @@ recovers sigma ~ 0.4
 rho : nn when distance <= 1 .. exp(-0.1 *1) = 0.94
  
 ```
-##### CAR with Turing example: analysis of Scottish Lip cancer, using Julia/Turing
 
-Small samples to check for model functionality.
+
+The next example is an example analysis of Scottish Lip cancer.
+
 
 ```{julia}
 
@@ -7884,276 +4784,7 @@ NOTE: Function not complete.
 
 
 ```
-##### Naive implementation
 
-```{julia}
-
-# using Turing, AbstractGPs, LinearAlgebra, SparseArrays, Distributions
-
-# --- Utility Functions for Precision Matrices ---
-
-# AR1 Precision Matrix
-function ar1_prec(n, ρ, τ)
-    Q = sparese(I, n, n)
-    for i in 2:n
-        Q[i, i] = 1 + ρ^2
-        Q[i-1, i] = Q[i, i-1] = -ρ
-    end
-    Q[1, 1] = Q[n, n] = 1
-    return τ * Q
-end
-
-# ICAR Precision Matrix (from Adjacency Matrix W)
-
-function icar_prec(W::AbstractMatrix, scaled=true)
-
-    n = size(W, 1)
-    # Create the ICAR precision matrix
-    D = Diagonal(sum(W, dims=2)[:])
-    Q = D - W
-  
-    if !scaled 
-      return sparse(Q)
-    end
-  
-    # Compute the generalized inverse (Moore-Penrose)
-    # We add a small jitter only for numerical stability during inversion,
-    # then apply the sum-to-zero constraint logic.
-    Σ = pinv(collect(Q))
-  
-    # Scale factor is the geometric mean of the diagonal of the covariance matrix
-    # This ensures the 'typical' variance of a node is 1.
-    scale_factor = exp(mean(log.(diag(Σ))))
-  
-    return Q * scale_factor
-end
-
-# Pre-calculate scaled precision for the model
-Q_scaled = scale_icar(W)
-
-
-# --- Turing Model Definition ---
-
-@model function model_s_st_bym2(y, a_idx, u_idx, group_idx, W, N_areas, N_times, Q_scaled)
-
-    # 1. AR1 Term 
-    ρ_a ~ Uniform(-1, 1)
-    τ_a ~ Gamma(1, 0.01)
-    Qa = ar1_prec(maximum(a_idx), ρ_a, τ_a)
-    a ~ MvNormal(zeros(size(Qa, 1)), inv(collect(Qa)))
-
-    # 2. BYM2 Term: ICAR + IID components
-    τ_u ~ Gamma(1, 0.01)
-    logit_ϕ_u ~ Normal(0, 1)
-    ϕ_u = logistic(logit_ϕ_u)
-  
-    Q_spatial = Q_scaled
-    # Note: Q_spatial is singular; typically add a small jitter or handle constraints
-    u_struc ~ MvNormal(zeros(N_areas), inv(collect(Q_spatial + 1e-6I)))
-    u_iid ~ MvNormal(zeros(N_areas), I)
-    u_combined = (sqrt(ϕ_u) .* u_struc .+ sqrt(1 - ϕ_u) .* u_iid) ./ sqrt(τ_u)
-
-    # 3. Spatio-temporal: Kronecker product of Spatial (BYM2) and Temporal (AR1)
-    ρ_v ~ Uniform(-1, 1)
-    τ_v ~ Gamma(1, 0.01)
-    # We simplify this as a grouped effect for memory efficiency
-    v_raw ~ filldist(MvNormal(zeros(N_areas), I), N_times)
-    v = Vector{Vector{Float64}}(undef, N_times)
-    v[1] = v_raw[1] ./ sqrt(τ_v)
-    for t in 2:N_times
-        v[t] = ρ_v .* v[t-1] .+ v_raw[t] ./ sqrt(τ_v)
-    end
-
-    # 4. Likelihood
-    σ ~ Exponential(1)
-    for i in eachindex(y)
-        mu = a[a_idx[i]] + u_combined[u_idx[i]] + v[group_idx[i]][u_idx[i]]
-        y[i] ~ Normal(mu, σ)
-    end
-end
-
-
-model = model_s_st_bym2(y, a_indices, u_indices, w_indices, W, N_areas, N_times)
-
-chain = sample(model, NUTS(), 1000)
-
-
-
-# Plotting the posterior distributions
-p1 = density(chain[:ρ_a], title="Recovery: ρ_a (True=0.8)", label="Posterior")
-vline!([0.8], label="True Value", color=:red, lw=2)
-
-p2 = density(logistic.(chain[:logit_ϕ_u]), title="Recovery: ϕ_u (True=0.7)", label="Posterior")
-vline!([0.7], label="True Value", color=:red, lw=2)
-
-p3 = density(chain[:ρ_v], title="Recovery: ρ_v (True=0.5)", label="Posterior")
-vline!([0.5], label="True Value", color=:red, lw=2)
-
-plot(p1, p2, p3, layout=(3,1), size=(800, 900))
-
-
-```
-
-##### As a GP (Discrete)
-
-- slow
-
-- AbstractGPs (Covariance): O(N^3) inverting dense covariance matrices
-- AR1 Process: A discrete AR(1) process is equivalent to a GP with a Matérn-1/2 Kernel (exponential decay) defined over integer time steps.
-- BYM2 Spatial: A mixture of an unstructured component (White Noise) and a structured component (ICAR/Graph). Define a custom GraphKernel derived from the graph Laplacian pseudo-inverse and summing it with a WhiteKernel GP.
-
-$$
-k_{bym2} = \sigma^2[(1-\phi)I + \phi Q^{-1}]
-$$
-
-Spatio-Temporal: A separable space-time structure via a Tensor Product Kernel:
-
-$$
-k_{st} = k_{time} \otimes k_{space}
-$$
-
-Where KernelFunctions.TensorProduct is used for the Kronecker product such that:
-
-$$
-k((x1, y1), (x2, y2)) = k1(x1, x2) * k2(y1, y2)
-$$
-
-```{julia}
-using Turing
-using AbstractGPs
-using KernelFunctions
-using LinearAlgebra
-using SparseArrays
-using Graphs
-
-# 1. Custom Graph Kernel for AbstractGPs (The "Structure" of BYM2)
-# AbstractGPs works best with covariance functions. 
-# For the "structured" part of BYM2 (ICAR), we use the pseudo-inverse of the Laplacian.
-struct GraphKernel{T<:AbstractMatrix} <: Kernel
-    C::T # The pseudo-inverse of the Laplacian (Covariance Matrix)
-end
-
-# Kernel evaluation: Simply look up the covariance between node i and node j
-# Inputs x and y are integer indices of the graph nodes
-(k::GraphKernel)(x::Integer, y::Integer) = k.C[x, y]
-
-# Helper to build the GraphKernel from an Adjacency Matrix
-function build_graph_kernel(adj_mat::AbstractMatrix; scale_model=true)
-    # 1. Compute Laplacian: D - W
-    degrees = vec(sum(adj_mat, dims=2))
-    Q = Diagonal(degrees) - adj_mat
-  
-    # 2. Compute Pseudo-Inverse (Covariance of ICAR)
-    # We add a tiny jitter for stability or use pinv
-    # INLA's "scale.model=TRUE" standardizes the generalized variance to 1.
-    Q_inv = pinv(Matrix(Q)) 
-  
-    if scale_model
-        # Geometric mean of diagonal variances
-        gmean_var = exp(mean(log.(diag(Q_inv))))
-        Q_inv ./= gmean_var
-    end
-  
-    return GraphKernel(Q_inv)
-end
-
-
- 
-
-@model function model_basic_gp(y, a_idx, u_idx, v_time, v_space, adj)
-
-# Data inputs:
-# y: Observations
-# a_idx: Indices for AR1 factor 'a' (1..T)
-# u_idx: Indices for Spatial factor 'u' (1..N_nodes)
-# v_time: Indices for Spatio-temporal time 'w' (1..T_groups)
-# v_space: Indices for Spatio-temporal space 'v' (1..N_nodes)
-# adj: Adjacency matrix for the spatial graph
-  
-    # --- 1. Pre-computation (Graph Structure) ---
-    # Create the structured spatial kernel from the graph
-    k_graph = build_graph_kernel(adj; scale_model=true)
-  
-    # --- 2. Hyperparameters ---
-  
-    # f(a, model="ar1"): Autoregressive parameter and variance
-    σ_a ~ truncated(Normal(0, 1), 0, Inf)
-    ρ_a ~ Uniform(0, 1) # Correlation for AR1
-    # Transform rho to lengthscale for Matern1/2: rho = exp(-1/l) -> l = -1/log(rho)
-    l_a = -1 / log(ρ_a) 
-  
-    # f(u, model="bym2"): Spatial Mixing (phi) and Marginal Variance (sigma)
-    σ_u ~ truncated(Normal(0, 1), 0, Inf)
-    ϕ_u ~ Beta(1, 1) # Mixing parameter (0=IID, 1=ICAR)
-  
-    # f(v, model="bym2", group=w...): Spatio-temporal Hyperparameters
-    σ_v ~ truncated(Normal(0, 1), 0, Inf)
-    ϕ_v ~ Beta(1, 1) # Spatial mixing for v
-    ρ_v ~ Uniform(0, 1) # Temporal AR1 correlation for v
-    l_v = -1 / log(ρ_v)
-  
-    # Observation Noise
-    σ_y ~ truncated(Normal(0, 1), 0, Inf)
-
-    # --- 3. GP Definitions (The "f(...)" terms) ---
-  
-    # Component A: AR1 process
-    # Equivalent to Matern12 kernel on integer inputs
-    kernel_a = σ_a^2 * (Matern12Kernel() ∘ ScaleTransform(1/l_a))
-    gp_a = GP(kernel_a)
-    f_a ~ gp_a(a_idx, 1e-6) # Latent AR1 vector
-  
-    # Component U: BYM2 Spatial
-    # BYM2 = (1-ϕ)*IID + ϕ*ICAR
-    # We construct this by summing kernels:
-    # k_bym2 = σ^2 * ( (1-ϕ)*WhiteKernel + ϕ*GraphKernel )
-    kernel_u = σ_u^2 * ( 
-        (1 - ϕ_u) * WhiteKernel() + 
-        ϕ_u * k_graph 
-    )
-    gp_u = GP(kernel_u)
-    f_u ~ gp_u(u_idx, 1e-6) # Latent Spatial vector
-
-    # Component V: Spatio-Temporal (Group AR1 x BYM2)
-    # Separable Kernel: k_total = k_time ⊗ k_space
-    kernel_v_time = Matern12Kernel() ∘ ScaleTransform(1/l_v)
-    kernel_v_space = σ_v^2 * ( (1 - ϕ_v) * WhiteKernel() + ϕ_v * k_graph )
-  
-    # Tensor Product: We combine inputs (time, space)
-    # AbstractGPs doesn't have a native "TensorKernel" in the public API easily accessible 
-    # for mixed types without KernelFunctions.TensorProduct.
-    # Strategy: We evaluate the kernel matrix manually for the V component to be safe,
-    # or use the KernelFunctions `TensorProduct` if inputs are zipped.
-  
-    # Let's stick to the AbstractGPs way by defining the kernel on the zipped inputs:
-    # Input for V is a vector of Tuples: [(t1, s1), (t2, s2), ...]
-    kernel_v = kernel_v_time ⊗ kernel_v_space 
-    gp_v = GP(kernel_v)
-  
-    # Construct inputs for V (Vector of Tuples)
-    v_inputs = ColVecs(vcat(v_time', v_space')) # dim 1 = time, dim 2 = space
-    f_v ~ gp_v(v_inputs, 1e-6)
-
-    # --- 4. Likelihood ---
-    # y ~ Intercept + f(a) + f(u) + f(v)
-    # Note: We need to map the latent vectors f_a, f_u, f_v to the observation indices of y.
-    # Assuming y is aligned such that y[i] corresponds to a specific a, u, and v index.
-    # If y is the raw data length, we map the effects:
-  
-    mu = f_a[a_idx] + f_u[u_idx] + f_v # Assuming f_v is already same length as y
-  
-    y ~ MvNormal(mu, σ_y^2 * I)
-end
- 
-  
-y_data, a_data, u_data, v_grid_time, v_grid_space, adj = example_data("basic_gp")
-
-model = model_basic_gp(y_data, a_data, u_data, v_grid_time, v_grid_space, adj)
-
-chain = sample(model, NUTS(), 1000)
-
-
-```
 ##### CAR with INLA (in R)
 
 This is an example using INLA to compute the spatial random effects.
@@ -9241,7 +5872,124 @@ Autocorrelation function-based methods assume first and second order
 stationarity, that is, the mean and variance is stable and constant
 across the whole spatial domain. They are also quite slow to compute.
 
-##### As a GP (continuous)
+##### Standard kriging with external drift
+
+Kriging uses the independently estimated or assumed autocorrelation (autocovariance) structure to constrain interpolation. 
+
+```{julia}
+
+# Using GeoStats
+
+# Generate Synthetic Spatial Data
+# Define a 2D domain
+N = 50 # grid resolution
+min_coord = 0.0
+max_coord = 10.0
+domain = RegularGrid((N, N), (min_coord, min_coord), (max_coord / N, max_coord / N))
+
+# Define a true underlying field with a linear trend (drift) and spatially correlated noise
+# True drift function: z = 1.0 * x + 0.5 * y + 5.0
+# For simplicity, we'll generate the noise separately and add it.
+
+# Generate noise with a known spatial correlation (e.g., Gaussian variogram)
+noisegen = simulator((x,y) -> randn(), domain, GaussianVariogram(range=2.0), 1)
+noise_field = GeoStats.simulate(noisegen)
+
+# Create the true field by adding drift and noise
+true_field_values = Vector{Float64}(undef, npoints(domain))
+for i in 1:npoints(domain)
+    x, y = coordinates(domain, i)
+    true_field_values[i] = (1.0 * x + 0.5 * y + 5.0) + noise_field[i]
+end
+
+# Store the true field in a GeoStats object
+true_field = georef((; z = true_field_values), domain)
+
+# Sample some observation points from the true field
+num_observations = 100
+obs_indices = sample(1:npoints(domain), num_observations, replace=false)
+
+data_coords = hcat([coordinates(domain, i) for i in obs_indices]...)
+data_values = true_field_values[obs_indices]
+
+# Create a SpatialData object from the observations
+observations = georef((; z = data_values, x=data_coords[1,:], y=data_coords[2,:]), data_coords)
+
+println("Synthetic data generated:")
+display(observations)
+
+# Define the External Drift and Perform Kriging
+
+# We define the external drift function which will be used by the Kriging estimator. In this example, we use the `x` and `y` coordinates directly as covariates for a linear drift. We then specify a variogram model and use `Kriging` with the `ExternalDrift` option.
+ 
+# Define the external drift function
+# This function takes the coordinates and returns the drift components
+# For a linear drift in x and y, we return [1, x, y]
+# The '1' accounts for the intercept (constant drift component).
+external_drift_func(x, y) = [1.0, x, y]
+
+# Create an ExternalDrift object
+drift = ExternalDrift(external_drift_func, [:x, :y])
+
+# Define a variogram model for the residual (after removing drift)
+# We'll use a Gaussian variogram, typical for continuous phenomena
+variogram = GaussianVariogram(sill=1.0, range=2.0, nugget=0.1)
+
+# Create a GeoStats problem for estimation
+problem = EstimationProblem(observations, domain, :z)
+
+# Solve the problem using Kriging with External Drift
+# We pass the variogram and the drift to the Kriging solver
+solution = solve(problem, Kriging(:z => (variogram, drift)))
+
+println("Kriging with External Drift completed. Solution details:")
+display(solution)
+
+# Visualize the Results
+
+We can visualize the observed data, the true underlying field, the kriged mean (our prediction), and the kriged variance (uncertainty of the prediction).
+
+
+# Extract predicted mean and variance
+mean_map = solution[:zmean]
+variance_map = solution[:zvariance]
+
+# Reshape for plotting
+x_coords = LinRange(min_coord, max_coord, N)
+y_coords = LinRange(min_coord, max_coord, N)
+
+# Plotting functions
+function plot_map(data, title_str)
+    plot_data = reshape(data, N, N)
+    heatmap(x_coords, y_coords, plot_data, 
+            c = :viridis, 
+            aspect_ratio = :equal, 
+            title = title_str,
+            xlabel = "X", ylabel = "Y", 
+            xlims=(min_coord, max_coord), ylims=(min_coord, max_coord))
+end
+
+# Plot true field
+p1 = plot_map(true_field_values, "True Underlying Field")
+scatter!(p1, observations[:x], observations[:y], marker_z = observations[:z], 
+         color = :reds, markersize = 3, label = "Observations", legend = :topleft)
+
+# Plot Kriging mean
+p2 = plot_map(mean_map, "Kriging Mean (Prediction)")
+scatter!(p2, observations[:x], observations[:y], marker_z = observations[:z], 
+         color = :reds, markersize = 3, label = "Observations", legend = :topleft)
+
+# Plot Kriging variance
+p3 = plot_map(variance_map, "Kriging Variance (Uncertainty)")
+
+# Combine plots
+plot(p1, p2, p3, layout = (1, 3), size = (1800, 600))
+
+
+```
+
+
+##### Gaussian Process (spatial, no covariates)
 
 Kriging is equivalent to the following GP:
 
@@ -9269,9 +6017,7 @@ where $d (i, j)$ is the spatial distance between sites $i$ and $j$,
 $\lambda$ is a length-scale parameter, and $\alpha^2$ is a parameter
 controlling the magnitude of the covariance $\Sigma$.
 
-##### Example: spatial gaussian process (~ kriging)
 
-Gussian process only for space, no covariates
 
 ```{julia}
 
@@ -9284,8 +6030,6 @@ Gussian process only for space, no covariates
 Xstar = reshape( data.xvar, nData, 1)   # vec to matrix
 
 D = pairwise(Distances.Euclidean(), Xstar, dims=1) # Distance matrix GP
-
-Random.seed!(0)
 
 Turing.@model function gaussian_process_basic(; Y, D, cov_fn=exp_cov_fn, nData=length(Y) )
     mu ~ Normal(0.0, 1.0); # mean process
@@ -9340,7 +6084,10 @@ The predictions are reasonable though not perfect as there is more than just a G
 
 NOTE: initial conditions need to be specified to avoid starting from a non PD setting.
 
-##### Example: spatial gaussian process with multiple covariates (~ kriging with external drift)
+##### Gaussian Process (spatial, multiple covariates)
+
+This is essentially kriging with external drift.
+
 
 ```{julia}
  
@@ -9416,7 +6163,7 @@ pl = plot!( vec(data.xvar), sin.(vec(data.xvar)) .+ mean(data.yvar) , label="Lat
 
 
 ```
-##### 1. ApproximateGPs Implementation
+##### Gaussian Process Aproximation (ApproximateGPs)
 
 - O(M^2 N)
 - Euclidean (Coordinates) and not areal units/graphs
@@ -9475,7 +6222,7 @@ end
 
 
 ```
-##### 2. The ApproximateGPs Model (SVGP)
+##### Gaussian Approximation: ApproximateGP SVGP
 
 ```{julia}
 
@@ -9579,7 +6326,7 @@ end
 
 
 ```
-##### 3. Flux-Optimization (Mini-batch) Implentation
+##### Gaussian Process with Flux-Optimization (Mini-batch) 
 
 Before training, it is good practice to check the variance of your target.
 
@@ -9739,7 +6486,7 @@ end
 
 
 ```
-#### Spectral
+#### Spectral approximation (2-D FFT)
 
 Spatial FFT 2D approximation of covariance
 
@@ -10194,11 +6941,11 @@ algorithm as follows (copied from stmv__fft.R)
   # lattice::levelplot( mean ~ plon + plat, data=pa, col.regions=heat.colors(100), scale=list(draw=TRUE) , aspect="iso" )
 ```
 
-### 1-D (time) and 2-D (space) -- Stationary spatiotemporal models
+### 3-D (time and space) -- Stationary spatiotemporal models
 
 So far, the models have used only a representation of the spatial autocorrelation. Most biological features such as abundance are, however, variable not only in space but also in time. Just as space can be modelled as an autocorrelated process, so too can time. However, due to the brevity of most biological time-series, a full and reliable temporal autocorrelation function cannot normally be defined/estimated. Instead, an operational extraction of a few components, namely, an annual and possibly a seasonal component can provide some information and constraints upon the residual temporal errors. The simplest such model utilizes a single spatial autocorrelation function of the full domain and a single (separable, additive) temporal autocorrelation parameter or function (if there is sufficient time-series data).
 
-#### Spatial model example: snow crab
+#### Example: snow crab
 
 Snow crab demonstrate clustered aggregations in space and time. This means that the residual error inside each area-time unit will not be *iid*, *apriori*. Furthermore, areal units closer together tend to be more similar than those more distant; and samples in a given time unit will also show correlation. The first attempts at snow crab abundance estimation were developed with a focus upon the spatial component of the residual error. In terms of the model formulation, it is an incremental extension to the *simple model*   
 
@@ -10231,7 +6978,7 @@ The non-spatial component for each year $\varepsilon_{t}$ represents measurement
 
 This *Spatial Gaussian process model* also known as *kriging* and was used in the early snow crab assessments. However, it necessitated the repeated calculation of the autocorrelation function for each year (actually, the covariance matrix; see below). What was notable was that the form of the autocorrelation function was not constant. It varied due to variations in spatiotemporal abundance and distributions. Especially *alarming* was that it was not possible to obtain a reliable estimate of an autocorrelation function when densities and spatial distributions contracted (e.g. in 2005), a condition where in fact one needs more precise and accurate estimate, rather than less. Indeed, it was not clear if one should model the spatial autocorrelation function itself as a time-autocorrelated feature or to embed time autocorrelation to the model or simply to default to a time-averaged autocorrelation function (all were attempted).
 
-#### 2-D Hurdle binomial and lognormal
+#### 3-D Hurdle binomial and lognormal
 
 The addition of spatial autocorrelation improves our understanding of the influence a station has over its immediate environment and how it decays with distance based on variance characteristics. In this way, it is an incremental improvement over a non-spatial model. However, the assumption of the former model is that the unstructured error is $\varepsilon\overset{iid}{\sim}\text{N}(0,\sigma_{\varepsilon}^{2})$. Unfortunately, snow crab data distribution suggest that the error is non-Gaussian; it is perhaps closer to a logarithmic distribution. This is due to in a large part, to spatial aggregations arising from behavioral factors such as mating clusters, predator avoidance, foraging upon patchy food distributions and habitat constraints such as temperature limitations and substrate availability, what we naively call *ecosystem variability*. The outcome of such spatial aggregations is that the *numerical* distribution of abundance sampled in a grid-like or any naive experimental design will also be *non-Gaussian*. Most samples will miss the aggregations leading to many samples being low density locations and a rarer and and rarer number of stations with high density aggregations.
 
@@ -10295,6 +7042,278 @@ where the error process is decomposed into a spatiotemporal structured component
 Each of the various errors and parameters can have similar complexities which leads to rather extraordinary expressiveness and equally extraordinary computational requirements. While conceptually coherent and elegant, the evaluation of the likelihoods in theses models requires the repeated computation of the inverse of the covariance matrix $\Sigma_{n\times n}$, an operation that scales with $\mathcal{O}(n^{3})$ operations. This has been a bottleneck to further development and use of these covariance-based methods in large scaled problems of space and space-time. Approximations have been suggested to overcome this computational limit: modelling the spatial process $\omega$ with a lower dimensional process via kernel convolutions, moving averages, low rank splines/basis functions and predictive processes (projection of spatial process onto a smaller subset; Sølna and Switzer 1996, Wikle and Cressie 1999, Hung et al. 2004, Xu et al. 2005, Banerjee et al. 2004); approximating the spatial process as a Markov random field with Laplace and SPDE Approximations (Lindgren and Rue 2015); and approximating the likelihood of the spatiotemporal SPDE process with a spectral domain process (Sigrist et al. 2012).
 
 Separable models are almost always used for the sake of computational speed as this treats space and time independently, reducing the problems crudely from $\mathcal{O}((ST)^{3})$ to $\mathcal{O}(S^{3})+\mathcal{O}(T^{3})$ operations; where $S$ is the number of spatial locations and T the number of time slices. In reality, however, such separable models are usually inappropriate unless the study area is homogeneous and truly first and second order constant (i.e., constant mean, variance) across both time and space, a fact that is seldom true in most ecological systems. This is notoriously the case with biology where aggregation and behavior is highly clustered and context (location and time) dependent (non-linear/non-additive). There are discontinuities in space and time due to landscape, species collapse, invasions, etc.
+
+
+##### Naive implementation sparse, precision form
+
+```{julia}
+
+# using Turing, AbstractGPs, LinearAlgebra, SparseArrays, Distributions
+
+# --- Utility Functions for Precision Matrices ---
+
+# AR1 Precision Matrix
+function ar1_prec(n, ρ, τ)
+    Q = sparese(I, n, n)
+    for i in 2:n
+        Q[i, i] = 1 + ρ^2
+        Q[i-1, i] = Q[i, i-1] = -ρ
+    end
+    Q[1, 1] = Q[n, n] = 1
+    return τ * Q
+end
+
+# ICAR Precision Matrix (from Adjacency Matrix W)
+
+function icar_prec(W::AbstractMatrix, scaled=true)
+
+    n = size(W, 1)
+    # Create the ICAR precision matrix
+    D = Diagonal(sum(W, dims=2)[:])
+    Q = D - W
+  
+    if !scaled 
+      return sparse(Q)
+    end
+  
+    # Compute the generalized inverse (Moore-Penrose)
+    # We add a small jitter only for numerical stability during inversion,
+    # then apply the sum-to-zero constraint logic.
+    Σ = pinv(collect(Q))
+  
+    # Scale factor is the geometric mean of the diagonal of the covariance matrix
+    # This ensures the 'typical' variance of a node is 1.
+    scale_factor = exp(mean(log.(diag(Σ))))
+  
+    return Q * scale_factor
+end
+
+# Pre-calculate scaled precision for the model
+Q_scaled = scale_icar(W)
+
+
+# --- Turing Model Definition ---
+
+@model function model_s_st_bym2(y, a_idx, u_idx, group_idx, W, N_areas, N_times, Q_scaled)
+
+    # 1. AR1 Term 
+    ρ_a ~ Uniform(-1, 1)
+    τ_a ~ Gamma(1, 0.01)
+    Qa = ar1_prec(maximum(a_idx), ρ_a, τ_a)
+    a ~ MvNormal(zeros(size(Qa, 1)), inv(collect(Qa)))
+
+    # 2. BYM2 Term: ICAR + IID components
+    τ_u ~ Gamma(1, 0.01)
+    logit_ϕ_u ~ Normal(0, 1)
+    ϕ_u = logistic(logit_ϕ_u)
+  
+    Q_spatial = Q_scaled
+    # Note: Q_spatial is singular; typically add a small jitter or handle constraints
+    u_struc ~ MvNormal(zeros(N_areas), inv(collect(Q_spatial + 1e-6I)))
+    u_iid ~ MvNormal(zeros(N_areas), I)
+    u_combined = (sqrt(ϕ_u) .* u_struc .+ sqrt(1 - ϕ_u) .* u_iid) ./ sqrt(τ_u)
+
+    # 3. Spatio-temporal: Kronecker product of Spatial (BYM2) and Temporal (AR1)
+    ρ_v ~ Uniform(-1, 1)
+    τ_v ~ Gamma(1, 0.01)
+    # We simplify this as a grouped effect for memory efficiency
+    v_raw ~ filldist(MvNormal(zeros(N_areas), I), N_times)
+    v = Vector{Vector{Float64}}(undef, N_times)
+    v[1] = v_raw[1] ./ sqrt(τ_v)
+    for t in 2:N_times
+        v[t] = ρ_v .* v[t-1] .+ v_raw[t] ./ sqrt(τ_v)
+    end
+
+    # 4. Likelihood
+    σ ~ Exponential(1)
+    for i in eachindex(y)
+        mu = a[a_idx[i]] + u_combined[u_idx[i]] + v[group_idx[i]][u_idx[i]]
+        y[i] ~ Normal(mu, σ)
+    end
+end
+
+
+model = model_s_st_bym2(y, a_indices, u_indices, w_indices, W, N_areas, N_times)
+
+chain = sample(model, NUTS(), 1000)
+
+
+
+# Plotting the posterior distributions
+p1 = density(chain[:ρ_a], title="Recovery: ρ_a (True=0.8)", label="Posterior")
+vline!([0.8], label="True Value", color=:red, lw=2)
+
+p2 = density(logistic.(chain[:logit_ϕ_u]), title="Recovery: ϕ_u (True=0.7)", label="Posterior")
+vline!([0.7], label="True Value", color=:red, lw=2)
+
+p3 = density(chain[:ρ_v], title="Recovery: ρ_v (True=0.5)", label="Posterior")
+vline!([0.5], label="True Value", color=:red, lw=2)
+
+plot(p1, p2, p3, layout=(3,1), size=(800, 900))
+
+
+```
+
+##### As a GP (Discrete)
+
+- slow
+
+- AbstractGPs (Covariance): O(N^3) inverting dense covariance matrices
+- AR1 Process: A discrete AR(1) process is equivalent to a GP with a Matérn-1/2 Kernel (exponential decay) defined over integer time steps.
+- BYM2 Spatial: A mixture of an unstructured component (White Noise) and a structured component (ICAR/Graph). Define a custom GraphKernel derived from the graph Laplacian pseudo-inverse and summing it with a WhiteKernel GP.
+
+$$
+k_{bym2} = \sigma^2[(1-\phi)I + \phi Q^{-1}]
+$$
+
+Spatio-Temporal: A separable space-time structure via a Tensor Product Kernel:
+
+$$
+k_{st} = k_{time} \otimes k_{space}
+$$
+
+Where KernelFunctions.TensorProduct is used for the Kronecker product such that:
+
+$$
+k((x1, y1), (x2, y2)) = k1(x1, x2) * k2(y1, y2)
+$$
+
+```{julia}
+using Turing
+using AbstractGPs
+using KernelFunctions
+using LinearAlgebra
+using SparseArrays
+using Graphs
+
+# 1. Custom Graph Kernel for AbstractGPs (The "Structure" of BYM2)
+# AbstractGPs works best with covariance functions. 
+# For the "structured" part of BYM2 (ICAR), we use the pseudo-inverse of the Laplacian.
+struct GraphKernel{T<:AbstractMatrix} <: Kernel
+    C::T # The pseudo-inverse of the Laplacian (Covariance Matrix)
+end
+
+# Kernel evaluation: Simply look up the covariance between node i and node j
+# Inputs x and y are integer indices of the graph nodes
+(k::GraphKernel)(x::Integer, y::Integer) = k.C[x, y]
+
+# Helper to build the GraphKernel from an Adjacency Matrix
+function build_graph_kernel(adj_mat::AbstractMatrix; scale_model=true)
+    # 1. Compute Laplacian: D - W
+    degrees = vec(sum(adj_mat, dims=2))
+    Q = Diagonal(degrees) - adj_mat
+  
+    # 2. Compute Pseudo-Inverse (Covariance of ICAR)
+    # We add a tiny jitter for stability or use pinv
+    # INLA's "scale.model=TRUE" standardizes the generalized variance to 1.
+    Q_inv = pinv(Matrix(Q)) 
+  
+    if scale_model
+        # Geometric mean of diagonal variances
+        gmean_var = exp(mean(log.(diag(Q_inv))))
+        Q_inv ./= gmean_var
+    end
+  
+    return GraphKernel(Q_inv)
+end
+
+
+ 
+
+@model function model_basic_gp(y, a_idx, u_idx, v_time, v_space, adj)
+
+# Data inputs:
+# y: Observations
+# a_idx: Indices for AR1 factor 'a' (1..T)
+# u_idx: Indices for Spatial factor 'u' (1..N_nodes)
+# v_time: Indices for Spatio-temporal time 'w' (1..T_groups)
+# v_space: Indices for Spatio-temporal space 'v' (1..N_nodes)
+# adj: Adjacency matrix for the spatial graph
+  
+    # --- 1. Pre-computation (Graph Structure) ---
+    # Create the structured spatial kernel from the graph
+    k_graph = build_graph_kernel(adj; scale_model=true)
+  
+    # --- 2. Hyperparameters ---
+  
+    # f(a, model="ar1"): Autoregressive parameter and variance
+    σ_a ~ truncated(Normal(0, 1), 0, Inf)
+    ρ_a ~ Uniform(0, 1) # Correlation for AR1
+    # Transform rho to lengthscale for Matern1/2: rho = exp(-1/l) -> l = -1/log(rho)
+    l_a = -1 / log(ρ_a) 
+  
+    # f(u, model="bym2"): Spatial Mixing (phi) and Marginal Variance (sigma)
+    σ_u ~ truncated(Normal(0, 1), 0, Inf)
+    ϕ_u ~ Beta(1, 1) # Mixing parameter (0=IID, 1=ICAR)
+  
+    # f(v, model="bym2", group=w...): Spatio-temporal Hyperparameters
+    σ_v ~ truncated(Normal(0, 1), 0, Inf)
+    ϕ_v ~ Beta(1, 1) # Spatial mixing for v
+    ρ_v ~ Uniform(0, 1) # Temporal AR1 correlation for v
+    l_v = -1 / log(ρ_v)
+  
+    # Observation Noise
+    σ_y ~ truncated(Normal(0, 1), 0, Inf)
+
+    # --- 3. GP Definitions (The "f(...)" terms) ---
+  
+    # Component A: AR1 process
+    # Equivalent to Matern12 kernel on integer inputs
+    kernel_a = σ_a^2 * (Matern12Kernel() ∘ ScaleTransform(1/l_a))
+    gp_a = GP(kernel_a)
+    f_a ~ gp_a(a_idx, 1e-6) # Latent AR1 vector
+  
+    # Component U: BYM2 Spatial
+    # BYM2 = (1-ϕ)*IID + ϕ*ICAR
+    # We construct this by summing kernels:
+    # k_bym2 = σ^2 * ( (1-ϕ)*WhiteKernel + ϕ*GraphKernel )
+    kernel_u = σ_u^2 * ( 
+        (1 - ϕ_u) * WhiteKernel() + 
+        ϕ_u * k_graph 
+    )
+    gp_u = GP(kernel_u)
+    f_u ~ gp_u(u_idx, 1e-6) # Latent Spatial vector
+
+    # Component V: Spatio-Temporal (Group AR1 x BYM2)
+    # Separable Kernel: k_total = k_time ⊗ k_space
+    kernel_v_time = Matern12Kernel() ∘ ScaleTransform(1/l_v)
+    kernel_v_space = σ_v^2 * ( (1 - ϕ_v) * WhiteKernel() + ϕ_v * k_graph )
+  
+    # Tensor Product: We combine inputs (time, space)
+    # AbstractGPs doesn't have a native "TensorKernel" in the public API easily accessible 
+    # for mixed types without KernelFunctions.TensorProduct.
+    # Strategy: We evaluate the kernel matrix manually for the V component to be safe,
+    # or use the KernelFunctions `TensorProduct` if inputs are zipped.
+  
+    # Let's stick to the AbstractGPs way by defining the kernel on the zipped inputs:
+    # Input for V is a vector of Tuples: [(t1, s1), (t2, s2), ...]
+    kernel_v = kernel_v_time ⊗ kernel_v_space 
+    gp_v = GP(kernel_v)
+  
+    # Construct inputs for V (Vector of Tuples)
+    v_inputs = ColVecs(vcat(v_time', v_space')) # dim 1 = time, dim 2 = space
+    f_v ~ gp_v(v_inputs, 1e-6)
+
+    # --- 4. Likelihood ---
+    # y ~ Intercept + f(a) + f(u) + f(v)
+    # Note: We need to map the latent vectors f_a, f_u, f_v to the observation indices of y.
+    # Assuming y is aligned such that y[i] corresponds to a specific a, u, and v index.
+    # If y is the raw data length, we map the effects:
+  
+    mu = f_a[a_idx] + f_u[u_idx] + f_v # Assuming f_v is already same length as y
+  
+    y ~ MvNormal(mu, σ_y^2 * I)
+end
+ 
+  
+y_data, a_data, u_data, v_grid_time, v_grid_space, adj = example_data("basic_gp")
+
+model = model_basic_gp(y_data, a_data, u_data, v_grid_time, v_grid_space, adj)
+
+chain = sample(model, NUTS(), 1000)
+
+
+```
 
 #### Hybrid Cartesian-Lagrangian models (carstm)
 
@@ -11089,18 +8108,8 @@ https://github.com/JuliaGaussianProcesses/AbstractGPs.jl/blob/master/examples/0-
 
 ```{julia}
 
-using AbstractGPs
-using Distributions
-using FillArrays
-using StatsFuns
-
-using Plots
 default(; legend=:outertopright, size=(700, 400))
-
-using Random
-Random.seed!(42)  # setting the seed for reproducibility of this notebook
-#md nothing #hide
-
+ 
 # Load toy regression
 # [dataset](https://github.com/GPflow/GPflow/blob/7705cee6723f78066981f27954130daaede55dfc/doc/sphinx/notebooks/basics/data/regression_1D.csv)
 # taken from GPflow examples.
@@ -11141,13 +8150,11 @@ x_train = x[1:8]
 y_train = y[1:8]
 x_test = x[9:end]
 y_test = y[9:end]
-#md nothing #hide
 
 # We instantiate a Gaussian process with a Matern kernel. The kernel has
 # fixed variance and length scale parameters of default value 1.
 
 f = GP(Matern52Kernel())
-#md nothing #hide
 
 # We create a finite dimensional projection at the inputs of the training dataset
 # observed under Gaussian noise with variance $\sigma^2 = 0.1$, and compute the
@@ -11205,13 +8212,11 @@ function gp_loglikelihood(x, y)
 end
 
 const loglik_train = gp_loglikelihood(x_train, y_train)
-#md nothing #hide
 
 # We define a Gaussian prior for the joint distribution of the two transformed kernel
 # parameters. We assume that both parameters are independent with mean 0 and variance 1.
 
 logprior(params) = logpdf(MvNormal(Eye(2)), params)
-#md nothing #hide
 
 # ## Hamiltonian Monte Carlo
 #
@@ -11225,15 +8230,12 @@ logprior(params) = logpdf(MvNormal(Eye(2)), params)
 #
 # We start with performing inference with AdvancedHMC.
 
-using AdvancedHMC
-using ForwardDiff
+using AdvancedHMC, ForwardDiff
 
 # Set the number of samples to draw and warmup iterations.
-
 n_samples = 2_000
 n_adapts = 1_000
-#md nothing #hide
-
+ 
 # AdvancedHMC and DynamicHMC below require us to implement the LogDensityProblems interface for the log joint probability.
 
 using LogDensityProblems
@@ -11250,27 +8252,23 @@ LogDensityProblems.dimension(::LogJointTrain) = 2
 function LogDensityProblems.capabilities(::Type{LogJointTrain})
     return LogDensityProblems.LogDensityOrder{0}()
 end
-#md nothing #hide
 
 # We use [ForwardDiff.jl](https://github.com/JuliaDiff/ForwardDiff.jl) to compute the derivatives of the log joint density with automatic differentiation.
 
 using LogDensityProblemsAD
 
 const logjoint_train = ADgradient(Val(:ForwardDiff), LogJointTrain())
-#md nothing #hide
 
 # We define an Hamiltonian system of the log joint probability.
 
 metric = DiagEuclideanMetric(2)
 hamiltonian = Hamiltonian(metric, logjoint_train)
-#md nothing #hide
 
 # Define a leapfrog solver, with initial step size chosen heuristically.
 
 initial_params = rand(2)
 initial_ϵ = find_good_stepsize(hamiltonian, initial_params)
 integrator = Leapfrog(initial_ϵ)
-#md nothing #hide
 
 # Define an HMC sampler, with the following components:
 # - multinomial sampling scheme,
@@ -11279,7 +8277,6 @@ integrator = Leapfrog(initial_ϵ)
 
 proposal = NUTS{MultinomialTS,GeneralisedNoUTurn}(integrator)
 adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(0.8, integrator))
-#md nothing #hide
 
 # We draw samples from the posterior distribution of kernel parameters. These samples
 # are in the unconstrained space $\mathbb{R}^2$.
@@ -11287,7 +8284,6 @@ adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(0.8, integra
 samples, _ = sample(
     hamiltonian, proposal, initial_params, n_samples, adaptor, n_adapts; progress=false
 )
-#md nothing #hide
 
 # We transform the samples back to the constrained space and compute the mean of both
 # parameters:
@@ -11349,7 +8345,6 @@ samples =
     mcmc_with_warmup(
         Random.GLOBAL_RNG, logjoint_train, n_samples; reporter=NoProgressReport()
     ).posterior_matrix
-#md nothing #hide
 
 # We transform the samples back to the constrained space and compute the mean of both
 # parameters:
@@ -11403,7 +8398,6 @@ samples = sample(ESSModel(
     MvNormal(Eye(2)), # Gaussian prior
     loglik_train,
 ), ESS(), n_samples; progress=false)
-#md nothing #hide
 
 # We transform the samples back to the constrained space and compute the mean of both
 # parameters:
@@ -11479,7 +8473,6 @@ function objective_function(x, y)
     end
     return negative_elbo
 end
-#md nothing #hide
 
 # We randomly initialize the kernel parameters and 5 pseudo points, and minimize the
 # negative ELBO with the LBFGS algorithm and obtain the following optimal parameters:
@@ -11553,7 +8546,6 @@ function loss_function(x, y)
     return negativelogmarginallikelihood
 end
 
-#md nothing #hide
 
 # We randomly initialize the kernel parameters, and minimize the
 # negative log marginal likelihood with the LBFGS algorithm
@@ -11657,7 +8649,6 @@ y = sin.(vec(X)) + randn(N) * 0.1
 scatter(vec(X), y)
 
 # Fit via ADVI. You can also use HMC.
-Random.seed!(0)
 
 m = GP(y, X)
 
@@ -12232,6 +9223,3071 @@ $$
 This approach represents a practical balance between computational time and model complexity/realism. For additional speed, an FFT-based Matérn convolution implementation is used. This solution focuses upon prediction using a mosaic of solutions in space, overall likelihood or AIC evaluation is a challenge. At present, predictive success is the only means to evaluate utility and eventually some form of Expectation-Maximization approaches through iteration once computational speeds improve would provide less biased parameter estimates.
 
  
+
+## Multivariate methods
+
+### Spectral (Eigen) decomposition
+
+Spectral (Eigen) decomposition of rectangular data is also known as Principal components analysis (PCA). It is a form of Major Axis (aka, model 2, see Linear Regression above) regression if one focuses upon the first Principal Axis and is even related to Gaussian Process models (see above).
+
+NOTE: This has been adapted from numerous sources. All credit to original authors (noted where found).
+
+(Source: https://en.wikipedia.org/wiki/Principal_component_analysis)
+
+An eigen-decomposition is a factorization of a square matrix
+$\mathbf{C} \in \Re^{n\times n}$ into an equivalent canonical (unique,
+characteristic, *eigen*) form of a diagonal matrix
+$\mathbf{\Lambda} = \text{diag}(\lambda)$ (eigenvalues, singular/scalar
+roots, standard deviations) and the transformations required
+$\mathbf{V}$ (eigenvectors):
+
+$$
+\mathbf{C} \mathbf{V} = \mathbf{V} \mathbf{\Lambda},
+$$
+
+which, when right or left multiplied by $\mathbf{V}^{-1}$ gives:
+
+$$
+\mathbf{C} = \mathbf{V} \mathbf{\Lambda}  \mathbf{V}^{-1} \quad \text{and} \quad \mathbf{V}^{-1} \mathbf{C} \mathbf{V} = \mathbf{\Lambda}
+$$
+
+and demonstrates that they are forward and backward rotations of
+$\mathbf{\Lambda} <=> \mathbf{C}.$
+
+Eigen-decomposition is also a way to compute the inverse of
+$\mathbf{C}$:
+
+$$
+\mathbf {C} ^{-1}=\mathbf {V} \mathbf {\Lambda } ^{-1}\mathbf {V} ^{-1}
+$$
+
+An eigen-decomposition of a complex square *normal* matrix (that is,
+$C^T C= C C^T$) results in:
+
+$$
+\mathbf{C} = \mathbf{V} \mathbf{\Lambda} \mathbf{V}^*
+$$
+
+where $\mathbf{U}$ is a *unitary matrix*:
+
+$$
+\mathbf{V}^*=\mathbf{V}^{-1}.
+$$
+
+### PCA
+
+A PCA (Principal components analysis) is a technique that identifies the rotations required to uniquely represent the structure in a symmetric matrix. If the matrix $C$ is a correlation or covariance matrix, the rotations represent the directions of maximum *variability* in the data. As such, it represents a powerful and often-used data reduction technique in many fields.
+
+More formally, if $n$ observations of $p$ variables are represented as a rectangular matrix $X_{n \times p}$, the corresponding *covariances* or *correlations* between variables $C_{p \times p}$ can be decomposed to the canonical rotations:
+
+$$
+\mathbf{C} \mathbf{V} = \mathbf{V} \mathbf{\Lambda} ,
+$$
+
+where $\mathbf{\Lambda} = \text{diag}(\lambda)$ are the eigenvalues (singular/scalar roots, standard deviations) and $\mathbf{V}$ are the eigenvectors (the rotations, transformations).
+
+PCA is, therefore, an eigen-decomposition of a
+(Gram) *symmetric matrix*, usually a correlation or covariance matrix.
+For some rectangular data matrix $X_{n \times p}$ with $n$ observations
+and $p$ features, the covariance between features, *centered to column
+(feature) means*, is computed as:
+
+$$
+\mathbf{C}_{p\times p} = \frac{1}{n−1} \mathbf{X}^T \mathbf{X}
+$$
+
+and the covariance between observations, *centered to row (observation)
+means*, is computed as:
+
+$$
+\mathbf{C}_{n\times n} = \frac{1}{p−1} \mathbf{X} \mathbf{X}^T
+$$
+
+Note, most PCAs focus upon the *between features* relationships:
+$\mathbf{C}_{p \times p}$ (after $\mathbf{X}$ is \*centered by features,
+that is, columns).
+
+The construction of the symmetric matrix $C$ is important. The standard approach assumes each observation (row) contributes equally towards the correlations. The issue with this is that all observations are not always equally important. For example, when a variable is repeatedly measured on a person, the observations are no longer independent -- some are clustered. If the majority of measurements come from one individual then the observations would be unduly giving important to one person's information. It is well understood that such repeated measures can inappropriately bias the estimation of the "real" (latent) correlation. Time-series analysis and decomposition of autocorrelation in time is used for this reason in Repeated measures analysis.
+
+Similarly in spatial processes, spatially clustered events can bias the estimation of the overall relationship between variables and processes. Spatial methods exists to decompose such autocorrelation in space.
+
+Thus, to estimate correlations between variables that are repeatedly measured in a space and/or time structured system, such autocorrelations need to be addressed, as latent biases can and usually do, exist, even in the best designed surveys. See model-based partial correlations (above).
+
+#### PCA through Eigen-decomposition
+
+Starting with eigen-decompostion of $\mathbf{C}$ (a real square
+*symmetric* *normal* matrix):
+
+$$
+\mathbf{C} \mathbf{V} = \mathbf{V} \mathbf{\Lambda}
+$$
+
+as $\mathbf{V} \mathbf{V}^T = \mathbf{I}$ for symmetric matrices, right
+or left multiplying by $\mathbf{V}^T$ gives:
+
+$$
+\mathbf{C} = \mathbf{V} \mathbf{\Lambda}  \mathbf{V}^T \quad \text{and} \quad \mathbf{V}^T \mathbf{C} \mathbf{V} = \mathbf{\Lambda}
+$$
+
+Using the left form gives:
+
+$$
+\mathbf{C}_{p \times p} = \frac{1}{n−1} \mathbf{X}^T \mathbf{X}= \frac{1}{n−1} \mathbf{V} \mathbf{\Lambda} \mathbf{V}^T
+$$
+
+#### PCA through Singular value decomposition (SVD)
+
+See:
+
+- https://en.wikipedia.org/wiki/Singular_value_decomposition
+- https://en.wikipedia.org/wiki/Principal_component_analysis#Principal_components_using_singular_value_decomposition
+- [Shlens 2014](./reference/pca_basics.pdf)
+
+SVD can also be used to decompose $\mathbf{X}^{n\times p}$ into
+eigenvalues and eigenvectors. It is also computationally faster and more
+stable:
+
+$$
+\mathbf{X} = \mathbf{U} \mathbf{\Sigma} \mathbf{V}^T
+$$
+
+The columns of $\mathbf{U}_{n\times p}$ are known as left singular
+vectors, $\mathbf{\Sigma}_{p \times p}$ is a diagonal matrix of
+*singular values* and columns of $\mathbf{V}_{p \times p}$ are right
+singular vectors.
+
+Using the definition of covariance $\mathbf{C}_{p \times p}$ and
+substituting the above definition for
+$\mathbf{X} = \mathbf{U} \mathbf{\Sigma} \mathbf{V}^T$:
+
+$$
+\begin{align*}
+\mathbf{C}_{p \times p} &= \frac{1}{n−1} \mathbf{X}^T \mathbf{X} \\
+&= \frac{1}{n-1}(\mathbf{U} \mathbf{\Sigma} \mathbf{V} ^T) ^T(\mathbf{U} \mathbf{\Sigma} \mathbf{V} ^T) \\ 
+&= \frac{1}{n-1}(\mathbf{V} \mathbf{\Sigma}^T \mathbf{U}^T)(\mathbf{U} \mathbf{\Sigma} \mathbf{V} ^T)
+\end{align*}
+$$
+
+and then noting the orthogonality of U, such that
+$\mathbf{U}^T \mathbf{U}=I$, and $\mathbf{\Sigma}$ is a diagonal matrix,
+gives:
+
+$$
+\mathbf{C} = \frac{1}{n-1}\mathbf{V} (\mathbf{\Sigma}^T \mathbf{\Sigma}) \mathbf{V}^T
+$$
+
+By similarity with the eigen-decomposition:
+$\mathbf{\Lambda}=\mathbf{\Sigma}^2$.
+
+Similarly, $\mathbf{X} \mathbf{X}^T=U(\Sigma \Sigma^T)\mathbf{U}^T$.
+$\mathbf{V}$ (right singular vectors) are the eigenvectors of $X^TX$,
+while $\mathbf{U}$ (left singular vectors) are eigenvectors of
+$\mathbf{X} \mathbf{X}^T$.
+
+Further, the projections of X on the principle axes (eigenvectors) are
+known as PC *scores*: $\mathbf{Z} = \mathbf{X} \mathbf{V}$. If using
+SVD, from its definition,
+$\mathbf{Z} = (\mathbf{U} \mathbf{\Sigma} \mathbf{V}^T) \mathbf{V} = \mathbf{U} \mathbf{\Sigma} = \mathbf{X} \mathbf{V}$.
+In addition, the PC *loadings* indicate the influence of each feature
+upon the principle axes, and is obtained as:
+$L=\mathbf{V} * diag(\sqrt{\Lambda}) = \mathbf{V} * diag( \Sigma)$ .
+
+If $C$ is a normal matrix (i.e., $C^T C = C C^T$), such as covariance or
+correlation matrix, then:
+
+$$
+\mathbf{C} = \mathbf{V} \mathbf{\Lambda} \mathbf{V}^T
+$$
+
+This method is used in *pca_basic* (below), to give more control to
+$\mathbf{C}$ (see below).
+
+Further, if $\mathbf{C}$ is positive semi-definite, all eigenvalues will
+be positive valued.
+
+See also:
+
+SVD in Wikipedia for more information (primary source of above).
+
+https://math.stackexchange.com/questions/3869/what-is-the-intuitive-relationship-between-svd-and-pca
+
+https://stats.stackexchange.com/questions/104306/what-is-the-difference-between-loadings-and-correlation-loadings-in-pca-and
+
+#### Basic PCA
+
+```{julia}
+
+# include( srcdir( "pca_functions.jl" ))   # support functions  
+   
+# X has an embedded nonlinear pattern 
+# id, sps, X, G, vn = example_data( "iris_pca_nonlinear" )  
+
+id, sps, X, G, vn = example_data("iris_pca")
+nData, nvar = size(X)   
+nz = 2  # no latent factors to use
+
+
+# test covariances...  
+isapprox(X'*X/(nData-1), cov(X) )  # ok
+
+XX = X .- mean(X, dims=2) # must center first (x is already centered by column)
+isapprox( XX*XX'/(nvar-1),  cov(XX') )  # ok
+ 
+
+ 
+# this is the core of eigendecomposition
+eigen( cov(X) )
+
+# the "values" are the "eigenvalues", which are actually the standard deviations associated with each axis
+ 0.02383509297344945
+ 0.0782095000429192
+ 0.24267074792863327
+ 4.228241706034862
+
+# the "vectors" are the "eigenvectors", the coefficients for each variable (row) used to construct the new basis, in other words, the *rotations* to orient to the new basis:
+  0.315487   0.58203     0.656589  -0.361387
+ -0.319723  -0.597911    0.730161   0.0845225
+ -0.479839  -0.0762361  -0.173373  -0.856671
+  0.753657  -0.545831   -0.075481  -0.358289
+
+
+# the same can be accomplished with some additional formatted results:
+
+evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="cor", obs="rows")  # pca_sd is std dev, not variance.
+
+biplot(pcscores=pcscores, pcloadings=pcloadings, 
+    variancepct=variancepct, evecs=evecs, evals=evals,
+    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  # unstandardized by default
+
+variancepct # 4-element Vector{Float64}:
+ 72.96
+ 22.85
+  3.67
+  0.52
+
+
+# ----------------------
+# simple and direct pca on covariance matrix
+evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="cov", obs="rows")  # pca_sd is std dev, not variance.
+
+biplot(pcscores=pcscores, pcloadings=pcloadings, 
+    variancepct=variancepct, evecs=evecs, evals=evals,
+    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  # unstandardized by default
+
+variancepct # 4-element Vector{Float64}:
+ 92.46
+  5.31
+  1.71
+  0.52
+
+
+# ----------------------
+# alternatively, operating directly on data and so ultimately the cov matrix  
+evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="direct_svd", obs="rows")  
+
+biplot(pcscores=pcscores, pcloadings=pcloadings, variancepct=variancepct, evecs=evecs, evals=evals,
+    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )   
+
+plot!(xlim=(-2.5, 2.5))
+
+variancepct # 4-element Vector{Float64}: (same as above)
+ 92.46
+  5.31
+  1.71
+  0.52
+
+      
+# not tested
+if false
+    using FactorRotations # https://github.com/p-gw/FactorRotations.jl -- lots of options but seems incomplete ... check MultiVariateStats.jl  as they are also adding this functionality
+    nfactors =2 
+    L = pcloadings[:,1:nfactors]  # loadings
+    L_rotated = FactorRotations.rotate(L, Varimax()) 
+    # FactorRotations.factor_correlation(L_rotated)
+    # rotation(L_rotated)
+    # loadings(L_rotated )  # access rotated loadings
+    # following is R ::: ignore
+    # rotated_scores =  indat  %*% L_rotated'   # R
+    # out$rotated_variance = colSums(L_rotated^2) / sum( evals.^2 )
+end
+
+```
+
+Compare with solutions from MultivariateStats.jl
+
+```{julia}
+
+# using MultivariateStats 
+
+# note: MultivariateStats.jl operates on data matrices with rows as features and cols as observations
+
+M = fit(PCA, X'; method=:svd, pratio=1, maxoutdim=nvar )
+
+# other possible methods from MultivariateStats (need to be tested):
+# M = fit(KernelPCA, X; maxoutdim=nz )
+# M = fit(PPCA, X; method=:bayes, maxoutdim= nz) # no convergence
+# M = fit(MDS, X; distances=false)
+
+# some generic methods: (fit method is off . making some alternate assumptions)
+evals = eigvals(M)
+evecs = eigvecs(M)
+
+# proj[:,1] = weights or "loadings" for PC1, etc
+proj = MultivariateStats.projection(M) # eigenvectors
+pcloadings = MultivariateStats.loadings(M)
+
+# eigenvalues: normalize to give contributions of each principal component towards explaining the total variance,
+variancepct = principalvars(M) ./ tvar(M) .* 100
+
+# pcscores = MultivariateStats.transform(M, X')'  # scores
+pcscores = (projection(M)' * (X' .- mean(M)))' # scores (projection of data to new axes)
+
+# axis flipping occurs
+biplot(pcscores=pcscores, pcloadings=pcloadings, variancepct=variancepct, evecs=evecs, evals=evals,
+    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  
+
+```
+Testing for stability: a training and testing/validation set to examine
+stability:
+
+(Note PCscores need to be rotated back to original eigenspace to
+complete the comparison ... to do)
+
+```{julia}
+
+# check stability:  split half to training set
+training = 1:2:nData
+testing  = 2:2:nData
+
+Xtraining = X[training,:]
+Xtesting = X[testing,:]
+
+Xtestingid = Vector(sps[testing])
+
+Xmean = mean(Xtesting, dims=1)
+Xstd = std(Xtesting, dims=1)
+
+Xtesting = (Xtesting .- Xmean) ./ Xstd
+Xtraining = (Xtraining .- Xmean) ./ Xstd
+
+Mtraining = fit(PCA, Xtraining'; maxoutdim=nz )
+M = fit(PCA, X'; maxoutdim=nz ) # full
+
+# similar results:
+MultivariateStats.loadings(Mtraining)
+MultivariateStats.loadings(M)
+
+MultivariateStats.projection(Mtraining)     #  proj = evecs'
+MultivariateStats.projection(M)
+
+MultivariateStats.principalvars(Mtraining) ./ tvar(Mtraining) .* 100     # eigenvalues: normalize to give contributions of each principal component towards explaining the total variance,
+MultivariateStats.principalvars(M) ./ tvar(M) .* 100    # eigenvalues: normalize to give contributions of each principal component towards explaining the total variance,
+
+# simple check ... of scores ... ideally it should be reprojected to original fit of M ... todo
+PCscores_all = zeros(nData, nz)
+PCscores_all[training,:] = Matrix( MultivariateStats.predict(Mtraining, Xtraining') )'
+PCscores_all[testing,:]  = Matrix( MultivariateStats.predict(Mtraining, Xtesting') )'
+proj = projection(Mtraining) # evecs = proj'
+
+PCscores_all0 = zeros(nData, nz)
+PCscores_all0[training,:] = Matrix( MultivariateStats.predict(M, Xtraining') )'
+PCscores_all0[testing,:]  = Matrix( MultivariateStats.predict(M, Xtesting') )'
+proj0 = projection(M)
+
+# warning axis flipping occurs...
+h = plot(PCscores_all[:,1], PCscores_all[:,2], seriestype=:scatter, label="", alpha=0.5)
+plot!(xlabel="PC1", ylabel="PC2", framestyle=:box) # A few formatting options
+
+for i=1:4; 
+    plot!([0,proj[i,1]], [0,proj[i,2]], arrow=true, label=vn[i], legend=:topleft); 
+    plot!([0,proj0[i,1]], [0,proj0[i,2]], arrow=true, label=vn[i], legend=:topleft); 
+
+end
+display(h)
+
+plot!( PCscores_all[:,1], PCscores_all[:,2], 
+    group=["Setosa2", "Versicolor2", "Virginica2"][id],
+    markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+    seriesalpha=0.4, title="Ordination",
+    seriestype=:scatter
+)
+display(h)
+
+plot!( PCscores_all0[:,1], PCscores_all0[:,2], 
+    group=["Setosa2", "Versicolor2", "Virginica2"][id],
+    markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+    seriesalpha=0.4, title="Ordination",
+    seriestype=:scatter
+)
+display(h)
+
+# to reconstruct testing observations (approximately) to the original space
+Xrec = reconstruct(Mtraining, Xtesting[:,1:nz]' )
+
+idt = id[testing]
+plot( Xtesting[:,1], Xtesting[:,2], 
+    group=["Setosa", "Versicolor", "Virginica"][idt ],
+    markercolor=["orange", "green", "grey"][idt], markerstrokewidth=0,
+    seriesalpha=0.4, title="Ordination testing",
+    seriestype=:scatter,  xlabel="PC1", ylabel="PC2"
+)
+
+```
+
+### Probabilitic PCA
+
+Sources:
+
+https://www.cs.columbia.edu/\~blei/seminar/2020-representation/readings/TippingBishop1999.pdf
+
+Tipping, M. E., & Bishop, C. M. (1999). Probabilistic principal
+component analysis. Journal of the Royal Statistical Society: Series B
+(Statistical Methodology), 61(3), 611–622.
+
+https://stats.stackexchange.com/questions/208731/what-is-principal-subspace-in-probabilistic-pca
+
+In the same spirit as a classical PCA (and Factor Analysis),
+Probabilistic PCA is a projection of data $X$ to lower dimensional
+latent space $Z$ through the operation of an eigenvector-like
+transformation $\mathbf{W}$:
+
+$$
+\mathbf{X} \in \Re^{n\times p} \quad \rightleftharpoons  \quad \mathbf{Z} \in \Re^{n\times q}
+$$
+
+via the identification of the generative model that maps the latent
+space to data ($\mathbf{Z} = \mathbf{X} \mathbf{W}$; loadings, see
+above). Here we use $\mathbf{W}$ instead to represent the transformation
+instead of $\mathbf{V}$ as it is not exactly an eigenvector.
+
+$$
+\mathbf{X} \sim \text{N} (\mathbf{Z} \mathbf{W}^T + \mu, \sigma^2 \mathbf{I})
+$$
+
+$$
+\mathbf{Z} \sim \text{N} (\mathbf{0}, \mathbf{I})
+$$
+
+$$
+P(\mathbf{X} | \mathbf{W}) = \prod_{i=1}^{m} \text{N} (\mathbf{X}_{i,.}|0, \mathbf{W} \mathbf{W}^T + \sigma^2 \mathbf{I})
+$$
+
+$$
+\mathbf{W} \mathbf{R} \mathbf{R}^T \mathbf{W}^T  = \mathbf{W} \mathbf{W}^T
+$$
+
+#### Computation
+
+```{julia}
+
+# using MultivariateStats 
+
+# note: MultivariateStats.jl operates on data matrices with rows as features and cols as observations
+
+M = fit(PPCA, X; method=:bayes, maxoutdim= nz) # no convergence
+
+evals = eigvals(M)
+evecs = eigvecs(M)
+
+proj = MultivariateStats.projection(M) # eigenvectors
+pcloadings = MultivariateStats.loadings(M)
+
+# eigenvalues: normalize to give contributions of each principal component towards explaining the total variance,
+variancepct = principalvars(M) ./ tvar(M) .* 100
+
+# pcscores = MultivariateStats.transform(M, X')'  # scores
+pcscores = (projection(M)' * (X' .- mean(M)))' # scores (projection of data to new axes)
+
+# axis flipping occurs
+biplot(pcscores=pcscores, pcloadings=pcloadings, variancepct=variancepct, evecs=evecs, evals=evals,
+    id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  
+
+```
+Great, but in an MCMC setting, PCAs create rotationally symmetric solutions, making posterior means useless. Latent values (PC scores) only show vector magnitude length (in 2D see latent means), smearing patterns (see posteriors):
+
+```{julia}
+ 
+n_samples = 500  # posterior sampling
+sampler = Turing.NUTS()  
+
+
+    M = pPCA(X) ; # rand(M)
+
+    res = sample(M, sampler, n_samples);
+ 
+    # Extract parameter estimates for plotting - mean of posterior
+    zm = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nz))
+    wm = posterior_summary(res, sym=:w, stat=:mean, dims=(nz, nvar))' # transpose to recover W
+    mm = posterior_summary(res, sym=:m, stat=:mean, dims=(1, nvar))  # close to zero as X is centered
+
+    scatter( zm[:,1], zm[:,2] ,
+        group=["Setosa", "Versicolor", "Virginica"][id],
+        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
+ 
+    z = posterior_samples(res, sym=:z)
+    z = reshape(Array(z), (n_samples, nData, nz ) )
+    plot!(z[:,:,1], z[:,:,2],
+        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+        seriesalpha=0.05, label=:none, title="Ordination",
+        seriestype=:scatter
+    )
+
+    # posteriors for a single datum
+    plot!(z[:,1,1], z[:,1,2],
+        markercolor="black", markerstrokewidth=0,
+        seriesalpha=1, label=:none,
+        seriestype=:scatter
+    )
+
+    # NOTE: can also compute using multivariatestats.jl to compute probabilistic PCA using a Bayesian algorithm for a given sample covariance matrix S.
+    S = cov(X)
+    m =  mean(X, dims=1)   #means of each variable
+    nData, nvar =  size(X)
+
+    Mbp = bayespca(S, vec(m), nvar )
+
+    MultivariateStats.loadings(Mbp)  # not good = 0
+    MultivariateStats.projection(Mbp)  # good
+ 
+```
+#### Number of components
+
+How many dimensions to keep in order to represent the latent structure
+in the data? In the pPCA model, Automatic Relevance Determination (ARD)
+priors on factor loadings W removes uninformative dimensions in the
+latent space. The prior is determined by a precision hyperparameter
+$\alpha$: smaller values of $\alpha$ indicate more important components (see
+Christopher M. Bishop, Pattern Recognition and Machine Learning, 2006).
+
+```{julia}
+
+    M = pPCA_ARD(X)  # slow as all factors need to be retained for ARD 
+    res = sample(M, Turing.NUTS(), n_samples)
+
+    α = posterior_summary(res, sym=:alpha, stat=:mean, dims=(nvar))
+    z = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nvar))
+    w = posterior_summary(res, sym=:w, stat=:mean, dims=(nvar, nvar))'
+ 
+    # small alpha -> high relevance.
+    aj = sortperm(α)[1:2]  # to keep
+   
+    scatter( z[:,aj[1]], z[:,aj[2] ],
+        group=["Setosa", "Versicolor", "Virginica"][id],
+        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
+ 
+    zp = posterior_samples(res, sym=:z)
+    zp = reshape(Array(zp), (n_samples, nvar, nData) )
+    plot!(zp[:,aj[1],:], zp[:,aj[2],:],
+        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+        seriesalpha=0.05, label=:none, title="Ordination",
+        seriestype=:scatter
+    )
+ 
+```
+#### Confounding or Covariate (aka, "Batch") effects
+
+Unaccounted co-factors or covariates. Eg., different scientists using a
+different measurement methods .. systematic measurement bias, unrelated
+to the actual experimental variable:
+
+Simulate a covariate effect: two different rulers and they are slightly off.
+
+```{julia}
+ 
+    ## Introduce covariate effect
+    covariate = rand(Binomial(1, 0.5), nData)
+    effect = rand(Normal(2.4, 0.6), nData)
+    batch_dat = (X .+ covariate .* effect)
+
+    M = pPCA(batch_dat)  # naive
+    res = sample(M, Turing.NUTS(), n_samples)
+    showall(res)
+  
+    zm = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nz))
+    wm = posterior_summary(res, sym=:w, stat=:mean, dims=(nz, nvar))' # transpose to recover W
+    mm = posterior_summary(res, sym=:m, stat=:mean, dims=(1, nvar))  # close to zero as X is centered
+
+    scatter( zm[:,1], zm[:,2] ,
+        group=["Setosa", "Versicolor", "Virginica"][id],
+        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
+ 
+   
+  
+    # add covariate
+    ng =  size(covariate,2)
+    covariate = reshape( convert(Vector{Float64}, covariate), nData, ng ) 
+    bt = Integer.(covariate) .+ 1
+
+    M = pPCA(batch_dat, covariate)
+    res = sample(M, Turing.NUTS(), n_samples);
+ 
+    zm = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nz))
+    wm = posterior_summary(res, sym=:w, stat=:mean, dims=(nz, nvar))' # transpose to recover W
+    mm = posterior_summary(res, sym=:m, stat=:mean, dims=(1, nvar))  # close to zero as X is centered
+ 
+    scatter( zm[:,1], zm[:,2] ,
+        group=["Setosa", "Versicolor", "Virginica"][id],
+        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+        markershape=[:circle, :cross][bt],
+        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
+ 
+
+ 
+```
+#### Rotational control via the Householder transform
+
+The Householder transform helps to remove Rotational symmetry (GP in
+kernel matrix form) by making possible to keep track of rotations
+(eigenvalues are +/- 1) and back transforms them into a consistent
+state. This then improves and speeds up inference as well and improving
+precision in MCMC. [See the mathematical and historical write up here.](https://en.wikipedia.org/wiki/Householder_transformation)
+
+This is done by first using SVD of the transform weight $W$ and $W^T$ (assuming it is positive definite):
+
+$$
+\mathbf{W} \mathbf{W}^T = \mathbf{U} \mathbf{\Sigma} \mathbf{V}^T (\mathbf{U} \mathbf{\Sigma} \mathbf{V}^T)^T = \mathbf{U} \mathbf{\Sigma}^2 \mathbf{U}^T
+$$
+
+where $U$ and $V$ are orthogonal and $\Sigma$ is a diagonal with
+singular values (eigenvalues of $WW^T$). $V$ is the rotation symmetry to
+be removed by setting it to I (as is also the case in Clasical PCA). The
+$U$ is a member of the Stiefel manifold ($U^T U =I$) and thus:
+
+$$
+p(\mathbf{X} | \mathbf{U}, \mathbf{\Sigma}) = \prod_{i=1}^{m} \text{N} (\mathbf{X}_{i,.}|0, \mathbf{U} \mathbf{\Sigma}^2 \mathbf{U}^T + \sigma^2 \mathbf{I})
+$$
+
+where $U$ is uniformly distributed on the Stiefel manifold. The
+Householder transform reflects a vector such that all coordinates
+disappear except one (QR decomposition). So, for PCA, we have:
+
+$$
+p(\mathbf{W} | \mathbf{X}) = \frac{p(\mathbf{X} | \mathbf{W}) \enspace  p(\mathbf{W}) }{ p(\mathbf{X} )}
+$$
+
+```{julia}
+ 
+    # refresh data in case of changes:
+    id, sps, X, G, vn = example_data("iris_pca")
+    nData, nvar =  size(X)
+    nz = 2  # no latent factors to use
+ 
+    # basic form but a little simpler/versatile .. also uses sign_convention
+    evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="cov", obs="rows")  
+
+    # transform to householder vector to use as init value
+    nvh, hindex, iz, ltri = PCA_BH_indexes( nvar, nz )  # indices reused .. to avoid recalc ...
+
+    v_prior = eigenvector_to_householder(evecs )  
+    # householder_to_eigenvector( lower_triangle( v_prior, nvar,  nz, ltri ) ) .- evecs[:,1:nz] # inverse transform
+
+    # param sequence = sigma_noise, pca_sd(nz), v, r=norm(v)~ 1.0 (scaled)
+    sigma_prior = sqrt.(evals[1:nz])
+    # r = 1; # a dummay value, r is used as a soft prior in the model as a norm for the eigenvectors
+ 
+    # note: this operates upon X' ... to save transposing repeatedly inside the model
+    M = PCA_BH(X')  # all dims == default form
+   
+    rand(M)
+    res = sample(M, Turing.Prior(), 10 );
+   
+    # use some informed starting conditions
+    ressumm = summarize(res)
+    vns = ressumm.nt.parameters
+    means = ressumm.nt[2]  # means
+ 
+    u = findall(x-> occursin(r"^pca_sd\[", String(x)), vns ); vns[u]
+    means[u] = sigma_prior[1:nz]  # from basic pca
+  
+    u = findall(x-> occursin(r"^v\[", String(x)), vns ); vns[u]
+    means[u] = v_prior  # from basic pca
+
+    init_params = FillArrays.Fill( means )
+ 
+    # turing_sampler = Turing.PG(10)   
+    turing_sampler = Turing.SMC()   #   
+    # turing_sampler = Turing.SGLD()   # Stochastic Gradient Langevin Dynamics (SGLD); slow, mixes poorly
+    turing_sampler = Turing.NUTS( 0.65 ) # , init_ϵ=0.001
+   
+    res = sample(M, turing_sampler, 10) # ; init_params=init_params, init_ϵ=0.01)
+  
+    res = sample(M, turing_sampler, 5000; init_params=init_params);
+    showall(res)
+
+    # sqrt(eigenvalues) 
+    #    note no sort order from chains 
+    # .. must access through PCA_posterior_samples to get the order properly
+    posterior_summary(res, sym=:pca_sd, stat=:mean, dims=(1, nz))
+
+    pca_sd, evals, evecs, pcloadings, scores = 
+        PCA_posterior_samples( res, X, nz=nz, model_type="householder" )
+ 
+    evecs_mean = DataFrame( convert(Array{Float64}, mean(evecs, dims=1)[1,:,:]), :auto)
+    loadings_mean = DataFrame( convert(Array{Float64}, mean(pcloadings, dims=1)[1,:,:]), :auto)
+    scores_mean = DataFrame( convert(Array{Float64}, mean(scores, dims=1)[1,:,:]), :auto)
+    # scores_mean = reshape(mapslices( mean, scores, dims=1 ), (nData, nz))
+ 
+    pl = plot( scores_mean[:,1], scores_mean[:,2], markercolor=["orange", "green", "grey"][id], 
+        label=:none, seriestype=:scatter,   group=["Setosa", "Versicolor", "Virginica"][id] )
+
+    j = 1  # observation index
+   
+        plot!(
+            scores[:, j, 1], scores[:, j, 2];
+            # xlim=(-6., 6.), ylim=(-6., 6.),
+            # group=["Setosa", "Versicolor", "Virginica"][id],
+            # markercolor=["orange", "green", "grey"][id[j]], markerstrokewidth=0,
+            seriesalpha=0.1, label=:none, title="Ordination",
+            seriestype=:scatter
+        )
+   
+    display(pl)
+
+    for i in 1:n_samples
+        plot!(
+            scores[i, :, 1], scores[i, :, 2];
+            # xlim=(-6., 6.), ylim=(-6., 6.),
+            # group=["Setosa", "Versicolor", "Virginica"][id],
+            markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+            seriesalpha=0.1, label=:none, title="Ordination",
+            seriestype=:scatter
+        )
+    end
+    display(pl)
+
+```
+#### Nonlinear data: separation is weaker
+
+NOTE:: most of this is copied directly from the Turing tutorials (all
+credit to the original authors)
+
+Get nonlinear data:
+
+```{julia}
+    # X has an embedded nonlinear pattern 
+    id, sps, X, G, vn = example_data("iris_pca_nonlinear")  
+    nData, nvar =  size(X)
+    nz = 2  # no latent factors to uses
+```
+#### Simple standard pca
+
+```{julia}
+
+    evecs, evals, pcloadings, variancepct, C, pcscores = pca_standard(X; model="cov", obs="rows")  
+
+    biplot(pcscores=pcscores, pcloadings=pcloadings, 
+        variancepct=variancepct, evecs=evecs, evals=evals,
+        id=id, vn=vn, grps=["Setosa", "Versicolor", "Virginica"], type="unstandardized"  )  # unstandardized by default
+
+```
+Bottom line: Flexble, clean but slow
+
+Extend the mapping provided by pPCA to non-linear mappings between input and output. For more details about the Gaussian Process Latent Variable Model (GPLVM; https://jmlr.org/papers/v6/lawrence05a.html;
+http://proceedings.mlr.press/v9/titsias10a/titsias10a.pdf).
+
+GPVLM is a dimensionality reduction technique that allows us to embed a
+high-dimensional dataset in a lower-dimensional embedding. Mappings from the embedded space can be non-linearised through the use of Gaussian Processes.
+
+```{julia}
+
+    #  two different kernels, a simple linear kernel with an Automatic Relevance Determination transform and a squared exponential kernel.
+    linear_kernel(α) = LinearKernel() ∘ ARDTransform(α)
+    sekernel(α, σ) = σ * SqExponentialKernel() ∘ ARDTransform(α);
+
+    # normalize data
+    dt = fit(ZScoreTransform, X; dims=1);
+    StatsBase.transform!(dt, X);
+ 
+```
+The basic pPCA solution has problems: fails to distinguish the groups
+(due to the added non-linearities).
+
+```{julia}
+  
+    M = pPCA(X)
+    res = sample(M, Turing.NUTS(), n_samples);
+
+   # Extract parameter estimates for plotting - mean of posterior
+    zm = posterior_summary(res, sym=:z, stat=:mean, dims=(nData, nz))
+    wm = posterior_summary(res, sym=:w, stat=:mean, dims=(nz, nvar))' # transpose to recover W
+    mm = posterior_summary(res, sym=:m, stat=:mean, dims=(1, nvar))  # close to zero as X is centered
+
+    pl = scatter( zm[:,1], zm[:,2] ,
+        group=["Setosa", "Versicolor", "Virginica"][id],
+        markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+        seriesalpha=0.75, xlabel="PC1", ylabel="PC2" )
+ 
+    z = posterior_samples(res, sym=:z)
+    z = reshape(Array(z), (n_samples, nData, nz ) )
+    for i in 1:n_samples
+        plot!(z[i,:,1], z[i,:,2],
+            markercolor=["orange", "green", "grey"][id], markerstrokewidth=0,
+            seriesalpha=0.05, label=:none, title="Ordination",
+            seriestype=:scatter
+        )
+    end
+    display( pl )
+
+    # posteriors for a single datum
+    plot!(z[:,1,1], z[:,1,2],
+        markercolor="black", markerstrokewidth=0,
+        seriesalpha=1, label=:none,
+        seriestype=:scatter
+    )
+
+```
+#### Latent Gaussian Process PCA Model (in functional form)
+
+Now a linear and nonlinear kernel function solution using GP. It also fails to distinguish between the groups:
+
+```{julia}
+
+    using Stheno  # for sparse method
+  
+    # both are too slow for operational use:
+    M = PCA_linearGP(X; nz=nz, noise= 1e-6 )   # linear model
+    M = PCA_nonlinearGP(X; nz=nz, noise= 1e-6 ) # nonlinear model 
+    M = PCA_sparseGP(X; nz=nz, noise= 1e-6) 
+
+    rand(M)
+
+    res = sample(M, Turing.NUTS(), n_samples)
+
+    zm = reshape(mean(group(res, :z))[:, 2], (nz, nData))
+    am = mean(group(res, :alpha))[:, 2]   # ARD
+      
+    o = DataFrame(zm', :auto)
+    rename!(o, Symbol.(["z" * string(i) for i in collect(1:ndim)]))
+
+    aj = sortperm(am; rev=true)[1:2]
+
+    o[!, :ard1] = zm[aj[1], :]
+    o[!, :ard2] = zm[aj[2], :]
+
+    pl = scatter(o,ard1, o.ard2)
+    pl
+
+```
+GP is powerful and flexible, its problem is speed.
+
+Naive implementation require operations in the order of $O(n^3)$ due to matrix inversion.
+
+### PLS, Partial Least Square Regression by SVD
+
+see R-package: guidedPLS, Koki Tsuyuzaki,
+
+https://cran.r-project.org/web/packages/guidedPLS/vignettes/guidedPLS-1.html
+
+See: Partial Least Squares by Singular Value Decomposition (PLS-SVD (Lê Cao 2008)
+
+aka: guided-PCA (Reese S E 2013))
+
+Two centered matrices $X^{n \times m}$ and $Y^{n \times p}$, each have "scores": $XV$ and $YW$, where the $V^{m \times k}$, $W^{l \times k}$ are the usual loading matrices, such that $V^{T}V = W^{T}W = I_{K}$.
+
+with the constraint that:
+
+$$
+\max_{V,W} \mathrm{tr} \left( V^{T}X^{T}YW \right)
+$$
+
+SVD can be used to solve this optimization problem by decomposing $X'Y$.
+
+### Issues:
+
+See the following are good resources:
+
+- https://discourse.julialang.org/t/singular-exception-with-lkjcholesky/85020/6
+- https://github.com/TuringLang/Turing.jl/issues/1870
+
+@model function correlation_chol(J, N, y)
+    sigma ~ filldist(truncated(Cauchy(0., 5.); lower = 0), J)
+    F ~ LKJCholesky(J, 1.0)
+    Σ_L = Diagonal(sigma) * F.L
+    Sigma = PDMat(Cholesky(Σ_L + eps() * I))
+    for i in 1:N
+        y[i,:] ~ MvNormal(Sigma)
+    end
+    return (;Omega = Matrix(F))
+end
+
+### References
+
+Lê Cao, et al. 2008. “A Sparse PLS for Variable Selection When Integrating Omics Data.” Statistical Applications in Genetics and Molecular Biology 7(1).
+
+Reese S E, et al. 2013. “A New Statistic for Identifying Batch Effects in High-Throughput Genomic Data That Uses Guided Principal Component Analysis.” Bioinformatics 29(22): 2877–83.
+
+Rajbir S. Nirwan and Nils Bertschinger, 2019. Proceedings of the 36 th
+International Conference on Machine Learning, Long Beach, California,
+PMLR 97,
+
+- https://github.com/rsnirwan/HouseholderBPCA/blob/master/talk.pdf
+- Christopher M. Bishop, Pattern Recognition and Machine Learning,
+  2006.
+- https://turing.ml/v0.21/tutorials/11-probabilistic-pca
+- https://proceedings.mlr.press/v97/nirwan19a/nirwan19a.pdf
+- https://math.stackexchange.com/questions/4258281/understanding-householder-transformation-geometrically
+- https://proceedings.mlr.press/v97/nirwan19a.html
+
+### Principal Cordinates Analysis (PCoA)
+
+This is the same idea behind PCA in that an eigen decomposition of a matrix is used to summarize relationships. However, unlike a correlation or covariance matrix, one uses a distance matrix, such as Euclidean or other comparable metric of distance. Distances are normalized by row and column before decomposition and provide similar ordinations.
+
+Principal Coordinates Analysis (PCoA), also known as classical or metric Multidimensional Scaling (MDS), aims to find a lower-dimensional representation of data points given a dissimilarity matrix, preserving the original distances as much as possible.
+
+Bayesian PCoA is equivalent to Bayesian MDS and CA (below) but with alternative distance metrics. This model directly assumes that your observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise. Again with the Bayesian form, the axis flipping associated with rotational invariance means additional effort (via the Householder transform is advisable.)
+
+
+
+```{julia}
+
+@model function bayesian_distance_ordination(D_obs, n_points, n_dims)
+    # Priors for the latent coordinates X
+    # X is a n_dims x n_points matrix
+    X ~ MvNormal(Zeros(n_dims), I(n_dims)) # Prior for each column (point) is a spherical multivariate normal
+
+    # Prior for the observation noise standard deviation
+    sigma ~ InverseGamma(2, 3) # A common prior for scale parameters
+
+    # Calculate pairwise Euclidean distances from the latent coordinates X
+    # Ensure X is in the correct format for pairwise (features x observations or observations x features)
+    # Transpose X to have points as columns for pairwise calculation from Distances.jl
+    D_latent = pairwise(Euclidean(), X, dims=2) 
+
+    # Likelihood: observed dissimilarities are normally distributed around the latent distances
+    # with standard deviation sigma.
+    # We only consider the upper triangle of the matrix to avoid duplicating observations.
+    # Also, exclude diagonal (distance of point to itself is 0).
+    for i in 1:n_points
+        for j in (i+1):n_points
+            D_obs[i, j] ~ Normal(D_latent[i, j], sigma)
+        end
+    end
+end
+
+
+# Generate some synthetic data
+n_points = 10
+n_true_dims = 2
+
+# True latent coordinates
+X_true = randn(n_true_dims, n_points) * 5
+
+# True distances
+D_true = pairwise(Euclidean(), X_true, dims=2)
+
+# Add some noise to create observed dissimilarities
+observed_noise_std = 1.0
+D_obs = D_true + observed_noise_std * randn(n_points, n_points)
+
+# Ensure symmetry and non-negativity for D_obs (and set diagonal to 0 if necessary)
+D_obs = max.(0, (D_obs + D_obs') / 2.0)
+for i in 1:n_points
+    D_obs[i, i] = 0.0
+end
+
+# Define the model with the observed data and desired embedding dimension
+model = bayesian_distance_ordination(D_obs, n_points, n_true_dims)
+
+# Sample from the posterior distribution using NUTS (No-U-Turn Sampler)
+# It's recommended to run a longer chain and check convergence for real applications.
+chain = sample(model, NUTS(), 1000) # 1000 samples
+
+# You can inspect the chain
+display(chain)
+
+# Extract mean of latent coordinates (posterior mean)
+# X will be a matrix of size n_dims x n_points, but Turing flattens it for sampling
+# We need to reshape the sampled 'X' back into a matrix form.
+mean_X_samples = mean(chain[:X].data, dims=1)
+posterior_X = reshape(mean_X_samples, n_true_dims, n_points)
+
+println("\nPosterior mean of latent coordinates (first 5 points):\n")
+display(posterior_X[:, 1:5])
+
+
+# Extract all samples for X
+# X_samples_raw will be num_samples x (n_true_dims * n_points)
+X_samples_raw = Array(chain[:X])
+
+# Get dimensions from the already computed posterior_X
+n_true_dims = size(posterior_X, 1) # Should be 2 for 2D visualization
+n_points = size(posterior_X, 2)
+
+# Create a plot object
+plot_posterior = plot(xlabel="Latent Dimension 1", ylabel="Latent Dimension 2",
+                     title="Posterior Distribution of Latent Coordinates",
+                     legend=false, aspect_ratio=:equal, size=(700, 600)) # Added size for better viewing
+
+# Plot each point's individual samples
+for i in 1:n_points
+    # Extract samples for the i-th point's x and y coordinates
+    # The flattened 'X' in Turing chain[:X] means that for point 'i' (1-indexed),
+    # its x-coordinates are at column (i-1)*n_true_dims + 1 and y-coordinates at (i-1)*n_true_dims + 2.
+    x_coords_samples = X_samples_raw[:, (i-1)*n_true_dims + 1]
+    y_coords_samples = X_samples_raw[:, (i-1)*n_true_dims + 2]
+
+    # Plot individual samples for this point with low alpha to show density
+    scatter!(plot_posterior, x_coords_samples, y_coords_samples,
+             marker=:circle, markersize=2, markeralpha=0.1,
+             markercolor=i, # Color by point index
+             label=nothing) # Don't add a label for each sample scatter
+end
+
+# Overlay the posterior mean for each point with larger markers
+scatter!(plot_posterior, posterior_X[1,:], posterior_X[2,:],
+         marker=:star5, markersize=8, markeralpha=0.9,
+         markerstrokewidth=1, markerstrokecolor=:black,
+         markercolor=1:n_points, # Color by point index
+         series_annotations=text.(1:n_points, :bottom, 8, :black), # Annotate points with their index
+         label="Posterior Mean") # Label for the mean points in legend (if legend=true)
+
+# Display the plot
+display(plot_posterior)
+
+ 
+
+```
+
+
+### Correspondence Analysis (CA)
+
+Can be seen as a variation of PCoA where the distance metric is essentially a Chi-squared metric. That is, relative count data.
+
+#### Frequentist form
+
+
+```{julia}
+using MultivariateStats
+using Plots
+
+# Example data: A contingency table (rows = observations/categories, columns = variables/categories)
+# Let's say we have counts of different pet preferences across different age groups.
+# Rows could be Age Groups, Columns could be Pet Types
+contingency_table = [ # Cats Dogs Birds Fish Other
+    10  20  5   2   3;  # Young Adults
+    15  12  8   5   4;  # Middle-aged
+    8   10  12  7   6;  # Seniors
+    20  15  7   3   5   # Teenagers
+]
+
+println("Original Contingency Table:")
+display(contingency_table)
+
+# Perform Correspondence Analysis
+# `ndim` specifies the number of dimensions for the embedding
+ca_model = fit(CA, contingency_table; ndim=2)
+
+# Get the row and column coordinates for the biplot
+row_coords = rowprojection(ca_model)
+col_coords = colprojection(ca_model)
+
+# Get the variance explained by each dimension
+var_explained = principalvars(ca_model) / totalvar(ca_model)
+println("\nVariance explained by each dimension: ", round.(var_explained * 100, digits=2), "%")
+
+# Plotting the Biplot
+# We'll label rows and columns for clarity
+row_labels = ["Young Adults", "Middle-aged", "Seniors", "Teenagers"]
+col_labels = ["Cats", "Dogs", "Birds", "Fish", "Other"]
+
+# Create a scatter plot for row points
+biplot = scatter(row_coords[1,:], row_coords[2,:],
+    label="Row Points",
+    marker=:circle, markersize=6, markercolor=:blue,
+    xlabel="Dimension 1 (" * string(round(var_explained[1]*100, digits=2)) * "%)",
+    ylabel="Dimension 2 (" * string(round(var_explained[2]*100, digits=2)) * "%)",
+    title="Correspondence Analysis Biplot",
+    legend=:topleft,
+    aspect_ratio=:equal
+)
+
+# Add row labels
+annotate!([ (row_coords[1,i], row_coords[2,i], text(row_labels[i], :bottom, 8, :blue)) for i in 1:size(row_coords, 2) ]...)
+
+# Add column points to the same plot
+scatter!(biplot, col_coords[1,:], col_coords[2,:],
+    label="Column Points",
+    marker=:utriangle, markersize=6, markercolor=:red
+)
+
+# Add column labels
+annotate!([ (col_coords[1,i], col_coords[2,i], text(col_labels[i], :top, 8, :red)) for i in 1:size(col_coords, 2) ]...)
+
+# Display the plot
+display(biplot)
+
+
+```
+
+#### Bayesian form
+
+Bayesian CA is equivalent to Bayesian PCoA (above) and MDS (below), where the distance metric is the Chi-squared distance. This model directly assumes that your observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise. Simply replace the metric. Again with the Bayesian form, the axis flipping associated with rotational invariance means additional effort (via the Householder transform is advisable).
+
+
+
+
+### Nonmetric Multi-dimensional scaling
+
+Attempts to achieve similar goals of maximally representing similarities and differences in multidimensional data without resorting to Spectral Decomposition. Instead, the approach iteratively represents the higher distance between data points into a smaller user specified dimensional representation of those relative distances.  
+
+```{julia} 
+ 
+using Distances, MultivariateStats
+
+# Example data (replace with your actual dissimilarity matrix)
+# This is a sample dissimilarity matrix, e.g., computed from some features.
+# For NMDS, you typically start with a dissimilarity matrix.
+data_points = rand(10, 5) # 10 observations, 5 features
+dissimilarities = pairwise(Euclidean(), data_points, dims=2) # Compute Euclidean distances as dissimilarities
+
+# Perform Nonmetric Multidimensional Scaling (NMDS)
+# The 'ndim' parameter specifies the number of dimensions for the embedding
+# The 'maxoutdim' parameter is typically used for PCA or similar, but for MDS,
+# we directly specify 'ndim' which becomes 'maxoutdim' in the context of `fit(MDS, ...)`
+# The `distance` parameter takes the dissimilarity matrix.
+nmds_model = fit(MDS, dissimilarities, maxoutdim=2, metric=false) # metric=false for Nonmetric MDS
+
+# Get the embedded coordinates (the lower-dimensional representation)
+coordinates = principalcomponents(nmds_model) # This gives the embedded coordinates
+
+println("Original dissimilarity matrix (first 5x5):")
+display(dissimilarities[1:5, 1:5])
+println("\nNMDS embedded coordinates (first 5 rows):")
+display(coordinates[:, 1:5]') # Transpose to show points as rows
+
+using Plots
+
+# Assuming 'coordinates' from the previous step is a 2xN matrix
+# where N is the number of data points and 2 is the number of dimensions
+
+# Create a scatter plot of the embedded coordinates
+# coordinates[1,:] gives the x-values, coordinates[2,:] gives the y-values
+scatter_plot = scatter(coordinates[1,:], coordinates[2,:],
+    xlabel="NMDS Dimension 1",
+    ylabel="NMDS Dimension 2",
+    title="NMDS Embedded Coordinates",
+    legend=false,
+    aspect_ratio=:equal # Keep the aspect ratio equal to avoid distortion
+)
+
+# Display the plot
+display(scatter_plot)
+
+``` 
+
+
+#### Bayesian form
+
+Again with the Bayesian form, the axis flipping associated with rotational invariance means additional effort (via the Householder transform is advisable.
+
+The simpler form of MDS is equivalent to the PCoA and CA, above.
+
+
+#### Extending to Nonmetric Bayesian MDS
+
+For a truly nonmetric Bayesian MDS, the main difference lies in how D_obs is related to D_latent. Instead of a direct Normal likelihood, you would introduce a monotonic function f such that f(D_obs) ~ Normal(D_latent, sigma). This function f itself would be part of the model and needs to be estimated. Common approaches for f include:
+
+Spline-based monotonic functions: Represent f using monotonic splines with priors on their coefficients.
+Isotonic Regression: Use an increasing sequence of values delta_i for each unique observed dissimilarity d_i, such that delta_i ~ Normal(D_latent_corresponding, sigma) and delta_i < delta_{i+1}. This is more complex to implement directly in a probabilistic programming language like Turing as it requires constrained sampling.
+Implementing these monotonic constraints within Turing.jl requires more advanced techniques, potentially involving custom samplers or careful parameterizations to enforce monotonicity.
+
+The core idea is to introduce a series of parameters (let's call them transformed_diss_params) that are forced to be monotonically increasing. Each observed dissimilarity D_obs[i,j] is then mapped to one of these transformed_diss_params based on its rank among the unique observed dissimilarities, and this transformed value is used in the likelihood.
+
+
+```{julia}
+@model function bayesian_nonmetric_mds(D_obs, n_points, n_dims, unique_D_obs_values_sorted, D_obs_to_unique_idx)
+    n_unique = length(unique_D_obs_values_sorted)
+
+    # Priors for the latent coordinates X
+    X ~ MvNormal(Zeros(n_dims), I(n_dims))
+
+    # Prior for the observation noise standard deviation
+    sigma ~ InverseGamma(2, 3) # A common prior for scale parameters
+
+    # Parameters for the monotonic transformation (transformed dissimilarities)
+    # We define `transformed_diss_params` such that they are monotonically increasing
+    transformed_diss_params = Vector{Real}(undef, n_unique)
+    transformed_diss_params[1] ~ Normal(0, 1) # Prior for the first transformed value
+
+    for k in 2:n_unique
+        # Sample unconstrained log-difference
+        log_diff_k ~ Normal(0, 1)
+        # Ensure positivity of difference: psi_k = psi_{k-1} + exp(log_diff_k)
+        transformed_diss_params[k] = transformed_diss_params[k-1] + exp(log_diff_k)
+    end
+
+    # Calculate pairwise Euclidean distances from the latent coordinates X
+    D_latent = pairwise(Euclidean(), X, dims=2)
+
+    # Likelihood: transformed observed dissimilarities are normally distributed around latent distances
+    # We only consider the upper triangle of the matrix to avoid duplicating observations.
+    # Also, exclude diagonal (distance of point to itself is 0).
+    for i in 1:n_points
+        for j in (i+1):n_points
+            # Map the observed dissimilarity D_obs[i,j] to its corresponding index
+            # in the unique sorted values, and get the transformed parameter.
+            idx = D_obs_to_unique_idx[D_obs[i, j]]
+            transformed_D_obs_ij = transformed_diss_params[idx]
+
+            # Likelihood connects the transformed observed dissimilarity to the latent distance
+            transformed_D_obs_ij ~ Normal(D_latent[i, j], sigma)
+        end
+    end
+end
+
+
+```
+
+we first need to pre-process the observed dissimilarity matrix to extract its unique, sorted values and create a mapping from original values to their indices in this sorted list. This allows the model to correctly apply the monotonic transformation.
+
+```{julia}
+
+# Using the same synthetic D_obs from the metric MDS example
+# (Assuming dce0c2fd has been executed and D_obs, n_points, n_true_dims are available)
+
+# 1. Get unique, sorted observed dissimilarities (excluding diagonal zeros)
+unique_D_obs = sort(unique(D_obs[triu(trues(size(D_obs)), 1)]))
+
+# 2. Create a mapping from each unique dissimilarity value to its index
+D_obs_to_unique_idx = Dict(unique_D_obs[k] => k for k in 1:length(unique_D_obs))
+
+# --- Define and Sample from the Nonmetric Model ---
+# Define the nonmetric model with the pre-processed data
+nonmetric_model = bayesian_nonmetric_mds(D_obs, n_points, n_true_dims, unique_D_obs, D_obs_to_unique_idx)
+
+# Sample from the posterior distribution
+# (This might take longer than the metric MDS due to the added complexity of monotonic parameters)
+nonmetric_chain = sample(nonmetric_model, NUTS(), 1000) # Reduced samples for quicker demonstration
+
+display(nonmetric_chain)
+
+# Extract posterior mean of latent coordinates from the nonmetric chain
+mean_X_samples_nonmetric = mean(nonmetric_chain[:X].data, dims=1)
+posterior_X_nonmetric = reshape(mean_X_samples_nonmetric, n_true_dims, n_points)
+
+println("\nPosterior mean of latent coordinates (Nonmetric MDS, first 5 points):\n")
+display(posterior_X_nonmetric[:, 1:5])
+
+```
+
+### Mantel Matrix Correlation
+
+A method to compare two similarity or dissimilarity matrices, essentially by comparing the correlation between corresponding bivariate metrics. As such, it is also known as matrix correlation. 
+
+#### Freqentist permutation approach
+
+The Mantel test calculates the Pearson correlation between the vectorized lower
+triangles of two distance matrices. Significance is assessed by randomly permuting the
+rows (and corresponding columns) of one of the original data matrices (which effectively
+permutes its distance matrix) and recalculating the correlation many times to build a
+null distribution. The p-value indicates how likely the observed correlation is
+under the null hypothesis of no relationship between the two matrices.
+
+Ad-hoc hypothsis testing is done by permutation (resampling).
+
+
+```{julia}
+
+using Distances, LinearAlgebra, Statistics, Random, Plots 
+
+"""
+mantel_test(data1::AbstractMatrix, data2::AbstractMatrix, num_permutations::Int=999;
+  dist_metric1=Euclidean(), dist_metric2=Euclidean(), rng::AbstractRNG=Random.GLOBAL_RNG)
+
+Performs a Mantel test to assess the correlation between two distance matrices.
+
+# Arguments
+- `data1`: A matrix where rows are observations (e.g., sites) and columns are variables
+           (e.g., species abundances, environmental measurements).
+- `data2`: A matrix with the same number of observations (rows) as `data1`, representing
+           another set of variables.
+- `num_permutations`: The number of permutations to perform for significance testing.
+- `dist_metric1`: The distance metric to use for `data1` (from `Distances.jl`).
+                  Common choices include `Euclidean()`, `BrayCurtis()`, `Jaccard()`.
+- `dist_metric2`: The distance metric to use for `data2` (from `Distances.jl`).
+- `rng`: A random number generator for reproducible permutations. Defaults to `Random.GLOBAL_RNG`.
+
+# Returns
+- `observed_r`: The observed Pearson correlation coefficient between the two distance matrices.
+- `p_value`: The p-value, representing the proportion of permuted correlations
+             greater than or equal to the observed correlation.
+- `permuted_r_values`: An array of correlation values obtained from permutations.
+
+"""
+function mantel_test(
+  data1::AbstractMatrix, data2::AbstractMatrix, num_permutations::Int=999;
+  dist_metric1=Euclidean(), dist_metric2=Euclidean(), rng::AbstractRNG=Random.GLOBAL_RNG
+)
+
+  size(data1, 1) == size(data2, 1) || throw(DimensionMismatch("Number of rows in data1 and data2 must be the same."))
+  n_obs = size(data1, 1)
+
+  # 1. Calculate distance matrices between observations (rows)
+  # `dims=1` specifies that distances are computed between rows.
+  D1 = pairwise(dist_metric1, data1, dims=1)
+  D2 = pairwise(dist_metric2, data2, dims=1)
+
+  # 2. Extract the unique elements from the lower triangle (excluding the diagonal)
+  # This avoids redundant comparisons and self-correlations.
+  idx_matrix = trues(n_obs, n_obs)
+  idx_matrix[diagind(idx_matrix)] .= false # Set diagonal to false
+  lower_tri_indices = tril(idx_matrix) # Get indices for the lower triangle
+
+  vec_D1 = D1[lower_tri_indices]
+  vec_D2 = D2[lower_tri_indices]
+
+  # 3. Calculate the observed Pearson correlation coefficient
+  observed_r = cor(vec_D1, vec_D2)
+
+  # 4. Perform permutations to build the null distribution
+  permuted_r_values = Vector{Float64}(undef, num_permutations)
+
+  for i in 1:num_permutations
+      # Permute the rows of one of the original data matrices.
+      # This breaks the spatial/site correspondence between the two datasets
+      # while preserving the internal structure of each dataset.
+      perm = shuffle(rng, 1:n_obs)
+      D2_perm = pairwise(dist_metric2, data2[perm, :], dims=1)
+      vec_D2_perm = D2_perm[lower_tri_indices]
+      permuted_r_values[i] = cor(vec_D1, vec_D2_perm)
+  end
+
+  # 5. Calculate the p-value
+  # The p-value is the proportion of permuted correlations that are
+  # greater than or equal to the observed correlation.
+  p_value = sum(permuted_r_values .>= observed_r) / num_permutations
+
+  return observed_r, p_value, permuted_r_values
+end
+
+
+# Generate synthetic data for demonstration
+num_sites = 30       # Number of observations (e.g., ecological sites)
+num_species = 15     # Number of species
+num_env_vars = 7     # Number of environmental variables
+
+# Species abundance data (e.g., counts or biomass)
+# Rows are sites, columns are species
+species_data = rand(num_sites, num_species) .* 100
+
+# Environmental data (e.g., temperature, pH, etc.)
+# Rows are sites, columns are environmental variables
+environmental_data = rand(num_sites, num_env_vars) .* 20
+
+# Introduce some artificial correlation for demonstration purposes:
+# Let the abundance of the first few species be positively correlated with
+# the first environmental variable.
+for i in 1:num_sites
+    species_data[i, 1:3] .+= environmental_data[i, 1] * 50
+    species_data[i, 4:6] .+= environmental_data[i, 2] * 30
+end
+
+# Perform the Mantel test
+# Using Bray-Curtis distance for species data (common in ecology)
+# Using Euclidean distance for environmental data
+# Euclidean(): Standard straight-line distance. Good for physical environmental variables.
+# BrayCurtis(): Very popular for community abundance data because it accounts for differences in total abundance and composition without being overly sensitive to zeros.
+# Jaccard(): The standard for presence/absence (binary) data.
+# Cityblock(): Also known as Manhattan distance. Sum of absolute differences; less sensitive to outliers than Euclidean distance.
+# CosineDist(): Useful if you are more interested in the "angle" or proportion between variables rather than their absolute magnitude.
+
+observed_r, p_value, permuted_r_values = mantel_test(
+    species_data,
+    environmental_data,
+    9999, # Number of permutations (higher for better p-value resolution)
+    dist_metric1=BrayCurtis(),
+    dist_metric2=Euclidean(),
+    rng=MersenneTwister(123) # Use a specific RNG for reproducible permutations
+)
+
+println("\n--- Mantel Test Results ---")
+println("Observed Mantel r: ", round(observed_r, digits=4))
+println("P-value: ", round(p_value, digits=4))
+println("Number of permutations: ", length(permuted_r_values))
+
+# Optional: Visualize the distribution of permuted correlations
+# This helps to understand the null distribution and the position of the observed r.
+plot_title = "Mantel Test Permutation Distribution (Observed r = $(round(observed_r, digits=3)))"
+histogram(permuted_r_values, bins=50, label="Permuted r values",
+          title=plot_title,
+          xlabel="Correlation (r)", ylabel="Frequency",
+          legend=:topleft, color=:lightblue, linecolor=:black)
+vline!([observed_r], color=:red, linestyle=:dash, linewidth=2, label="Observed r")
+ 
+```
+
+
+
+### Procrustes Analysis
+
+How similar two matrices are can be assessed by quantifying how much deformation (rotation and shear) is required to make the matrices similar. Again, useful for hypothesis testing.
+
+
+#### Deterministic (Least squares) Procrustes (SVD)
+
+This is the standard mathematical "computation" of the Procrustes problem. It finds the rotation matrix $R$, scale $s$, and translation $T$ that minimizes the squared distance between two point sets $X$ and $Y$.
+
+
+```{julia}
+
+using LinearAlgebra
+
+"""
+    procrustes_svd(X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
+
+Performs a deterministic Procrustes analysis using SVD to find the optimal
+scaling, rotation, and translation to superimpose matrix X onto matrix Y.
+
+# Arguments
+- `X`: The reference set of points (N points x D dimensions).
+- `Y`: The target set of points (N points x D dimensions).
+
+# Returns
+- `X_transformed`: The transformed X matrix.
+- `s`: The optimal scaling factor.
+- `R`: The optimal rotation matrix.
+- `T_vec`: The optimal translation vector.
+- `mse`: The mean squared error after transformation.
+
+# Throws
+- `DimensionMismatch`: If the dimensions of X and Y do not match.
+"""
+
+function procrustes_svd(X::AbstractMatrix{T}, Y::AbstractMatrix{T}) where {T}
+    size(X) == size(Y) || throw(DimensionMismatch("Matrices X and Y must have the same dimensions."))
+    N, D = size(X)
+
+    # 1. Center the data
+    X_centroid = mean(X, dims=1)
+    Y_centroid = mean(Y, dims=1)
+
+    X_centered = X .- X_centroid
+    Y_centered = Y .- Y_centroid
+
+    # 2. Compute the covariance matrix H
+    H = X_centered' * Y_centered
+
+    # 3. Perform SVD on H
+    U, S, V = svd(H)
+
+    # 4. Compute the optimal rotation matrix R
+    # Handle reflection: If det(V * U') is -1, it implies a reflection.
+    # To ensure only rotation (and no reflection), we can adjust the last column of V.
+    # This is a common practice in Procrustes analysis to enforce proper rotation.
+    R = V * U'
+    if det(R) < 0
+        # Flip the sign of the last column of V
+        V_prime = copy(V)
+        V_prime[:, end] .*= -1
+        R = V_prime * U'
+    end
+
+    # 5. Compute the optimal scaling factor s
+    s = sum(S) / sum(abs2, X_centered)
+
+    # 6. Compute the optimal translation vector T_vec
+    T_vec = Y_centroid' - s * R * X_centroid'
+    T_vec = T_vec' # Convert back to row vector for consistency with centroids
+
+    # 7. Transform X
+    X_transformed = s .* (X_centered * R) .+ T_vec
+
+    # 8. Calculate Mean Squared Error
+    mse = sum(abs2, X_transformed - Y_centered) / N
+
+    return X_transformed, s, R, T_vec, mse
+end
+
+# --- Demonstration ---
+println("--- Deterministic Procrustes Analysis (SVD) ---")
+
+# Generate synthetic data
+# Original shape (e.g., a square)
+X_original = [
+    0.0 0.0;
+    1.0 0.0;
+    1.0 1.0;
+    0.0 1.0;
+]
+
+# Define true transformation parameters for Y
+true_s = 2.5
+true_theta = π / 6 # 30 degrees
+true_R_matrix = [cos(true_theta) -sin(true_theta); sin(true_theta) cos(true_theta)]
+true_T_vector = [3.0, -1.5]
+noise_std = 0.1
+
+# Create the target shape Y by transforming X_original and adding noise
+Y_true_transformed = true_s .* (X_original * true_R_matrix) .+ true_T_vector'
+Y_noisy = Y_true_transformed .+ noise_std .* randn(size(X_original))
+
+println("\nOriginal X:\n", X_original)
+println("\nTarget Y (noisy transformed X):\n", Y_noisy)
+
+# Perform Procrustes analysis
+X_transformed, s_opt, R_opt, T_vec_opt, final_mse = procrustes_svd(X_original, Y_noisy)
+
+println("\n--- Optimal Transformation Parameters ---")
+println("Optimal Scale (s): ", s_opt)
+println("Optimal Rotation Matrix (R):\n", R_opt)
+println("Optimal Translation Vector (T):\n", T_vec_opt)
+println("Final Mean Squared Error: ", final_mse)
+
+println("\nTransformed X:\n", X_transformed)
+
+# Verify the transformation by applying it manually and comparing with X_transformed
+X_manual_check = s_opt .* ((X_original .- mean(X_original, dims=1)) * R_opt) .+ T_vec_opt
+println("\nManual check of transformed X (should be very close to X_transformed):\n", X_manual_check)
+
+# --- Visualization (requires Plots.jl) ---
+using Plots
+gr() # Use the GR backend for Plots.jl
+
+plot(
+    X_original[:, 1], X_original[:, 2],
+    seriestype=:scatter, label="Original X", markersize=6, markercolor=:blue,
+    aspect_ratio=:equal, legend=:topleft, title="Procrustes Analysis (SVD)"
+)
+plot!(
+    Y_noisy[:, 1], Y_noisy[:, 2],
+    seriestype=:scatter, label="Target Y (Noisy)", markersize=6, markercolor=:red
+)
+plot!(
+    X_transformed[:, 1], X_transformed[:, 2],
+    seriestype=:scatter, label="Transformed X", markersize=6, markercolor=:green,
+    markeralpha=0.8
+)
+
+# Add lines to connect points for better shape visualization
+for i in 1:size(X_original, 1)
+    plot!([X_original[i,1], X_original[mod1(i+1, size(X_original,1)),1]],
+          [X_original[i,2], X_original[mod1(i+1, size(X_original,1)),2]],
+          line=(:blue, 1, :solid), label=false)
+    plot!([Y_noisy[i,1], Y_noisy[mod1(i+1, size(Y_noisy,1)),1]],
+          [Y_noisy[i,2], Y_noisy[mod1(i+1, size(Y_noisy,1)),2]],
+          line=(:red, 1, :solid), label=false)
+    plot!([X_transformed[i,1], X_transformed[mod1(i+1, size(X_transformed,1)),1]],
+          [X_transformed[i,2], X_transformed[mod1(i+1, size(X_transformed,1)),2]],
+          line=(:green, 1, :dash), label=false)
+end
+
+
+
+```
+
+#### Bayesian 2D Procrustes (Turing)
+
+This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when your data is noisy or you need a probabilistic estimate of how well two shapes align.
+
+
+
+```{julia}
+
+using Turing
+using Distributions
+using LinearAlgebra
+using Plots
+using StatsPlots # For density plots of chains
+
+"""
+    procrustes_analysis(X_obs::AbstractMatrix{T}, Y_obs::AbstractMatrix{T}) where {T}
+
+A Turing.jl model for Bayesian Procrustes analysis in 2D.
+
+Given two sets of points, X_obs and Y_obs, this model infers the optimal
+transformation (scale, rotation, translation) and observation noise
+to superimpose X_obs onto Y_obs.
+
+# Arguments
+- `X_obs`: The observed reference shape (N points x 2 dimensions).
+- `Y_obs`: The observed target shape (N points x 2 dimensions).
+
+# Latent Variables
+- `s`: Scale factor.
+- `theta`: Rotation angle in radians.
+- `R`: 2x2 Rotation matrix derived from `theta`.
+- `T_vec`: 2-element translation vector.
+- `sigma`: Standard deviation of the observation noise.
+"""
+
+@model function procrustes_analysis(X_obs::AbstractMatrix{T}, Y_obs::AbstractMatrix{T}) where {T}
+    N, D = size(X_obs) # N points, D dimensions
+
+    # Ensure the model is used for 2D data as rotation is parameterized by an angle
+    @assert D == 2 "This model currently supports only 2D Procrustes analysis for rotation."
+
+    # Priors for transformation parameters
+    s ~ LogNormal(0.0, 1.0) # Scale factor (must be positive)
+    theta ~ Uniform(-π, π) # Rotation angle in radians
+
+    # Construct the 2D rotation matrix from the angle
+    R = [cos(theta) -sin(theta); sin(theta) cos(theta)]
+
+    T_vec ~ MvNormal(zeros(D), 1.0) # Translation vector (D-dimensional)
+
+    # Prior for observation noise standard deviation (must be positive)
+    sigma ~ LogNormal(0.0, 1.0)
+
+    # Predicted Y coordinates based on the current transformation parameters
+    # Y_pred = s * (X_obs * R) .+ T_vec'
+    # The `.` operator ensures element-wise multiplication for `s` and broadcasting for `T_vec'`
+    Y_pred = s .* (X_obs * R) .+ T_vec'
+
+    # Likelihood: Each observed point in Y_obs is a noisy version of the predicted point
+    for i in 1:N
+        Y_obs[i, :] ~ MvNormal(Y_pred[i, :], sigma * I)
+    end
+end
+
+# 1. Generate synthetic data
+# Original shape (e.g., a square)
+X_original = [
+    0.0 0.0;
+    1.0 0.0;
+    1.0 1.0;
+    0.0 1.0;
+]
+
+# Define true transformation parameters
+true_s = 2.0
+true_theta = π / 4 # 45 degrees
+true_R = [cos(true_theta) -sin(true_theta); sin(true_theta) cos(true_theta)]
+true_T = [0.5, -0.3]
+true_sigma = 0.1
+
+# Create the true transformed shape
+Y_true_transformed = true_s .* (X_original * true_R) .+ true_T'
+
+# Add Gaussian noise to simulate observed data
+Y_noisy = Y_true_transformed .+ true_sigma .* randn(size(X_original))
+
+# 2. Instantiate the Turing model
+procrustes_model = procrustes_analysis(X_original, Y_noisy)
+
+# 3. Sample from the posterior distribution using NUTS (No-U-Turn Sampler)
+# NUTS is a gradient-based MCMC sampler, generally efficient for continuous parameters.
+num_samples = 2000 # Number of samples to draw
+num_chains = 4     # Number of parallel chains
+warmup_steps = 1000 # Warmup steps for adaptation
+target_acceptance = 0.8 # Target acceptance rate for NUTS
+
+println("Sampling from the posterior... This may take a moment.")
+chain = sample(
+    procrustes_model,
+    NUTS(warmup_steps, target_acceptance),
+    MCMCThreads(), # Use multiple threads for chains if available
+    num_samples,
+    num_chains,
+    progress=true
+)
+
+# 4. Summarize the results
+println("\n--- Posterior Summary ---")
+display(summary(chain))
+
+# 5. Extract posterior means for visualization and comparison
+posterior_s = mean(chain[:s])
+posterior_theta = mean(chain[:theta])
+posterior_R = [cos(posterior_theta) -sin(posterior_theta); sin(posterior_theta) cos(posterior_theta)]
+posterior_T = [mean(chain[:T_vec, 1]), mean(chain[:T_vec, 2])] # Access elements of T_vec
+posterior_sigma = mean(chain[:sigma])
+
+println("\n--- True Parameters ---")
+println("  Scale (s): ", true_s)
+println("  Rotation Angle (theta): ", true_theta, " radians (", rad2deg(true_theta), " degrees)")
+println("  Translation (T): ", true_T)
+println("  Noise Std Dev (sigma): ", true_sigma)
+
+println("\n--- Inferred Posterior Means ---")
+println("  Scale (s): ", posterior_s)
+println("  Rotation Angle (theta): ", posterior_theta, " radians (", rad2deg(posterior_theta), " degrees)")
+println("  Translation (T): ", posterior_T)
+println("  Noise Std Dev (sigma): ", posterior_sigma)
+
+# 6. Visualize the results
+plot(
+    X_original[:, 1], X_original[:, 2],
+    seriestype=:scatter, label="Original X", markersize=6, markercolor=:blue,
+    aspect_ratio=:equal, legend=:topleft, title="Bayesian Procrustes Analysis"
+)
+plot!(
+    Y_noisy[:, 1], Y_noisy[:, 2],
+    seriestype=:scatter, label="Noisy Y (Observed)", markersize=6, markercolor=:red
+)
+
+# Plot the transformed X using the inferred posterior mean parameters
+X_inferred_transformed = posterior_s .* (X_original * posterior_R) .+ posterior_T'
+plot!(
+    X_inferred_transformed[:, 1], X_inferred_transformed[:, 2],
+    seriestype=:scatter, label="Inferred Transformed X", markersize=6, markercolor=:green,
+    markeralpha=0.8
+)
+
+# Plot posterior distributions of the parameters
+StatsPlots.plot(chain, seriestype=:density, layout=(4,1), legend=false,
+    title=["Posterior of Scale" "Posterior of Angle" "Posterior of T_x" "Posterior of T_y" "Posterior of Sigma"],
+    xlabel=["s" "theta" "T_x" "T_y" "sigma"]
+)
+
+
+
+```
+
+#### Bayesian 3D Procrustes
+
+In 2D, rotation has only 1 degree of freedom (a single angle $\theta$). In 3D, rotation has 3 degrees of freedom. While you could use Euler angles (yaw, pitch, roll), they suffer from "gimbal lock" and discontinuities that can hinder MCMC sampling.
+
+A more robust approach for Turing is to use a Rotation Vector (also known as the Exponential Map). This represents rotation as a 3D vector where the direction is the axis of rotation and the magnitude is the angle. We then use Rodrigues' Rotation Formula to convert this vector into a $3 \times 3$ matrix.
+
+Parameterization: Instead of a single theta, we sample omega::Vector{3}.
+Helper Functions: The rodrigues and skew_3d functions are necessary to map the 3D vector space into the Special Orthogonal group $SO(3)$.
+Efficiency: Using the exponential map avoids the periodic boundary issues of Euler angles, allowing the NUTS sampler to move smoothly through the rotation space.
+
+
+This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when your data is noisy or you need a probabilistic estimate of how well two shapes align.
+
+```{julia}
+using Turing, LinearAlgebra
+
+function skew_3d(v)
+    return [0.0 -v[3] v[2]; v[3] 0.0 -v[1]; -v[2] v[1] 0.0]
+end
+
+function rotation_vector_to_matrix(omega)
+    theta = norm(omega)
+    if theta < 1e-12 return Matrix{eltype(omega)}(I, 3, 3) end
+    K = skew_3d(omega / theta)
+    return I + sin(theta) * K + (1 - cos(theta)) * K * K
+end
+
+@model function procrustes_analysis_3d(X_obs, Y_obs)
+    N, D = size(X_obs)
+    s ~ LogNormal(0.0, 1.0)
+    T_vec ~ MvNormal(zeros(D), 10.0)
+    
+    if D == 2
+        theta ~ Uniform(-π, π)
+        R = [cos(theta) -sin(theta); sin(theta) cos(theta)]
+    else
+        omega ~ MvNormal(zeros(3), π)
+        R = rotation_vector_to_matrix(omega)
+    end
+    
+    sigma ~ LogNormal(0.0, 1.0)
+    Y_pred = s .* (X_obs * R) .+ T_vec'
+
+    for i in 1:N
+        Y_obs[i, :] ~ MvNormal(Y_pred[i, :], sigma * I)
+    end
+end
+
+
+
+```
+
+$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
+
+### Classification
+ 
+#### Discrete Functions Analysis
+Discriminant Functions Analysis (DFA) aims to find linear combinations of predictor variables that best separate two or more classes or groups. In a Bayesian context, especially when dealing with more than two groups, this is commonly achieved through Bayesian Multinomial Logistic Regression (also known as Softmax Regression).
+
+This model estimates the probability of an observation belonging to each of the several classes, based on a set of predictor variables. The 'discriminant functions' are essentially the linear predictors for each category, and the model estimates the coefficients for these functions.
+
+
+```{julia}
+
+# Pkg.add("StatsAPI")
+# using LinearAlgebra # For I (identity matrix)
+# using StatsAPI # For softmax
+
+
+# 1. Generate Synthetic Data for Multinomial Logistic Regression (DFA-like scenario)
+num_samples = 300
+num_predictors = 2
+num_classes = 3 # Let's have 3 classes (0, 1, 2)
+
+# Predictor variables
+x1 = randn(num_samples) # Predictor 1
+x2 = randn(num_samples) # Predictor 2
+
+# Design matrix (including intercept)
+X_multinom = hcat(ones(num_samples), x1, x2)
+
+# True coefficients for each class. One class is typically used as a reference (e.g., class 1 is all zeros).
+# The coefficients represent the linear predictor for each class relative to the reference.
+# Size: (num_predictors + 1) x (num_classes - 1)
+
+# True coefficients for Class 2 vs Class 1 (reference)
+true_beta_class2 = [0.5, 1.0, -0.5] # Intercept, x1_coeff, x2_coeff
+
+# True coefficients for Class 3 vs Class 1 (reference)
+true_beta_class3 = [-0.8, -0.7, 1.2] # Intercept, x1_coeff, x2_coeff
+
+# Combine into a matrix of coefficients, where the first column is for the reference class (all zeros)
+true_betas_all = hcat(zeros(num_predictors + 1), true_beta_class2, true_beta_class3)
+
+# Calculate the linear predictors for each class for each observation
+linear_predictors = X_multinom * true_betas_all # num_samples x num_classes
+
+# Convert linear predictors to probabilities for each class using softmax
+# StatsAPI.softmax operates on columns by default, so we'll transpose
+probabilities_per_class = permutedims(StatsAPI.softmax(permutedims(linear_predictors)))
+
+# Generate class labels (y) based on these probabilities
+y_multinom = Vector{Int}(undef, num_samples)
+for i in 1:num_samples
+    # Categorical(p) expects probabilities for each category
+    y_multinom[i] = rand(Categorical(probabilities_per_class[i, :]))
+end
+
+println("Synthetic Multinomial Data Generated. First 10 observations:")
+display(hcat(round.(x1[1:10], digits=2), round.(x2[1:10], digits=2), round.(probabilities_per_class[1:10,:], digits=2), y_multinom[1:10]))
+
+println("\nCounts per class: ", StatsBase.countmap(y_multinom))
+
+  
+# Pkg.add("StatsBase") # For countmap in data generation
+using StatsBase # For countmap
+
+# 2. Define the Bayesian Multinomial Logistic Regression Model
+@model function bayesian_multinomial_logistic_regression(X, y, num_classes)
+    num_samples = length(y)
+    num_predictors_with_intercept = size(X, 2)
+
+    # Priors for the regression coefficients.
+    # One class (e.g., the first class, index 1) is typically set as the reference,
+    # so we only need coefficients for (num_classes - 1) comparisons.
+    # The coefficients for the reference class are implicitly zero.
+    
+    # `beta_coeffs` will be a matrix of size (num_predictors + 1) x (num_classes - 1).
+    # MvNormal is for vectors, so we declare individual coefficient vectors.
+    
+    # The coefficients for class 2 (relative to class 1)
+    beta_class2 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
+    # The coefficients for class 3 (relative to class 1)
+    beta_class3 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
+
+    # Construct the full matrix of coefficients for all classes
+    # The first column corresponds to the reference class (all zeros)
+    beta_matrix = hcat(Zeros(num_predictors_with_intercept), beta_class2, beta_class3)
+
+    # Calculate the linear predictors for each class for each observation
+    linear_predictors_model = X * beta_matrix # num_samples x num_classes
+
+    # Convert linear predictors to probabilities for each class using softmax
+    # StatsAPI.softmax operates on columns by default, so we permute (transpose) and then permute back
+    probabilities_per_class_model = permutedims(StatsAPI.softmax(permutedims(linear_predictors_model)))
+
+    # Likelihood: Each observed class label y[i] is a draw from a Categorical distribution
+    for i in 1:num_samples
+        y[i] ~ Categorical(probabilities_per_class_model[i, :])
+    end
+end
+
+# 3. Instantiate and Sample from the Model
+# Create an instance of the model with our data
+model_multinom = bayesian_multinomial_logistic_regression(X_multinom, y_multinom, num_classes);
+
+println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+chain_multinom = sample(model_multinom, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_multinom)
+
+println("\nTrue Coefficients (Class 2 vs Class 1):")
+println("Intercept: $(true_beta_class2[1])")
+println("X1 Coeff: $(true_beta_class2[2])")
+println("X2 Coeff: $(true_beta_class2[3])")
+
+println("\nPosterior Means for Coefficients (Class 2 vs Class 1):")
+println("Intercept (beta_class2[1]): ", round(mean(chain_multinom[:beta_class2___1]), digits=3))
+println("X1 Coeff (beta_class2[2]): ", round(mean(chain_multinom[:beta_class2___2]), digits=3))
+println("X2 Coeff (beta_class2[3]): ", round(mean(chain_multinom[:beta_class2___3]), digits=3))
+
+println("\nTrue Coefficients (Class 3 vs Class 1):")
+println("Intercept: $(true_beta_class3[1])")
+println("X1 Coeff: $(true_beta_class3[2])")
+println("X2 Coeff: $(true_beta_class3[3])")
+
+println("\nPosterior Means for Coefficients (Class 3 vs Class 1):")
+println("Intercept (beta_class3[1]): ", round(mean(chain_multinom[:beta_class3___1]), digits=3))
+println("X1 Coeff (beta_class3[2]): ", round(mean(chain_multinom[:beta_class3___2]), digits=3))
+println("X2 Coeff (beta_class3[3]): ", round(mean(chain_multinom[:beta_class3___3]), digits=3))
+
+# These posterior mean coefficients define your 'discriminant functions' for each class.
+# You can use them to predict class probabilities for new data points.
+
+```
+#### Softmax 
+
+Same as Bayesian multinomial regression (i.e. DFA)
+
+```{julia}
+# using Turing, Distributions, LinearAlgebra  Random, StatsAPI, StatsBase 
+ 
+# 1. Generate Synthetic Data for Multinomial Logistic Regression (Softmax Regression)
+num_samples = 300
+num_predictors = 2
+num_classes = 3 # Let's have 3 classes (1, 2, 3)
+
+# Predictor variables
+x1 = randn(num_samples) # Predictor 1
+x2 = randn(num_samples) # Predictor 2
+
+# Design matrix (including intercept)
+X_softmax = hcat(ones(num_samples), x1, x2)
+
+# True coefficients for each class. One class is typically used as a reference (e.g., class 1 is all zeros).
+# The coefficients represent the linear predictor for each class relative to the reference.
+# Size: (num_predictors + 1) x (num_classes - 1)
+
+# True coefficients for Class 2 vs Class 1 (reference)
+true_beta_class2 = [0.5, 1.0, -0.5] # Intercept, x1_coeff, x2_coeff
+
+# True coefficients for Class 3 vs Class 1 (reference)
+true_beta_class3 = [-0.8, -0.7, 1.2] # Intercept, x1_coeff, x2_coeff
+
+# Combine into a matrix of coefficients, where the first column is for the reference class (all zeros)
+true_betas_all = hcat(zeros(num_predictors + 1), true_beta_class2, true_beta_class3)
+
+# Calculate the linear predictors for each class for each observation
+linear_predictors = X_softmax * true_betas_all # num_samples x num_classes
+
+# Convert linear predictors to probabilities for each class using softmax
+# StatsAPI.softmax operates on columns by default, so we'll transpose for row-wise operation
+probabilities_per_class = permutedims(StatsAPI.softmax(permutedims(linear_predictors)))
+
+# Generate class labels (y) based on these probabilities
+y_softmax = Vector{Int}(undef, num_samples)
+for i in 1:num_samples
+    # Categorical(p) expects probabilities for each category
+    y_softmax[i] = rand(Categorical(probabilities_per_class[i, :]))
+end
+
+println("Synthetic Softmax Regression Data Generated. First 10 observations (X1, X2, Probabilities for classes 1,2,3, Assigned Class):")
+display(hcat(round.(x1[1:10], digits=2), round.(x2[1:10], digits=2), round.(probabilities_per_class[1:10,:], digits=2), y_softmax[1:10]))
+
+println("\nCounts per class: ", StatsBase.countmap(y_softmax))
+
+
+# 2. Define the Bayesian Softmax Regression Model
+@model function bayesian_softmax_regression(X, y, num_classes)
+    num_samples = length(y)
+    num_predictors_with_intercept = size(X, 2)
+
+    # Priors for the regression coefficients.
+    # One class (e.g., the first class, index 1) is typically set as the reference,
+    # so we only need coefficients for (num_classes - 1) comparisons.
+    # The coefficients for the reference class are implicitly zero.
+
+    # `beta_coeffs` will be a matrix of size (num_predictors + 1) x (num_classes - 1).
+    # MvNormal is for vectors, so we declare individual coefficient vectors.
+
+    # Coefficients for class 2 (relative to class 1)
+    beta_class2 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
+    # Coefficients for class 3 (relative to class 1)
+    beta_class3 ~ MvNormal(Zeros(num_predictors_with_intercept), I * 2.0)
+
+    # Construct the full matrix of coefficients, where the first column is for the reference class (all zeros)
+    beta_matrix = hcat(Zeros(num_predictors_with_intercept), beta_class2, beta_class3)
+
+    # Calculate the linear predictors for each class for each observation
+    linear_predictors_model = X * beta_matrix # num_samples x num_classes
+
+    # Convert linear predictors to probabilities for each class using softmax
+    # StatsAPI.softmax operates on columns by default, so we permute (transpose) and then permute back
+    probabilities_per_class_model = permutedims(StatsAPI.softmax(permutedims(linear_predictors_model)))
+
+    # Likelihood: Each observed class label y[i] is a draw from a Categorical distribution
+    for i in 1:num_samples
+        y[i] ~ Categorical(probabilities_per_class_model[i, :])
+    end
+end
+
+# Instantiate the model with our data
+model_softmax = bayesian_softmax_regression(X_softmax, y_softmax, num_classes);
+
+println("Bayesian Softmax Regression model defined.")
+
+
+# 3. Sample from the Posterior Distribution
+println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
+chain_softmax = sample(model_softmax, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_softmax)
+
+println("\nTrue Coefficients (Class 2 vs Class 1):")
+println("  Intercept: $(true_beta_class2[1])")
+println("  X1 Coeff: $(true_beta_class2[2])")
+println("  X2 Coeff: $(true_beta_class2[3])")
+
+println("\nPosterior Means for Coefficients (Class 2 vs Class 1):")
+println("  Intercept (beta_class2[1]): ", round(mean(chain_softmax[:beta_class2___1]), digits=3))
+println("  X1 Coeff (beta_class2[2]): ", round(mean(chain_softmax[:beta_class2___2]), digits=3))
+println("  X2 Coeff (beta_class2[3]): ", round(mean(chain_softmax[:beta_class2___3]), digits=3))
+
+println("\nTrue Coefficients (Class 3 vs Class 1):")
+println("  Intercept: $(true_beta_class3[1])")
+println("  X1 Coeff: $(true_beta_class3[2])")
+println("  X2 Coeff: $(true_beta_class3[3])")
+
+println("\nPosterior Means for Coefficients (Class 3 vs Class 1):")
+println("  Intercept (beta_class3[1]): ", round(mean(chain_softmax[:beta_class3___1]), digits=3))
+println("  X1 Coeff (beta_class3[2]): ", round(mean(chain_softmax[:beta_class3___2]), digits=3))
+println("  X2 Coeff (beta_class3[3]): ", round(mean(chain_softmax[:beta_class3___3]), digits=3))
+
+println("\nInterpretation: These posterior mean coefficients represent the estimated linear effects of the predictors on the log-odds of belonging to a specific class (relative to the reference class). They can be used to calculate predicted class probabilities for new data points.")
+
+```
+
+
+#### K-means
+
+K-Means is a classical clustering algorithm that aims to partition n observations into k clusters. A direct Bayesian probabilistic counterpart to K-Means is a Bayesian Gaussian Mixture Model (GMM). Instead of finding hard assignments and centroids through optimization, a Bayesian GMM models the data as being generated from a mixture of k Gaussian distributions, each representing a cluster. It estimates the parameters of these Gaussian distributions (means, covariances) and the mixing probabilities (weights) for each cluster, while also inferring the probabilistic assignment of each data point to a cluster.
+
+```{julai}
+
+# 1. Generate Synthetic Data for GMM (with 3 clusters)
+num_samples = 300
+num_dims = 2
+num_clusters = 3
+
+# True cluster parameters
+true_μ = [
+    [1.0, 1.0],  # Mean for cluster 1
+    [5.0, 1.0],  # Mean for cluster 2
+    [3.0, 5.0]   # Mean for cluster 3
+]
+
+true_Σ = [
+    Matrix(Diagonal([0.5, 0.5])), # Covariance for cluster 1 (spherical)
+    Matrix(Diagonal([0.8, 0.8])), # Covariance for cluster 2
+    Matrix(Diagonal([0.6, 0.6]))  # Covariance for cluster 3
+]
+
+# True mixing proportions (how many points belong to each cluster)
+true_π = [0.3, 0.4, 0.3]
+
+# Generate cluster assignments for each sample
+cluster_assignments = [rand(Categorical(true_π)) for _ in 1:num_samples]
+
+# Generate data points based on assignments
+data_points = Matrix{Float64}(undef, num_samples, num_dims)
+for i in 1:num_samples
+    k = cluster_assignments[i]
+    data_points[i, :] = rand(MvNormal(true_μ[k], true_Σ[k]))
+end
+
+# Convert to a format suitable for plotting and Turing (e.g., 2 x N matrix)
+X_gmm = permutedims(data_points)
+
+println("Synthetic GMM Data Generated. First 10 observations:")
+display(data_points[1:10,:])
+
+# Plot the synthetic data to visualize clusters
+scatter(X_gmm[1,:], X_gmm[2,:],
+        group=cluster_assignments,
+        xlabel="Dimension 1",
+        ylabel="Dimension 2",
+        title="Synthetic Data for Bayesian GMM",
+        legend=:topleft,
+
+
+@model function bayesian_gmm(X, num_dims, num_clusters)
+    num_samples = size(X, 2)
+
+    # Priors for mixing proportions (weights) of clusters
+    # Dirichlet prior ensures sum to 1 and positivity
+    π ~ Dirichlet(num_clusters, 1.0) # Symmetric Dirichlet prior
+
+    # Priors for cluster means (μ)
+    # Each mean is a vector of num_dims dimensions
+    μ = [Vector{Float64}(undef, num_dims) for _ in 1:num_clusters]
+    for k in 1:num_clusters
+        μ[k] ~ MvNormal(Zeros(num_dims), 5.0 * I) # Broad Normal prior for means
+    end
+
+    # Priors for cluster covariances (Σ)
+    # For simplicity, we'll assume diagonal covariance matrices (independent dimensions)
+    # and model the standard deviations.
+    σ = [Vector{Float64}(undef, num_dims) for _ in 1:num_clusters]
+    for k in 1:num_clusters
+        for d in 1:num_dims
+            # InverseGamma prior for variance, then sqrt for std dev.
+            σ[k][d] ~ InverseGamma(2, 3) |> sqrt # Prior for standard deviations
+        end
+    end
+
+    # Create covariance matrices from standard deviations
+    Σ = [Matrix(Diagonal(σ[k].^2)) for k in 1:num_clusters]
+
+    # Latent variable for cluster assignment for each data point
+    # Each z[i] is a categorical variable indicating which cluster point i belongs to
+    z = Vector{Int}(undef, num_samples)
+
+    # Likelihood: Each data point is assigned to a cluster, then drawn from that cluster's Gaussian
+    for i in 1:num_samples
+        # Cluster assignment z[i] is drawn from Categorical distribution with probabilities π
+        z[i] ~ Categorical(π)
+        
+        # Data point X[:, i] is drawn from the Gaussian of its assigned cluster z[i]
+        X[:, i] ~ MvNormal(μ[z[i]], Σ[z[i]])
+    end
+end
+
+# 3. Instantiate and Sample from the Model
+# Create an instance of the model with our data and desired number of clusters
+model_gmm = bayesian_gmm(X_gmm, num_dims, num_clusters);
+
+println("\nSampling from posterior (this may take a moment, especially for GMMs)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+# Adjust number of samples and chains as needed for convergence
+chain_gmm = sample(model_gmm, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_gmm)
+
+println("\nTrue Cluster Means:")
+for k in 1:num_clusters
+    println("  Cluster $(k): $(true_μ[k])")
+end
+
+println("\nPosterior Means for Cluster Means (μ):")
+for k in 1:num_clusters
+    # Extract samples for μ[k]
+    μk_samples_dim1 = mean(chain_gmm["μ[" * string(k) * "]_1"])
+    μk_samples_dim2 = mean(chain_gmm["μ[" * string(k) * "]_2"])
+    println("  Cluster $(k): [ $(round(μk_samples_dim1, digits=2)), $(round(μk_samples_dim2, digits=2)) ]")
+end
+
+println("\nTrue Mixing Proportions (π): $(true_π)")
+println("Posterior Means for Mixing Proportions (π):")
+for k in 1:num_clusters
+    println("  π[$(k)]: $(round(mean(chain_gmm["π[" * string(k) * "]"]), digits=3))")
+end
+
+# Visualize the inferred cluster means on top of the data
+plot_gmm = scatter(X_gmm[1,:], X_gmm[2,:],
+                   xlabel="Dimension 1",
+                   ylabel="Dimension 2",
+                   title="Bayesian GMM: Data with Inferred Cluster Means",
+                   legend=:topleft,
+                   aspect_ratio=:equal,
+                   markersize=3,
+                   markeralpha=0.6,
+                   color=:lightgray,
+                   label="Data Points",
+                   dpi=300)
+
+# Plot inferred means
+inferred_means_dim1 = [mean(chain_gmm["μ[" * string(k) * "]_1"]) for k in 1:num_clusters]
+inferred_means_dim2 = [mean(chain_gmm["μ[" * string(k) * "]_2"]) for k in 1:num_clusters]
+
+scatter!(plot_gmm, inferred_means_dim1, inferred_means_dim2,
+         marker=:star5,
+         markersize=10,
+         markercolor=[:red, :blue, :green][1:num_clusters],
+         markerstrokecolor=:black,
+         markerstrokewidth=1,
+         label="Inferred Cluster Mean",
+         series_annotations=text.(1:num_clusters, :bottom, 8, :black))
+
+display(plot_gmm)
+
+```
+
+
+
+#### Cluster Analysis
+
+Using metrics of difference, distance or similarity, classify into groups ... numerous methods. Highly subjective.
+
+
+
+```{julia}
+ 
+# 1. Generate Synthetic Mixed Data
+num_samples = 200
+num_clusters = 2
+
+# Parameters for data types:
+# Continuous: 1 dimension
+# Binomial: 1 dimension (e.g., number of successes out of 10 trials)
+# Multinomial: 1 dimension (e.g., counts in 3 categories)
+
+# True cluster parameters
+# Cluster 1
+μ_true_1 = [2.0]     # Continuous mean
+p_true_1 = 0.2      # Binomial success probability
+θ_true_1 = [0.6, 0.3, 0.1] # Multinomial probabilities for 3 categories
+
+# Cluster 2
+μ_true_2 = [7.0]
+p_true_2 = 0.8
+θ_true_2 = [0.1, 0.2, 0.7]
+
+# Combine into arrays for the model
+true_μ = [μ_true_1, μ_true_2]
+true_p = [p_true_1, p_true_2]
+true_θ = [θ_true_1, θ_true_2]
+
+true_π = [0.4, 0.6] # Mixing proportions
+
+# Binomial trials (fixed for all points)
+binomial_trials = 10
+# Multinomial categories (fixed)
+multinomial_categories = 3
+# Total count for multinomial (fixed for all points)
+multinomial_total_count = 20
+
+# Store generated data
+data_continuous = Vector{Float64}(undef, num_samples)
+data_binomial = Vector{Int}(undef, num_samples)
+data_multinomial = Matrix{Int}(undef, num_samples, multinomial_categories)
+cluster_assignments_true = Vector{Int}(undef, num_samples)
+
+for i in 1:num_samples
+    # Assign cluster
+    k = rand(Categorical(true_π))
+    cluster_assignments_true[i] = k
+
+    # Generate continuous data
+    data_continuous[i] = rand(Normal(true_μ[k][1], 1.0)) # Assuming fixed std dev for simplicity
+
+    # Generate binomial data
+    data_binomial[i] = rand(Binomial(binomial_trials, true_p[k]))
+
+    # Generate multinomial data
+    data_multinomial[i, :] = rand(Multinomial(multinomial_total_count, true_θ[k]))
+end
+
+println("Synthetic Mixed Data Generated. First 5 observations:")
+display(hcat(data_continuous[1:5], data_binomial[1:5], data_multinomial[1:5, :], cluster_assignments_true[1:5]))
+
+# For Turing, we'll pass these as separate arrays
+
+
+@model function bayesian_mixed_data_gmm(
+    data_cont, data_binom, data_mult, 
+    num_clusters, num_cont_dims, binomial_trials, multinomial_total_count, multinomial_categories)
+    num_samples = length(data_cont)
+
+    # Priors for mixing proportions (weights) of clusters
+    π ~ Dirichlet(num_clusters, 1.0)
+
+    # Priors for continuous component parameters (mean and standard deviation)
+    μ_cont = [Vector{Float64}(undef, num_cont_dims) for _ in 1:num_clusters]
+    σ_cont = [Vector{Float64}(undef, num_cont_dims) for _ in 1:num_clusters]
+    for k in 1:num_clusters
+        μ_cont[k] ~ MvNormal(Zeros(num_cont_dims), 5.0 * I) # Broad Normal prior for means
+        for d in 1:num_cont_dims
+            σ_cont[k][d] ~ InverseGamma(2, 3) |> sqrt # Prior for standard deviations
+        end
+    end
+    Σ_cont = [Matrix(Diagonal(σ_cont[k].^2)) for k in 1:num_clusters]
+
+    # Priors for binomial component parameters (success probability)
+    p_binom = Vector{Float64}(undef, num_clusters)
+    for k in 1:num_clusters
+        p_binom[k] ~ Beta(1, 1) # Uniform Beta prior for success probability
+    end
+
+    # Priors for multinomial component parameters (category probabilities)
+    θ_mult = [Vector{Float64}(undef, multinomial_categories) for _ in 1:num_clusters]
+    for k in 1:num_clusters
+        θ_mult[k] ~ Dirichlet(multinomial_categories, 1.0) # Symmetric Dirichlet prior
+    end
+
+    # Latent variable for cluster assignment for each data point
+    z = Vector{Int}(undef, num_samples)
+
+    # Likelihood: Each data point's components are drawn from its assigned cluster's parameters
+    for i in 1:num_samples
+        # Cluster assignment z[i] is drawn from Categorical distribution with probabilities π
+        z[i] ~ Categorical(π)
+
+        # Continuous data component likelihood
+        data_cont[i] ~ MvNormal(μ_cont[z[i]], Σ_cont[z[i]])
+
+        # Binomial data component likelihood
+        data_binom[i] ~ Binomial(binomial_trials, p_binom[z[i]])
+
+        # Multinomial data component likelihood
+        data_mult[i, :] ~ Multinomial(multinomial_total_count, θ_mult[z[i]])
+    end
+end
+
+# Instantiate and Sample from the Model
+num_cont_dims = 1 # We generated 1 continuous dimension
+
+model_mixed = bayesian_mixed_data_gmm(
+    data_continuous, data_binomial, data_multinomial,
+    num_clusters, num_cont_dims, binomial_trials, multinomial_total_count, multinomial_categories);
+
+println("\nSampling from posterior for mixed-data GMM (this will take longer!)...")
+chain_mixed = sample(model_mixed, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# Display and Interpret Results
+display(chain_mixed)
+
+println("\nTrue Mixing Proportions (π): $(true_π)")
+println("Posterior Means for Mixing Proportions (π):")
+for k in 1:num_clusters
+    println("  π[$(k)]: $(round(mean(chain_mixed["π[" * string(k) * "]"]), digits=3))")
+end
+
+println("\nTrue Continuous Means (μ_cont): $(true_μ)")
+println("Posterior Means for Continuous Means (μ_cont):")
+for k in 1:num_clusters
+    println("  μ_cont[$(k)]: [ $(round(mean(chain_mixed["μ_cont[" * string(k) * "]_1"]), digits=3)) ]")
+end
+
+println("\nTrue Binomial Success Probabilities (p_binom): $(true_p)")
+println("Posterior Means for Binomial Success Probabilities (p_binom):")
+for k in 1:num_clusters
+    println("  p_binom[$(k)]: $(round(mean(chain_mixed["p_binom[" * string(k) * "]"]), digits=3))")
+end
+
+println("\nTrue Multinomial Probabilities (θ_mult): $(true_θ)")
+println("Posterior Means for Multinomial Probabilities (θ_mult):")
+for k in 1:num_clusters
+    for c in 1:multinomial_categories
+        println("  θ_mult[$(k)][$(c)]: $(round(mean(chain_mixed["θ_mult[" * string(k) * "]_" * string(c)]), digits=3))")
+    end
+end
+
+
+
+```
+
+
+#### Random Forest
+
+This is frequentist.
+
+
+```{julia} 
+
+# Generate some synthetic data for regression
+num_samples = 200
+num_features = 3
+
+X = randn(num_samples, num_features) * 5 # Predictor variables
+
+# True function with some noise
+y_true = X[:, 1].^2 + 2 * X[:, 2] - 3 * X[:, 3] + 5
+y = y_true + randn(num_samples) * 2 # Add some noise
+
+println("Synthetic data generated (first 5 rows of X and y):")
+display(hcat(X[1:5,:], y[1:5]))
+ 
+# Split data into training and testing sets (simple split for demonstration)
+train_ratio = 0.7
+split_idx = floor(Int, num_samples * train_ratio)
+
+X_train = X[1:split_idx, :]
+y_train = y[1:split_idx]
+X_test = X[split_idx+1:end, :]
+y_test = y[split_idx+1:end]
+
+println("Data split into training and test sets.")
+println("Training samples: $(size(X_train, 1))")
+println("Test samples: $(size(X_test, 1))\n")
+
+# 1. Train a Random Forest Regressor
+# n_trees: number of trees in the forest
+# n_subfeatures: number of features to consider at each split (for feature bagging)
+# partial_sampling: fraction of samples to consider for each tree (for data bagging)
+# max_depth: maximum depth of each tree
+# min_samples_leaf: minimum number of samples required to be at a leaf node
+
+model = build_forest(
+    y_train, 
+    X_train,
+    20,                # n_trees (number of trees)
+    num_features,      # n_subfeatures (consider all features at each split for simplicity)
+    0.7,               # partial_sampling (fraction of samples per tree)
+    5,                 # max_depth
+    1                  # min_samples_leaf
+)
+
+println("Random Forest model trained.\n")
+
+# 2. Make predictions on the test set
+y_pred = apply_forest(model, X_test)
+
+# 3. Evaluate the model (e.g., Mean Squared Error)
+mse = sum((y_pred .- y_test).^2) / length(y_test)
+println("Mean Squared Error on test set: $(round(mse, digits=4))")
+
+# 4. Visualize actual vs. predicted values (simple scatter plot)
+plot(
+    y_test, y_pred, seriestype=:scatter, 
+    xlabel="Actual Values", ylabel="Predicted Values", 
+    title="Random Forest Regression: Actual vs. Predicted",
+    legend=false, aspect_ratio=:equal, markeralpha=0.6
+)
+
+# Add a diagonal line for perfect prediction
+plot!([minimum(y_test), maximum(y_test)], [minimum(y_test), maximum(y_test)], 
+    line=(:dash, 2, :red), label="Perfect Prediction")
+
+```
+
+Bayesian Decision Trees is similar: One could build a single Bayesian decision tree by placing priors on the splitting rules (e.g., probability of splitting, choice of feature and split point) and the leaf node parameters (e.g., a Normal distribution for regression output). The MCMC sampler would then explore the space of possible tree structures and parameters.
+
+
+#### Neural net models
+
+
+##### Standard
+
+
+```{julia}
+
+# Pkg.add("Flux")
+# Pkg.add("Plots")
+# Pkg.add("Random")
+
+using Flux
+using Flux: train!, mse
+
+
+# 1. Generate Synthetic Data
+num_samples = 100
+
+# Input features (1D for simplicity)
+X_data = rand(1, num_samples) * 10 .- 5 # Data between -5 and 5
+
+# True non-linear relationship with noise
+# y = 0.5 * X^2 + 2*X + 3 + noise
+y_true = 0.5 .* X_data.^2 .+ 2 .* X_data .+ 3
+y_data = y_true .+ randn(1, num_samples) .* 2 # Add some Gaussian noise
+
+println("Synthetic data generated. First 5 samples (X and y):")
+display(hcat(X_data[:,1:5]', y_data[:,1:5]'))
+
+# Plot the synthetic data
+scatter_plot = scatter(vec(X_data), vec(y_data),
+    label="Observed Data",
+    xlabel="X", ylabel="Y",
+    title="Synthetic Data for NN Regression",
+    legend=:topleft, markeralpha=0.7)
+display(scatter_plot);
+
+
+# 2. Define the Neural Network Architecture
+# A simple feedforward network with one hidden layer and tanh activation
+model = Chain(
+    Dense(1, 10, tanh), # Input layer (1 feature) to hidden layer (10 neurons), tanh activation
+    Dense(10, 1)        # Hidden layer to output layer (1 output for regression)
+)
+
+println("Neural Network model defined:")
+display(model)
+
+# Define the loss function (Mean Squared Error for regression)
+loss(x, y) = mse(model(x), y)
+
+# Define the optimizer
+optimizer = ADAM(0.01) # Adam optimizer with a learning rate of 0.01
+
+println("\nLoss function and optimizer defined.")
+
+
+# 3. Train the Network
+num_epochs = 200
+
+println("\nTraining the neural network for $(num_epochs) epochs...")
+
+# Store loss values for plotting
+training_losses = Float64[]
+
+for epoch in 1:num_epochs
+    # Flux's train! function updates model parameters based on loss and optimizer
+    # We pass the loss function, the parameters (model), the data, and the optimizer
+    train!(loss, Flux.params(model), [(X_data, y_data)], optimizer)
+
+    current_loss = loss(X_data, y_data)
+    push!(training_losses, current_loss)
+
+    if epoch % 50 == 0
+        println("Epoch $(epoch): Loss = $(round(current_loss, digits=4))")
+    end
+end
+
+println("Training complete.")
+
+# Plot training loss over epochs
+plot_loss = plot(training_losses,
+    xlabel="Epoch", ylabel="Loss (MSE)",
+    title="Training Loss over Epochs",
+    legend=false)
+display(plot_loss);
+
+
+# 4. Make Predictions and Visualize Results
+
+# Create a range of new X values for prediction
+X_test = collect(range(-5.0, stop=5.0, length=200))
+X_test_input = reshape(X_test, 1, length(X_test))
+
+# Make predictions with the trained model
+y_pred_mean = model(X_test_input)
+
+# Plot the results
+pred_plot = scatter(vec(X_data), vec(y_data),
+    label="Observed Data",
+    xlabel="X", ylabel="Y",
+    title="Standard Neural Network Regression",
+    legend=:topleft, markeralpha=0.7)
+
+plot!(pred_plot, vec(X_test_input), vec(y_pred_mean),
+    line=(:solid, 2, :blue), label="NN Prediction")
+
+display(pred_plot)
+
+println("\nInterpretation: The blue line shows the neural network's learned relationship between X and Y. Unlike the BNN, this plot doesn't show uncertainty, as the standard neural network provides a single point estimate for each prediction.")
+
+```
+
+
+
+##### Bayesian Neural Net (BNN)
+ 
+```{julia}
+# 1. Generate Synthetic Data
+num_samples = 100
+num_features = 1 # Simple 1D input
+
+# Input features
+X_data = rand(num_samples, num_features) * 10 .- 5 # Data between -5 and 5
+
+# True non-linear relationship with noise
+# y = 0.5 * X^2 + 2*X + 3 + noise
+y_true = 0.5 .* X_data[:,1].^2 .+ 2 .* X_data[:,1] .+ 3
+y_data = y_true .+ randn(num_samples) .* 2 # Add some Gaussian noise
+
+println("Synthetic data generated. First 5 samples:")
+display(hcat(X_data[1:5,:], y_data[1:5]))
+
+# Plot the synthetic data
+scatter_plot = scatter(X_data[:,1], y_data, 
+    label="Observed Data", 
+    xlabel="X", ylabel="Y", 
+    title="Synthetic Data for BNN Regression", 
+    legend=:topleft, markeralpha=0.7)
+display(scatter_plot);
+
+
+# 2. Define the Bayesian Neural Network Model
+@model function bnn_regression(X, y, num_hidden_nodes, num_output_nodes)
+    num_samples, num_features = size(X)
+
+    # Priors for weights and biases of the first layer (input to hidden)
+    # Each weight and bias drawn from a Normal distribution
+    weights1 ~ MvNormal(Zeros(num_features, num_hidden_nodes), I * 2.0)
+    bias1 ~ MvNormal(Zeros(num_hidden_nodes), I * 2.0)
+
+    # Priors for weights and biases of the second layer (hidden to output)
+    weights2 ~ MvNormal(Zeros(num_hidden_nodes, num_output_nodes), I * 2.0)
+    bias2 ~ MvNormal(Zeros(num_output_nodes), I * 2.0)
+
+    # Prior for the observation noise standard deviation
+    sigma ~ InverseGamma(2, 3) # A common prior for scale parameters
+
+    # Neural Network Forward Pass
+    # Input layer to Hidden layer with tanh activation
+    hidden_layer_output = tanh.(X * weights1 .+ bias1') # X*W1 + B1, then tanh
+
+    # Hidden layer to Output layer
+    y_pred_mean = hidden_layer_output * weights2 .+ bias2' # H*W2 + B2
+
+    # Likelihood: Observed y values are normally distributed around the network's predictions
+    # Assuming independent observations, so we iterate.
+    for i in 1:num_samples
+        y[i] ~ Normal(y_pred_mean[i,1], sigma) # y_pred_mean[i,1] because num_output_nodes is 1
+    end
+end
+
+# Set model parameters
+num_hidden_nodes = 5 # Number of neurons in the hidden layer
+num_output_nodes = 1 # For regression, typically 1 output
+
+# Instantiate the model
+model = bnn_regression(X_data, y_data, num_hidden_nodes, num_output_nodes);
+
+println("Bayesian Neural Network model defined with $(num_features) input features, $(num_hidden_nodes) hidden nodes, and $(num_output_nodes) output node.")
+
+
+# 3. Sample from the Posterior Distribution
+println("\nSampling from posterior (this may take a while for BNNs!)... Using NUTS sampler.")
+chain = sample(model, NUTS(0.65), 1000, 2); # 1000 samples per chain, 2 chains
+
+# Display the chain summary
+display(chain)
+
+
+# 4. Make Predictions and Visualize Uncertainty
+
+# Create a range of new X values for prediction
+X_test = collect(range(-5.0, stop=5.0, length=200)) # 200 points for smooth prediction line
+X_test_matrix = reshape(X_test, length(X_test), 1)
+
+# Extract sampled weights and biases from the chain
+# We'll collect a subset of samples to make predictions more efficient
+num_prediction_samples = 200 # Use 200 samples from the chain for predictions
+sampled_indices = rand(1:size(chain, 1), num_prediction_samples)
+
+# Initialize a matrix to store predictions from each sample
+all_y_preds = Matrix{Float64}(undef, length(X_test), num_prediction_samples)
+
+for (idx, sample_idx) in enumerate(sampled_indices)
+    # Get parameters for this sample
+    s_weights1 = chain[:weights1][sample_idx, :, :]
+    s_bias1 = chain[:bias1][sample_idx, :]
+    s_weights2 = chain[:weights2][sample_idx, :, :]
+    s_bias2 = chain[:bias2][sample_idx, :]
+
+    # Perform forward pass for test data
+    s_hidden_output = tanh.(X_test_matrix * s_weights1 .+ s_bias1')
+    s_y_pred_mean = s_hidden_output * s_weights2 .+ s_bias2'
+    
+    all_y_preds[:, idx] = s_y_pred_mean[:,1]
+end
+
+# Calculate mean and credible intervals for predictions
+mean_y_pred = mean(all_y_preds, dims=2)[:,1]
+lower_bound = [quantile(all_y_preds[i,:], 0.025) for i in 1:length(X_test)]
+upper_bound = [quantile(all_y_preds[i,:], 0.975) for i in 1:length(X_test)]
+
+# Plot the results
+pred_plot = plot(X_data[:,1], y_data, 
+    seriestype=:scatter, label="Observed Data", 
+    xlabel="X", ylabel="Y", 
+    title="Bayesian Neural Network Regression with Uncertainty", 
+    legend=:topleft, markeralpha=0.7)
+
+plot!(pred_plot, X_test, mean_y_pred, 
+    line=(:solid, 2, :blue), label="BNN Mean Prediction")
+
+plot!(pred_plot, X_test, lower_bound, 
+    fillrange=upper_bound, fillalpha=0.2, color=:blue, 
+    label="95% Credible Interval", 
+    line=(:none))
+
+display(pred_plot)
+
+println("\nInterpretation: The blue line represents the mean prediction of the BNN, and the shaded blue area represents the 95% credible interval, illustrating the model's uncertainty about its predictions. Notice how the uncertainty might increase in areas where there is less data.")
+
+```
+
+
+### Finite and Infinite mixture models
+
+NOTE:: This section is mostly copied from the [Turing tutorial on KMM](https://turinglang.org/dev/tutorials/06-infinite-mixture-model) .
+
+- Unidimensional Kernel Mixture model with K pre-specified components that cover the space
+- $\alpha$ = concentration parameter of 1 (or k, the dimension of the Dirichlet distribution, by the definition used in the topic modelling literature) results in all sets of probabilities being equally likely, i.e., in this case the Dirichlet distribution of dimension k is equivalent to a uniform distribution over a k-1-dimensional simplex. This is not the same as what happens when the concentration parameter tends towards infinity. In the former case, all resulting distributions are equally likely (the distribution over distributions is uniform). In the latter case, only near-uniform distributions are likely (the distribution over distributions is highly peaked around the uniform distribution).
+
+The labeling non-identifiability inherent to degenerate mixture models yields multimodal distributions that even the most start-of-the-art computational algorithms cannot fit. In order to ensure accurate fits we need to break the labeling degeneracy in some way.
+
+From the perspective of Bayesian mixture models we can break this degeneracy by complementing the mixture likelihood with non-exchangeable prior information. A principled prior that assigns each mixture component to a specific responsibility will break the degeneracy, but unless that prior is incredibly strong the modes corresponding to disfavored assignments will maintain enough posterior mass to require exploration. Alternatively, a non-exchangeable prior that enforces a standard parameter ordering exactly removes the labeling degeneracy without compromising inferences.
+
+Even with the labeling degeneracy removed, however, Bayesian mixture models can still be troublesome to fit. As components begin to collapse into each other, for example, the posterior geometry becomes more and more pathological. Furthermore, mixture models often exhibit multimodalities beyond just those induced by the labeling degeneracy. Resolving the degeneracy does not eliminate these tangible modes and the computational issues they beget.
+
+As with so many modeling techniques, mixture models can be powerful in practice, provided that they are employed with great care.
+
+#### Example
+
+First a small example showing simplest case. Generate data and fit it.
+
+```{julia}
+
+# using Graphs, Distances, Peaks, KernelDensity, Interpolations 
+
+# generate data
+
+# Simulate data from a bimodal distribution
+# data = vcat(rand(Normal(-1, 0.1), 500), rand(Normal(1, 0.1), 500))
+data = vcat(rand(Normal(-1.0, 0.5), 500), rand(Normal( 2.0, 0.5), 1000))
+
+function fit_function(p::NamedTuple{(:a, :mu, :sigma)}, x::Real)
+    # a (peak areas) and mu (peak means)  sigma (peak width) 
+    p.a[1] * pdf(Normal(p.mu[1], p.sigma), x) +
+    p.a[2] * pdf(Normal(p.mu[2], p.sigma), x)
+end
+
+true_par_values = (a = [500, 1000], mu = [-1.0, 2.0], sigma = 0.5)
+
+hist = append!(Histogram(-2:0.1:4), data)
+
+pl = Plots.plot( normalize(hist, mode=:density), st = :steps, label = "Data", 
+    title = "Data and True Statistical Model" )
+pl = Plots.plot!( pl, -4:0.01:4, x -> fit_function(true_par_values, x), label = "Truth" )
+ 
+# example work with kernel density smoothes and characterizing them:
+hist = append!(Histogram(-2:0.1:4), data)
+dens = normalize(hist, mode=:density)
+weights = repeat([1], length(data) )
+
+U = kde(data; weights= weights, bandwidth=0.1)  #normal kernal by default
+# sum(U.density)*0.00410418834246899 == 1 # .. small value is the increment of U.x
+
+pl = plot(pl, U.x, U.density .* length(data) )  # KD smooth
+
+w = 5  # length of window in one direction (index, not x-value)
+pks = findmaxima(U.density, w )
+DataFrame(pks[Not(:data)])
+
+plotpeaks(U.x, U.density; peaks=pks.indices)
+
+pks = peakproms( pks; min=0.001)  # compute prominences
+DataFrame(pks[Not(:data)])
+
+pks = peakwidths( pks; min=0.1)  # compute widths at 50% prominences
+DataFrame(pks[Not(:data)])
+
+filterpeaks!( pks, :proms; min=0.001)
+
+# Now re-estimate parameters of mixtures distributions via Turing (assume 8 nodes)
+
+  
+Turing.@model function kmm(x, imodes, n_imodes, N )
+    σ² ~ filldist( InverseGamma(2, 3), n_imodes)  # variance prior 
+    μ ~ arraydist( [Normal(imodes[i], sqrt(σ²[i])) for i in 1:n_imodes] )  # inital guess of approx mean location of modal groups
+    kernels = map( i -> Normal(μ[i], sqrt(σ²[i])), 1:n_imodes )
+    α ~ Dirichlet(n_imodes, 1.0)
+    mixdist = MixtureModel(kernels, α)
+    x ~ filldist(mixdist, N)
+end
+
+# Define a kernel mixture with 10 gaussian components, with means covering -2:2
+# and Estimate weights
+
+N = size(data, 1)
+n_imodes = 8  # every 0.5 x
+sd_imodes = 0.5 # approx magnitude of variability of size classes
+imodes =  range(-4, stop=4, length=n_imodes)   # imodes
+M = kmm(data, imodes, n_imodes, N)
+
+nsamps = 1000
+chain = sample(M, Turing.NUTS(0.65), nsamps)
+
+v = zeros(n_imodes)
+v[4] = 1.0
+mp = predict( kmm(missing, v, n_imodes, N), chain)
+k = mp.value.data[1:1000,:,:]
+pl = Plots.plot()
+for i in 1:N 
+    Plots.density!( pl, k[:,i,:], color="red")
+end
+Plots.density!(pl, data; legend=false, xlim=(minimum(data), maximum(data)) )
+
+
+```
+#### Generative Model:
+
+$$
+\begin{equation*}
+\begin{aligned}
+\pi_1 &\sim \mathrm{Beta}(a, b) \\
+\pi_2 &= 1-\pi_1 \\
+\mu_1 &\sim \mathrm{Normal}(\mu_0, \Sigma_0) \\
+\mu_2 &\sim \mathrm{Normal}(\mu_0, \Sigma_0) \\
+z_i &\sim \mathrm{Categorical}(\pi_1, \pi_2) \\
+x_i &\sim \mathrm{Normal}(\mu_{z_i}, \Sigma)
+\end{aligned}
+\end{equation*}
+$$
+
+where π_i are mixing weights such they sum to 1
+and z_i is a latent assignment of observation x_i to class i
+
+```{julia}
+
+@model function two_model(x)
+  # Hyper-parameters
+  μ0 = 0.0
+  σ0 = 1.0
+
+  # Draw weights.
+  π1 ~ Beta(1, 1)
+  π2 = 1 - π1
+
+  # Draw locations of the components.
+  μ1 ~ Normal(μ0, σ0)
+  μ2 ~ Normal(μ0, σ0)
+
+  # Draw latent assignment.
+  z ~ Categorical([π1, π2])
+
+  # Draw observation from selected component.
+  if z == 1
+      x ~ Normal(μ1, 1.0)
+  else
+      x ~ Normal(μ2, 1.0)
+  end
+end
+
+```
+For large finite mixture models, it expands to:
+
+See also [https://turinglang.org/stable/tutorials/01-gaussian-mixture-model/]
+
+$$
+\begin{align}
+(\pi_1, \dots, \pi_K) &\sim Dirichlet(K, \alpha) \\
+\mu_k &\sim \mathrm{Normal}(\mu_0, \Sigma_0), \;\; \forall k \\
+z &\sim Categorical(\pi_1, \dots, \pi_K) \\
+x &\sim \mathrm{Normal}(\mu_z, \Sigma)
+\end{align}
+$$
+
+Require a generalization of Dirichlet for K = Infinity
+
+This is done by integrating out the weights:
+[https://groups.seas.harvard.edu/courses/cs281/papers/rasmussen-1999a.pdf]
+
+to provide the conditional prior for the latent z:
+
+$$
+p(z_i = k \mid z_{\not i}, \alpha) = \frac{n_k + \alpha K}{N - 1 + \alpha}
+$$
+
+where,  $z_{\not i}$  are the latent assignments of all observations except observation i
+$n_k$ are the number of observations at component/group k (excluding observation i). $\alpha$
+is the concentration parameter of the Dirichlet distribution (used as prior over the mixing weights).
+
+This gives the ("Chinese restaurant processes")[https://en.wikipedia.org/wiki/Chinese_restaurant_process]
+
+"
+a discrete-time stochastic process, analogous to seating customers at tables in a restaurant. Imagine a restaurant with an infinite number of circular tables, each with infinite capacity. Customer 1 sits at the first table. The next customer either sits at the same table as customer 1, or the next table. This continues, with each customer choosing to either sit at an occupied table with a probability proportional to the number of customers already there (i.e., they are more likely to sit at a table with many customers than few), or an unoccupied table. At time n, the n customers have been partitioned among m ≤ n tables (or blocks of the partition). The results of this process are exchangeable, meaning the order in which the customers sit does not affect the probability of the final distribution. This property greatly simplifies a number of problems in population genetics, linguistic analysis, and image recognition.
+
+The restaurant analogy first appeared in a 1985 write-up by David Aldous,[1] where it was attributed to Jim Pitman (who additionally credits Lester Dubins).[2]
+"
+
+Ultimately: it is a "rich get richer property" and the number of clusters is logarithmic in the number of observations and data points. This is a side-effect of the "rich-get-richer" phenomenon, i.e. we expect large clusters and thus the number of clusters has to be smaller than the number of observations.
+
+The conditional priors are respectively for n_k > 0 and all infinitely many empty clusters (combined)
+
+$$
+p(z_i = k \mid z_{\not i}, \alpha) = \frac{n_k}{N - 1 + \alpha} \\
+~ \\
+p(z_i = k \mid z_{\not i}, \alpha) = \frac{\alpha}{N - 1 + \alpha}
+$$
+
+The expected number of clusters or groups is approximated as:
+
+$$
+\mathbb{E}[K \mid N] \approx \alpha \cdot log \big(1 + \frac{N}{\alpha}\big)
+$$
+
+where, the concentration parameter $\alpha$ allows us to control the number of clusters formed a priori.
+
+```{julia}
+using Turing.RandomMeasures  #  nonparametric tools
+
+# Concentration parameter.
+α = 10.0
+
+# Random measure, e.g. Dirichlet process.
+rpm = Turing.RandomMeasures.DirichletProcess(α)
+
+# Cluster assignments for each observation.
+z = Vector{Int}()
+
+# Maximum number of observations we observe.
+Nmax = 500
+
+for i in 1:Nmax
+    # Number of observations per cluster.
+    K = isempty(z) ? 0 : maximum(z)
+    nk = Vector{Int}(map(k -> sum(z .== k), 1:K))
+
+    # Draw new assignment.
+    push!(z, rand(ChineseRestaurantProcess(rpm, nk)))
+end
+
+using Plots
+
+# Plot the cluster assignments over time 
+@gif for i in 1:Nmax
+    scatter(
+        collect(1:i),
+        z[1:i];
+        markersize=2,
+        xlabel="observation (i)",
+        ylabel="cluster (k)",
+        legend=false,
+    )
+end
+
+
+```
+The infinite process is as follows:
+
+```{julia}
+
+@model function infiniteGMM(x)
+    # Hyper-parameters, i.e. concentration parameter and parameters of H.
+    α = 1.0
+    μ0 = 0.0
+    σ0 = 1.0
+
+    # Define random measure, e.g. Dirichlet process.
+    rpm = Turing.RandomMeasures.DirichletProcess(α)
+
+    # Define the base distribution, i.e. expected value of the Dirichlet process.
+    H = Normal(μ0, σ0)
+
+    # Latent assignment.
+    z = tzeros(Int, length(x))
+
+    # Locations of the infinitely many clusters.
+    μ = tzeros(Float64, 0)
+
+    for i in 1:length(x)
+
+        # Number of clusters.
+        K = maximum(z)
+        nk = Vector{Int}(map(k -> sum(z .== k), 1:K))
+
+        # Draw the latent assignment.
+        z[i] ~ ChineseRestaurantProcess(rpm, nk)
+
+        # Create a new cluster?
+        if z[i] > K
+            push!(μ, 0.0)
+
+            # Draw location of new cluster.
+            μ[z[i]] ~ H
+        end
+
+        # Draw observation.
+        x[i] ~ Normal(μ[z[i]], 1.0)
+    end
+end 
+
+ 
+# Generate some test data.
+
+data = vcat(randn(10), randn(10) .- 5, randn(10) .+ 10)
+data .-= mean(data)
+data /= std(data);
+
+# MCMC sampling
+iterations = 1000
+model_fun = infiniteGMM(data);
+chain = sample(model_fun, SMC(), iterations);
+
+# Extract the number of clusters for each sample of the Markov chain.
+k = map(
+    t -> length(unique(vec(chain[t, MCMCChains.namesingroup(chain, :z), :].value))),
+    1:iterations,
+);
+
+# Visualize the number of clusters.
+plot(k; xlabel="Iteration", ylabel="Number of clusters", label="Chain 1")
+```
+#### Finite mixtures model (Gaussian)
+
+https://turinglang.org/stable/tutorials/01-gaussian-mixture-model/
+
+https://mc-stan.org/users/documentation/case-studies/identifying_mixture_models.html
+
+we want to infer the mixture weights, the parameters \mu_i and the assignment of each datum to a cluster i
+
+standard normal distributions as priors for \mu and a Dirichlet distribution with parameters \alpha_i as prior for w
+
+$$
+\begin{align*}
+\mu_k &\sim \mathcal{N}(0, 1) \qquad (k = 1,\ldots,K) \\
+w &\sim \operatorname{Dirichlet}(\alpha_1, \ldots, \alpha_K) \\
+z_i &\sim \operatorname{Categorical}(w) \qquad (i = 1,\ldots,N), \\
+x_i &\sim \mathcal{N}([\mu_{z_i}, \mu_{z_i}]^\mathsf{T}, I) \qquad (i=1,\ldots,N).
+\end{align*}
+$$
+
+```{julia}
+ 
+# Define Gaussian mixture model.
+
+w = [0.5, 0.5]
+μ = [-3.5, 0.5]
+mixturemodel = MixtureModel([MvNormal(Fill(μₖ, 2), I) for μₖ in μ], w)
+
+N = 60
+x = rand(mixturemodel, N);
+
+scatter(x[1, :], x[2, :]; legend=false, title="Synthetic Dataset")
+
+@model function gaussian_mixture_model(x)
+    # Draw the parameters for each of the K=2 clusters from a standard normal distribution.
+    K = 2
+    μ ~ MvNormal(Zeros(K), I)
+
+    # Draw the weights for the K clusters from a Dirichlet distribution with parameters αₖ = 1.
+    w ~ Dirichlet(K, 1.0)
+    # Alternatively, one could use a fixed set of weights.
+    # w = fill(1/K, K)
+
+    # Construct categorical distribution of assignments.
+    distribution_assignments = Categorical(w)
+
+    # Construct multivariate normal distributions of each cluster.
+    D, N = size(x)
+    distribution_clusters = [MvNormal(Fill(μₖ, D), I) for μₖ in μ]
+
+    # Draw assignments for each datum and generate it from the multivariate normal distribution.
+    k = Vector{Int}(undef, N)
+    for i in 1:N
+        k[i] ~ distribution_assignments
+        x[:, i] ~ distribution_clusters[k[i]]
+    end
+
+    return k
+end
+
+model = gaussian_mixture_model(x);
+
+sampler = Gibbs(PG(100, :k), HMC(0.05, 10, :μ, :w))
+chains = sample(model, sampler, 100);
+
+plot(chains[["μ[1]", "μ[2]"]]; colordim=:parameter, legend=true)
+
+chain = chains[:, :, 1];
+
+# Model with mean of samples as parameters.
+μ_mean = [mean(chain, "μ[$i]") for i in 1:2]
+w_mean = [mean(chain, "w[$i]") for i in 1:2]
+mixturemodel_mean = MixtureModel([MvNormal(Fill(μₖ, 2), I) for μₖ in μ_mean], w_mean)
+
+contour(
+    range(-7.5, 3; length=1_000),
+    range(-6.5, 3; length=1_000),
+    (x, y) -> logpdf(mixturemodel_mean, [x, y]);
+    widen=false,
+)
+
+assignments = [mean(chain, "k[$i]") for i in 1:N]
+scatter(
+    x[1, :],
+    x[2, :];
+    legend=false,
+    title="Assignments on Synthetic Dataset",
+    zcolor=assignments,
+)
+ 
+```
+$~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
+
 
 ## Gaussian Markov random fields (GMRFs)
 

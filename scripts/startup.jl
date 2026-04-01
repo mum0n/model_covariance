@@ -1,12 +1,17 @@
 # automatic load of things related to all projects go here
- 
-current_directory =  @__DIR__() 
-print( "Current directory is: ", current_directory, "\n\n" )
+
+# load environment, libraries  
+using DrWatson  # install this if you do not have it
 
 if !@isdefined project_directory 
     project_directory = joinpath( homedir(), "projects", "model_covariance" )
 end
 
+quickactivate(project_directory) 
+ 
+current_directory =  @__DIR__() 
+print( "Current directory is: ", current_directory, "\n\n" )
+ 
 import Pkg  # or using Pkg
 Pkg.activate(project_directory)  # so now you activate the package
 Base.active_project()  
@@ -15,15 +20,16 @@ push!( LOAD_PATH, project_directory )  # add the directory to the load path, so 
 pkgs = [  
     "Revise", "Memoization", "BenchmarkTools", "OhMyREPL",
     "DataFrames", "CSV", "RData", "RDatasets", "JLD2", "ParameterHandling",  # "ArviZ", 
-    "StatsBase", "Statistics", "MultivariateStats", "LinearAlgebra", "Distributions", "Random", 
+    "StatsBase", "Statistics", "MultivariateStats", "LinearAlgebra", "Distributions", "Random", "StatsAPI", 
     "StatsModels", "StatsFuns", "GLM", "Tables",
     "StaticArrays", "FillArrays",  "SparseArrays", "Graphs", "Distances", "CategoricalArrays",
     "PlotThemes", "Colors", "ColorSchemes", "Plots", "StatsPlots",
-    "MKL", "PDMats", "Optim", 
+    "MKL", "PDMats", "Optim", "Peaks", "KernelDensity", "Interpolations", 
     "ADTypes",  "ForwardDiff", 
     "AdvancedVI",  "Turing", "Bijectors", "ArchGDAL",
     "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions", "TemporalGPs"
 ]
+
 
 # using "CodeTracking",  "Setfield",  "AdvancedHMC", "DynamicHMC", "DistributionsAD",   "Libtask", "ReverseDiff"  
     # "Symbolics", "Logging",  
