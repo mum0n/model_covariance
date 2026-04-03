@@ -49,7 +49,7 @@ Consider installing [Julia](https://julialang.org/)  through [juliaup](https://g
 
 
 # define 'project_directory' as the location of the repository -- required
-# project_directory = joinpath( "home", "jae", "projects", "model_covariance")  # linux
+# project_directory = joinpath( "/home", "jae", "projects", "model_covariance")  # linux
 # project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  # mswindows
 project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # mswindows generic
  
@@ -2946,7 +2946,7 @@ end
 # partially correlated data
 x, y, z, u, X, Y, Z = example_data("correlated_data")
  
-# Pre-sort the data by x. Unsorted inputs are the primary cause of DomainErrors in TemporalGPs.
+# Pre-sort the data by x for TemporalGPs.
 idx = sortperm(x)
 xs = x[idx]
 ys = y[idx]
@@ -3028,9 +3028,143 @@ Mathematically, the spectral density is defined for both negative and positive f
 
 The “total” integrated spectral density equals the variance of the series.  Thus the spectral density within a particular interval of frequencies can be viewed as the amount of the variance explained by those frequencies.
 
-Methods for Estimating the Spectral Density
+
 
 The raw periodogram is a rough sample estimate of the population spectral density.  The estimate is “rough”, in part, because we only use the discrete fundamental harmonic frequencies for the periodogram whereas the spectral density is defined over a continuum of frequencies.
+
+```{julia}
+
+# using DSP
+
+# Generate synthetic time series data
+fs = 1000 # sampling frequency (Hz)
+t = 0:1/fs:1-1/fs # time vector from 0 to 1 second
+f1 = 50 # frequency 1 (Hz)
+f2 = 120 # frequency 2 (Hz)
+amplitude1 = 1.0
+amplitude2 = 0.5
+noise_amplitude = 0.2
+
+# Signal with two sine waves and Gaussian noise
+x = amplitude1 * sin.(2π * f1 * t) + amplitude2 * sin.(2π * f2 * t) + noise_amplitude * randn(length(t))
+
+# Compute the periodogram using Welch's method for smoothed spectral estimation
+# `fs` is the sampling frequency
+# `nfft` is the number of FFT points (defaults to next power of 2 >= length(x))
+# `noverlap` is the number of overlapping samples between segments
+# `window` is the window function (e.g., hanning, rect)
+p = welch_pgram(x, fs=fs)
+
+# Extract frequencies and power spectral density
+freqs = freq(p)
+power = power(p)
+
+# Plot the periodogram (in dB/Hz)
+plot(freqs, 10*log10.(power),
+     xlabel="Frequency (Hz)",
+     ylabel="Power Spectral Density (dB/Hz)",
+     title="Classical Periodogram of Synthetic Signal",
+     xlim=(0, fs/2), # Plot up to the Nyquist frequency (fs/2)
+     legend=false,
+     linewidth=2,
+     color=:blue)
+
+
+
+println("### Direct Periodogram\n")
+
+# Compute the Direct Periodogram
+# No segmentation or explicit windowing applied to segments here; it's on the whole signal.
+p_direct = periodogram(x, fs=fs)
+
+# Extract frequencies and power spectral density
+freqs_direct = freq(p_direct)
+power_direct = power(p_direct)
+
+# Plot the Direct Periodogram
+plot_direct = plot(freqs_direct, 10*log10.(power_direct),
+     xlabel="Frequency (Hz)",
+     ylabel="Power Spectral Density (dB/Hz)",
+     title="Direct Periodogram of Synthetic Signal",
+     xlim=(0, fs/2),
+     legend=false,
+     linewidth=1,
+     color=:purple)
+display(plot_direct)
+
+println("\nThe direct periodogram shows high variance, making it harder to discern the true peaks without smoothing.")
+
+
+
+# To simulate a Daniell-like periodogram, we can compute the direct periodogram
+# and then apply a moving average filter to its power spectrum.
+
+# Compute the Direct Periodogram first
+p_direct = periodogram(x, fs=fs)
+freqs_direct = freq(p_direct)
+power_direct = power(p_direct)
+
+# Define a smoothing window size (e.g., 5 frequency bins)
+window_size = 5
+power_smoothed = similar(power_direct)
+
+for i in 1:length(power_direct)
+    start_idx = max(1, i - floor(Int, window_size/2))
+    end_idx = min(length(power_direct), i + ceil(Int, window_size/2) - 1)
+    power_smoothed[i] = mean(power_direct[start_idx:end_idx])
+end
+
+# Plot the Daniell-like Smoothed Periodogram
+plot_daniell = plot(freqs_direct, 10*log10.(power_smoothed),
+     xlabel="Frequency (Hz)",
+     ylabel="Power Spectral Density (dB/Hz)",
+     title="Daniell-like Smoothed Periodogram (Moving Average) of Synthetic Signal",
+     xlim=(0, fs/2),
+     legend=false,
+     linewidth=2,
+     color=:green)
+display(plot_daniell)
+
+println("\nThis smoothed version, similar to a Daniell periodogram, reduces the variance and highlights the dominant frequency components more clearly compared to the raw direct periodogram.")
+
+println("\nIn practice, for robust spectral estimation, `welch_pgram` (which you've already seen) is a very good and commonly used method as it implicitly handles smoothing through segment averaging and windowing.")
+
+
+
+println("### Multitaper Periodogram (using `DSP.mt_pgram`)\n")
+
+# Compute the Multitaper Periodogram
+# 'K' is the number of tapers (typically 2*NW - 1, where NW is the time-bandwidth product)
+# 'NW' is the time-bandwidth product, a key parameter for multitaper
+# A common choice for NW is 2 or 3.
+# We'll use default parameters for demonstration, but these can be tuned.
+# For example, to specify NW=3, you might do mt_pgram(x, fs=fs, nw=3)
+p_mt = mt_pgram(x, fs=fs)
+
+# Extract frequencies and power spectral density
+freqs_mt = freq(p_mt)
+power_mt = power(p_mt)
+
+# Plot the Multitaper Periodogram
+plot_mt = plot(freqs_mt, 10*log10.(power_mt),
+     xlabel="Frequency (Hz)",
+     ylabel="Power Spectral Density (dB/Hz)",
+     title="Multitaper Periodogram of Synthetic Signal",
+     xlim=(0, fs/2),
+     legend=false,
+     linewidth=2,
+     color=:orange)
+display(plot_mt)
+
+println("\nNotice how the Multitaper periodogram provides a smooth estimate with distinct peaks at the true frequencies (50 Hz and 120 Hz), often with better sidelobe suppression and variance reduction compared to the direct periodogram.")
+
+println("\nKey parameters to tune for `mt_pgram` are `nw` (time-bandwidth product) and `K` (number of tapers), which influence the bias-variance tradeoff of the estimate. Larger `nw` values generally lead to smoother estimates but might reduce frequency resolution.")
+
+
+```
+
+The classical periodogram above shows peaks at the dominant frequencies present in the signal (50 Hz and 120 Hz in this synthetic example).
+
 
 One possible improvement to the periodogram estimate of the spectral density is to smooth it using centered moving averages.  An additional “smoothing” can be created using tapering methods which weight the ends (in time) of the series less than the center of the data.  We’ll not cover tapering in this lesson.  Interested parties can see Section 4.5 in the book and various Internet sources.
 
@@ -3103,6 +3237,121 @@ coef[ 4] = 0.01563
 Thus the center values are weighted slightly more heavily than in the unmodified Daniell kernel.
 
 When we smooth a periodogram, we are smoothing across a frequency interval rather than a time interval.  Remember that the periodogram is determined at the fundamental frequencies ωj = j/n for j = 1, 2, …, n/2.  Let I(ωj ) denote the periodogram value at frequency ωj = j/n.  When we use a Daniell kernel with parameter m to smooth a periodogram, the smoothed value \(\hat{I}(\omega_j)\) is a weighted average of periodogram values for frequencies in the range (j-m)/n to (j+m)/n.
+
+
+Now, for a Bayesian approach using Turing.jl, instead of directly computing a periodogram, we typically define a probabilistic model that includes periodic components and then infer the parameters of these components (e.g., amplitude, frequency, phase) from the data. This provides a full posterior distribution for each parameter, quantifying our uncertainty. Below is an example of a simple Bayesian model to infer the parameters of a single sine wave with additive noise:
+
+
+```{julia}
+
+# Pkg.add("Turing")
+# Pkg.add("Distributions")
+# Pkg.add("LinearAlgebra")
+# Pkg.add("Plots")
+using Turing
+using Distributions
+using LinearAlgebra # For I (identity matrix)
+using Random
+using Plots
+
+# Set a seed for reproducibility
+Random.seed!(6789);
+
+# 1. Generate Synthetic Data for a single periodic component with noise
+fs_turing = 100 # sampling frequency
+t_data = 0:1/fs_turing:1-1/fs_turing # time vector (1 second duration)
+true_amplitude = 2.0
+true_frequency = 5.0 # Hz
+true_phase = π/4
+true_noise_std = 0.5
+
+y_obs = true_amplitude * sin.(2π * true_frequency * t_data + true_phase) + true_noise_std * randn(length(t_data))
+
+# Plot the synthetic data
+plot_data = plot(t_data, y_obs,
+     xlabel="Time (s)",
+     ylabel="Amplitude",
+     title="Synthetic Time Series with Periodic Component",
+     label="Observed Data",
+     legend=:topright)
+display(plot_data)
+
+# 2. Define the Bayesian model for a single periodic component
+@model function bayesian_periodic_model(y_obs, t_data, fs_max)
+    # Priors for parameters
+    amplitude ~ truncated(Normal(0, 5), 0, Inf) # Amplitude must be positive
+    # Frequency must be positive and less than Nyquist frequency (fs_max / 2)
+    frequency ~ truncated(Normal(0, fs_max/4), 0, fs_max/2)
+    phase ~ Uniform(-π, π) # Phase is typically between -π and π
+    noise_std ~ InverseGamma(2, 3) # Prior for standard deviation of noise
+
+    # Calculate the expected signal based on parameters
+    expected_signal = amplitude * sin.(2π * frequency * t_data .+ phase)
+
+    # Likelihood: Observed data are normally distributed around the expected signal
+    y_obs ~ MvNormal(expected_signal, noise_std^2 * I)
+end
+
+# 3. Instantiate and Sample from the Model
+# Instantiate the model with our data and the sampling frequency for prior limits
+model_periodic = bayesian_periodic_model(y_obs, t_data, fs_turing);
+
+println("\nSampling from posterior for Bayesian Periodic Model (this may take a moment)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+chain_periodic = sample(model_periodic, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# 4. Display and Interpret Results
+display(chain_periodic)
+
+println("\nTrue Parameters:")
+println("  Amplitude: $(true_amplitude)")
+println("  Frequency: $(true_frequency)")
+println("  Phase: $(true_phase)")
+println("  Noise Std: $(true_noise_std)")
+
+println("\nPosterior Means for Parameters:")
+println("  Amplitude: $(round(mean(chain_periodic[:amplitude]), digits=3))")
+println("  Frequency: $(round(mean(chain_periodic[:frequency]), digits=3))")
+println("  Phase: $(round(mean(chain_periodic[:phase]), digits=3))")
+println("  Noise Std: $(round(mean(chain_periodic[:noise_std]), digits=3))")
+
+# 5. Optional: Plot posterior predictions
+posterior_amplitudes = chain_periodic[:amplitude].data[:]
+posterior_frequencies = chain_periodic[:frequency].data[:]
+posterior_phases = chain_periodic[:phase].data[:]
+
+plot_predictions = plot(t_data, y_obs,
+     xlabel="Time (s)",
+     ylabel="Amplitude",
+     title="Bayesian Periodic Model: Data and Posterior Predictions",
+     label="Observed Data",
+     legend=:topright,
+     alpha=0.5,
+     color=:black,
+     markershape=:circle, markersize=2)
+
+# Plot a few posterior predictive samples to visualize uncertainty
+for _ in 1:10 # Plot 10 random posterior predictive samples
+    idx = rand(1:length(posterior_amplitudes))
+    A_pred = posterior_amplitudes[idx]
+    f_pred = posterior_frequencies[idx]
+    phi_pred = posterior_phases[idx]
+    predicted_curve = A_pred * sin.(2π * f_pred * t_data .+ phi_pred)
+    plot!(t_data, predicted_curve, label="", alpha=0.1, color=:blue)
+end
+
+# Plot posterior mean curve (using the mean of the sampled parameters)
+mean_A = mean(posterior_amplitudes)
+mean_f = mean(posterior_frequencies)
+mean_phi = mean(posterior_phases)
+mean_curve = mean_A * sin.(2π * mean_f * t_data .+ mean_phi)
+plot!(t_data, mean_curve, label="Posterior Mean Curve", line=(:dash, 2, :red), color=:red)
+display(plot_predictions)
+
+
+```
+
+
 
 ##### Bandwidth choice
 
@@ -4286,24 +4535,27 @@ AR1 equivalent: Matern-1/2 kernel
 #| output: false
 
 
-@model function model_rw2_gp(y, x)
+@model function model_rw2_gp(y, x, ::Type{T}=Float64) where {T}
     σ_obs ~ Exponential(1.0)
     σ_rw2 ~ Exponential(0.5) 
-    gp_rw2 = to_sde( GP(kernel_rw2(σ_rw2)), SArrayStorage(Float64)) # SArrayStorage is usually faster
+    gp_rw2 = to_sde( GP(kernel_rw2(σ_rw2)), SArrayStorage(T)) # SArrayStorage is usually faster
     y ~ gp_rw2(x, σ_obs^2) 
 end
  
   
 x, y, z, u, X, Y, Z = example_data("correlated_data")
  
-model = model_rw2_gp( y, x )  # note using actual x and not a quantized x ...
+# Pre-sort the data by x for TemporalGPs.
+idx = sortperm(x)
+xs = x[idx]
+ys = y[idx]
+
+model = model_rw2_gp( ys, xs )  # note using actual x and not a quantized x ...
 chain = sample(model, NUTS(), 1000)
 showall( summarize(chain) )
  
 ```
-Errors out:
-ERROR: MethodError: no method matching Float64(::ForwardDiff.Dual{ForwardDiff.Tag{Turing.TuringTag, Float64}, Float64, 2})
-The type `Float64` exists, but no method is defined for this combination of argument types when trying to construct it.
+
 
 ### 2-D Models
 
@@ -4853,6 +5105,7 @@ Posterior summaries for the linear predictor and the fitted values are computed
 
 
 ## as Poisson:
+
 formula = y~ offset(log(size)) + x1 + x2 + f(ID, model="bym2", graph=W, scale.model = TRUE, constr = TRUE, 
   # priors
   hyper = list(theta1 = list("PCprior", c(1, 0.01)),  
@@ -4896,725 +5149,19 @@ Posterior summaries for the linear predictor and the fitted values are computed
 (Posterior marginals needs also 'control.compute=list(return.marginals.predictor=TRUE)')
 
 
-
 ```
-##### A brms solution (in R)
 
---- brms poisson
+STAN has good documentation of the ICAR:
 
-Fit a CAR model with brms.
-
-Note brms's solutions results are slightly different as another random seed is used as well
-
-```{r}
-
-library(brms)
-
-fit = brm(y ~ x1 + x2 + car(W, gr=ID) + offset(log(size)), 
-           data = dat, data2 = list(W = W),
-           family = poisson()) 
-
-summary(fit)
-
- Family: poisson 
-  Links: mu = log 
-Formula: y ~ x1 + x2 + car(W, gr = ID) + offset(log(size)) 
-   Data: dat (Number of observations: 100) 
-  Draws: 4 chains, each with iter = 2000; warmup = 1000; thin = 1;
-         total post-warmup draws = 4000
-
-Correlation Structures:
-      Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-car       0.82      0.17     0.33     0.99 1.01      451      324
-sdcar     0.29      0.06     0.19     0.41 1.02      456      973
-
-Population-Level Effects: 
-          Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-Intercept    -0.98      0.08    -1.15    -0.85 1.02      268      115
-x1            0.52      0.03     0.46     0.59 1.00     1973     2656
-x2            0.47      0.03     0.42     0.53 1.00     2737     3167
-
-Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
-and Tail_ESS are effective sample size measures, and Rhat is the potential
-scale reduction factor on split chains (at convergence, Rhat = 1).
-
- 
-```
---- brms binomial
-
-Fit a CAR model with brms. .. seems closer to inla solutions
-
-```{r}
-
-library(brms)
-library(rstan)
-
-fit = brm(y | trials(size) ~ x1 + x2 + car(W, gr=ID), 
-           data = dat, data2 = list(W = W),
-           family = binomial()) 
-summary(fit)
-
- Family: binomial 
-  Links: mu = logit 
-Formula: y | trials(size) ~ x1 + x2 + car(W, gr = ID) 
-   Data: dat (Number of observations: 100) 
-  Draws: 4 chains, each with iter = 2000; warmup = 1000; thin = 1;
-         total post-warmup draws = 4000
-
-Correlation Structures:
-      Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-car       0.91      0.09     0.65     1.00 1.06       48       23
-sdcar     0.54      0.09     0.38     0.73 1.00      754     1167
-
-Population-Level Effects: 
-          Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-Intercept    -0.19      0.25    -0.50     0.70 1.11       66       13
-x1            1.08      0.06     0.96     1.19 1.00     2577     2269
-x2            1.04      0.05     0.94     1.15 1.00     3194     2809
-
-Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
-and Tail_ESS are effective sample size measures, and Rhat is the potential
-scale reduction factor on split chains (at convergence, Rhat = 1).
-```
---- brms (in R) wih ar1 ... an aside
-
-```{r}
-# specify autocor terms within the formula
-y ~ x + arma(p = 1, q = 1) + car(M)
- 
-# specify autocor terms in the 'autocor' argument
-bf(y ~ x, autocor = ~ arma(p = 1, q = 1) + car(M))
- 
-# specify autocor terms via 'acformula'
-bf(y ~ x) + acformula(~ arma(p = 1, q = 1) + car(M))
-```
-##### Greta (in R)
-
-Using Scotish lip data in R
-
-Warning:  installation is a long process.
-
-Documentation:
-https://forum.greta-stats.org/t/simulations-with-greta-including-time-series/140
-https://forum.greta-stats.org/t/spatial-model-in-greta/47
-
-```{r}
-install.packages("igraph")
-install.packages("DiagrammeR")
-
-remotes::install_github("greta-dev/greta")
-remotes::install_github("greta-dev/greta.gp")
-remotes::install_github("greta-dev/greta.dynamics")
-
-install.packages('pop')
-devtools::install_github('goldingn/pop')
-
-require(greta)
-require(greta.gp)
-require(greta.dynamics)
-require(pop)
-
-lip = carstm::scottish_lip_cancer_data()
-attach(lip)
-
-X <- as_data(X)
-y <- as_data(O)
-W <- as_data(W)
-log_offset <- as_data(log(E))
-D <- as_data(D)
-
-alpha <- uniform(0, 1)
-beta <- normal(0, 1, dim = c(2, 1))
-tau <- gamma(2, 2)
-
-mu <- t(zeros(N))
-sigma <- tau * (D - alpha * W)
-phi <- t(multivariate_normal(mu, solve(sigma)))  # solve(sigma) is computing the inverse
-
-distribution(y) <- poisson(exp(X %*% beta + phi + log_offset))  
-model <- model(beta, phi, alpha, tau)
-draws <- mcmc(model, n_samples = 1000, warmup = 1000, chains = 4, one_by_one = TRUE, n_cores=2 )
-summary(draws)
-```
-~~~
-greta solution:
-             Mean     SD Naive SE Time-series SE
-beta[1,1] -0.0424 0.2596  0.00411        0.02285
-beta[2,1]  0.2769 0.0980  0.00155        0.00302
-alpha      0.9301 0.0658  0.00104        0.00195
-tau        1.6422 0.4986  0.00788        0.01339
- 
-stan solution:
-              mean     se_mean         sd          2.5%          25%
- beta[1]  -0.01792750 0.013038796 0.28861331  -0.631593939  -0.17496830
- beta[2]   0.27432038 0.001415310 0.09442595   0.087170821   0.21124791
- alpha     0.93210676 0.001040790 0.06480737   0.759120479   0.91085712
- tau       1.63267268 0.006709894 0.49358056   0.849935240   1.27696174
-
-Benchmark:
-greta: Time difference of 2.937537 mins
-Stan: Time difference of 4.895678 mins
- 
-~~~
---- Greta BYM sparse version (in R)
-
-```{r}
-
-require("carstm")
-
-nb = carstm::adjacency_matrix_to_nb( as.matrix(W))
-
-n = nodes(nb)
-node1 = n$node1
-node2 = n$node2
-scale_factor =  n$scale_factor
-
-
-alpha <- uniform(0, 1)
-beta <- normal(0, 1, dim = c(2, 1))
-tau <- gamma(2, 2)
-sigma <- tau * (D - alpha * W)
-
-mu <- t(zeros(N))
-phi <- t(multivariate_normal(mu, solve(sigma)))  # solve(sigma) is computing the inverse
-
-nnb = length(node1)
-zeros <- as_data(rep(0L, nnb))   ## Used to marginalize z out of likelihood
-nlk = -log( 0.5 * (phi[node1] - phi[node2])^2 )
-distribution(zeros) <- poisson(nlk)
-
-distribution(y) <- poisson(exp(X %*% beta + phi + log_offset))
-# distribution(y) <- poisson(exp(X %*% beta + phi[id_loc] + log_offset)) # multiple obs
-
-model <- model(beta, phi, alpha, tau)
-
-draws <- mcmc(model, n_samples = 1000, warmup = 1000, chains = 4, one_by_one = TRUE)
-summary(draws)
-
-              Mean     SD Naive SE Time-series SE
-beta[1,1]  0.04733 0.0213 0.000336        0.00172
-beta[2,1]  0.44173 0.0948 0.001500        0.01297
-alpha      0.48532 0.0116 0.000184        0.00185
-tau        1.29418 0.1670 0.002641        0.02017
-
- 
- 
-```
---- Greta sparse version : Not tested
-
-```{r}
-
-library(greta)
-library(R6)
-
-# get greta internals
-distribution_node <- .internals$nodes$node_classes$distribution_node
-as.greta_array <- .internals$greta_arrays$as.greta_array
-check_dims <- .internals$utils$checks$check_dims
-distrib <- .internals$nodes$constructors$distrib
-fl <- .internals$utils$misc$fl
-tf_sum <- greta:::tf_sum  # oops, looks like this one didn't make it into .internals!
-
-
-sparse_car_distribution <- R6Class(
-  "sparse_car_distribution",
-  inherit = distribution_node,
-  public = list(
-    initialize = function(tau, alpha, 
-                          W_sparse, D_sparse,
-                          lambda, dim) {
-    
-      tau <- as.greta_array(tau)
-      alpha <- as.greta_array(alpha)
-      W_sparse <- as.greta_array(W_sparse)
-      D_sparse <- as.greta_array(D_sparse)
-      lambda <- as.greta_array(lambda)
-    
-      dim <- check_dims(tau, alpha, target_dim = dim)
-      super$initialize("sparse_car", dim)
-    
-      self$add_parameter(tau, "tau")
-      self$add_parameter(alpha, "alpha")
-    
-      self$add_parameter(W_sparse, "W_s")
-      self$add_parameter(D_sparse, "D_s")
-      self$add_parameter(lambda, "lbd")
-
-    },
-  
-    tf_distrib = function(parameters, dag) {
-    
-      alpha <- parameters$alpha
-      tau <- parameters$tau
-    
-      W_sparse <- parameters$W_s
-      D_sparse <- parameters$D_s
-      lambda <- parameters$lbd
-    
-      log_prob <- function(x) {
-      
-        nloc <- length(lambda)
-        npair <- nrow(W_sparse)
-      
-        phit_d <- x * D_sparse
-        phit_w <- rep(0, 4)
-        for(i in 1:3){
-          phit_w[W_sparse[i, 1]] <- phit_w[W_sparse[i, 1]] + 
-            x[W_sparse[i, 2]]
-          phit_w[W_sparse[i, 2]] <- phit_w[W_sparse[i, 2]] + 
-            x[W_sparse[i, 1]]
-        }
-      
-        ldet_terms <- log(fl(1) - alpha * lambda)
-      
-        res <- fl(0.5) * (nloc * log(tau) + tf_sum(ldet_terms) -
-                        tau * (phit_d * phi - alpha *
-                                 (phit_w * phi)))
-      
-     
-      }
-      list(log_prob = log_prob, cdf = NULL, log_cdf = NULL)
-    },
-  
-    tf_cdf_function = NULL,
-    tf_log_cdf_function = NULL
-  )
-)
-
-sparse_car <- function (tau, alpha, 
-                        W_sparse, D_sparse,
-                        lambda, dim = NULL) {
-  distrib("sparse_car", tau, alpha, 
-          W_sparse, D_sparse,
-          lambda, dim)
-}
-
-
-# a simple example with 4 locations
-loc <- data.frame(x=runif(4),
-                  y=runif(4))
-d_mat <- matrix(0, ncol = 4, nrow=4)
-d_mat[lower.tri(d_mat)][dist(loc) < 0.4] <- 1
-d_mat[upper.tri(d_mat)] <- t(d_mat)[upper.tri(d_mat)]
-# make W_sparse, D_sparse and lambda
-nloc <- nrow(loc)
-npair <- sum(d_mat) / 2
-counter <- 1
-W_sparse <- matrix(0, nrow= npair, ncol = 2)
-for (i in 1:(nloc - 1)) {
-  for (j in (i + 1):nloc) {
-    if (d_mat[i, j] == 1) {
-      W_sparse[counter, 1] = i
-      W_sparse[counter, 2] = j
-      counter = counter + 1
-    }
-  }
-}
-
-# number of neighbour per site
-D_sparse <- rowSums(d_mat)
-# compute eigenvalues
-invsqrtD <- base::diag(1 / sqrt(D_sparse), nrow = nloc, ncol = nloc)
-lambda <- base::eigen(t(invsqrtD) %*% d_mat %*% invsqrtD)$values
-
-# the parameter
-alpha <- uniform(0, 1)
-tau <- gamma(2, 2)
-
-phi <- sparse_car(tau, alpha, W_sparse, D_sparse, lambda, dim = 4)
-
-mm <- model(alpha, tau)
-dd <- mcmc(mm)
-
-
-```
-##### STAN version
-
-REFERENCE is:
 https://mc-stan.org/users/documentation/case-studies/mbjoseph-CARStan.html
 https://www.mrc-bsu.cam.ac.uk/wp-content/uploads/geobugs12manual.pdf
 https://www.paulamoraga.com/book-geospatial/sec-arealdataexamplespatial.html
-
-```{r}
-
-# library(SpatialEpi)
-# data(scotland)
-# names(scotland)
-rstan_options(auto_write = TRUE)
-options(mc.cores = parallel::detectCores())
-
-# Define MCMC parameters 
-niter <- 1E4   # definitely overkill, but good for comparison
-nchains <- 4
-
-# load datamessage("Scottish lip cancer data" )
-message("source is https://mc-stan.org/users/documentation/case-studies/mbjoseph-CARStan.html" )
-
-lip = carstm::scottish_lip_cancer_data()
-attach(lip)
-
-W <- A # adjacency matrix
-scaled_x <- c(scale(x))
-X <- model.matrix(~scaled_x)
-
-full_d <- list(
-	n = nrow(X),         # number of observations
-	p = ncol(X),         # number of coefficients
-	X = X,               # design matrix
-	y = O,               # observed number of cases
-	log_offset = log(E), # log(expected) num. cases
-	W = W)               # adjacency matrix
-
-```
-and the STAN code:
-
-```{stan}
-    data {
-      int<lower = 1> n;
-      int<lower = 1> p;
-      matrix[n, p] X;
-      int<lower = 0> y[n];
-      vector[n] log_offset;
-      matrix<lower = 0, upper = 1>[n, n] W;
-    }
-    transformed data{
-      vector[n] zeros;
-      matrix<lower = 0>[n, n] D;
-      {
-        vector[n] W_rowsums;
-        for (i in 1:n) {
-          W_rowsums[i] = sum(W[i, ]);
-        }
-        D = diag_matrix(W_rowsums);
-      }
-      zeros = rep_vector(0, n);
-    }
-    parameters {
-      vector[p] beta;
-      vector[n] phi;
-      real<lower = 0> tau;
-      real<lower = 0, upper = 1> alpha;
-    }
-    model {
-      phi ~ multi_normal_prec(zeros, tau * (D - alpha * W));
-      beta ~ normal(0, 1);
-      tau ~ gamma(2, 2);
-      y ~ poisson_log(X * beta + phi + log_offset);
-    }
-
-```
-https://github.com/ConnorDonegan/Stan-IAR
-https://github.com/ConnorDonegan/survey-HBM#car-models-in-stan
-https://mc-stan.org/users/documentation/case-studies/icar_stan.html
-
-- paper:
-  https://www.mdpi.com/1660-4601/18/13/6856
-
----
-
-The ICAR prior specified with a binary connectivity matrix reduces to a function of the pairwise differences of neighboring values under the constraint that the parameter vector sums to zero. Morris et al. program the ICAR prior in Stan using the following function:
-
-```{stan}
-/**
-  * intrinsic autoregressive prior
-  * @return lpdf of IAR prior minus any constant terms
-  */
-  real icar_normal_lpdf(vector phi, int N, int[] node1, int[] node2) {
-    return -0.5 * dot_self(phi[node1] - phi[node2]) +
-      normal_lpdf(sum(phi) | 0, 0.001 * N);
-  }
-```
-where phi is the N-length vector of parameters to which the ICAR prior is assigned. node1 and node2 contain the indices of each pair of connected nodes. It is simplified by keeping the ICAR prior on unit scale. So instead of assigning the prior directly to phi, the ICAR prior is assigned to a vector of standard normal deviates phi_tilde; then phi = phi_tilde * phi_scale gets passed into the linear predictor of the model.
-
-This function contains two restrictions. The first is that the connectivity structure must consist of binary entries only (ones for neighboring observations, zero otherwise).
-
-The second restriction is that the graph structure needs to be fully connected. For graph structures that are not fully connected, the sum to zero constraint needs to be applied to each connected region separately; as a result, it is best for each connected component to have its own intercept.
-
-Finally, the ICAR prior is typically used in conjunction with a spatially unstructured term theta to capture variation around the local mean (the local mean being modeled by phi.) The BYM model consists of the combination of local and global partial-pooling (so-called random effects terms). This is refered to as the convolution term, convolution = phi + theta.
-
-The following Stan function calculates the log probability of the ICAR prior, adjusting as needed for use with the BYM model. In short, observations with zero neighbors will be handled differently depending on the inclusion of theta; if the model has theta, then those phi values need to drop out. If the model does not have theta, this code assigns to the zero-neighbor observations an independent Gaussian prior with scale equal to phi_scale.
-
-```{stan}
-/**
- * Log probability of the intrinsic conditional autoregressive (ICAR) prior,
- * excluding additive constants.
- *
- * @param phi Vector of parameters for spatial smoothing (on unit scale)
- * @param spatial_scale Scale parameter for the ICAR model
- * @param node1
- * @param node2
- * @param k number of groups
- * @param group_size number of observational units in each group
- * @param group_idx index of observations in order of their group membership
- * @param has_theta If the model contains an independent partial pooling term, phi for singletons can be zeroed out; otherwise, they require a standard normal prior. Both BYM and BYM2 have theta.
- *
- * @return Log probability density of ICAR prior up to additive constant
- **/
-real icar_normal_lpdf(vector phi, real spatial_scale,
-              int[] node1, int[] node2,
-              int k, int[] group_size, int[] group_idx,
-              int has_theta) {
-  real lp;
-  int pos=1;
-  lp = -0.5 * dot_self(phi[node1] - phi[node2]);
-  if (has_theta) {
-    for (j in 1:k) {
-      /* sum to zero constraint for each connected group; singletons zero out */
-      lp += normal_lpdf(sum(phi[segment(group_idx, pos, group_size[j])]) | 0, 0.001 * group_size[j]);
-      pos += group_size[j];
-    }
-  } else {
-    /* does not have theta */
-    for (j in 1:k) {
-      if (group_size[j] > 1) {
-    /* same as above for non-singletons: sum to zero constraint */
-    lp += normal_lpdf(sum(phi[segment(group_idx, pos, group_size[j])]) | 0, 0.001 * group_size[j]);
-      } else {
-    /* its a singleton: independent Gaussian prior on phi */
-    lp += normal_lpdf(phi[ segment(group_idx, pos, group_size[j]) ] | 0, spatial_scale);
-      }
-      pos += group_size[j];
-    }
-  }
-  return lp;
-}
-```
----
-
-##### Riebler parameterization: BYM convolution term
-
-Riebler et al. (2016) proposed an adjustment to the ICAR model to enable more meaningful priors to be placed on phi_scale. The idea is to adjust the scale of phi for the additional variance present in the covariance matrix of the ICAR model, relative to a covariance matrix with zeroes on the off-diagonal elements. This is introduced through a scale_factor term, which we will code as inv_sqrt_scale_factor = sqrt(1/scale_factor) (to relate this directly to other implementations you may find).
-
-The following function is used to combine phi_tilde with phi_scale as well as the scale_factor (which may be a vector ones, to be ignored).
-
-```{stan}
-/**
- * Create phi from phi_tilde, inv_sqrt_scale_factor, and spatial_scale.
- *
- * @param phi_tilde local component (spatially autocorrelated)
- * @param phi_scale scale parameter for phi
- * @param inv_sqrt_scale_factor The scaling factor for the ICAR variance (see scale_c R function, using R-INLA);
- *                              transformed from 1/scale^2 --> scale. Or, a vector of ones.
- * @param n number of spatial units
- * @param k number of connected groups
- * @param group_size number of observational units in each group
- * @param group_idx index of observations in order of their group membership
- *
- * @return phi vector of spatially autocorrelated coefficients
- */
-vector make_phi(vector phi_tilde, real phi_scale,
-              vector inv_sqrt_scale_factor,
-              int n, int k,
-              int[] group_size, int[] group_idx
-              ) {
-  vector[n] phi;
-  int pos=1;
-  for (j in 1:k) {
-      phi[ segment(group_idx, pos, group_size[j]) ] = phi_scale * inv_sqrt_scale_factor[j] * phi_tilde[ segment(group_idx, pos, group_size[j]) ];
-    pos += group_size[j];
-  }
-  return phi;
-}
-```
-One way this model can be extended is by assigning a separate scale parameters for each connected component of the graph. Once you assign separate intercepts and scale parameters for each disconnected region, you have independent prior models for each region. Imposing the constraint that disconnected regions have the same scale parameter may seem unreasonable for some applications, and also may slow down sampling. For example, why would the spatial autocorrelation parameters for the counties of Hawaii have the same scale as those for the continental U.S.?
-
-Implementing this extension requires declaring vector<lower=0>[1+m] phi_scale in the parameters block and then adjusting the make_phi function as follows:
-
-```{stan}
-phi[ segment(group_idx, pos, group_size[j]) ] = phi_scale[j] * inv_sqrt_scale_factor[j] * phi_tilde[ segment(group_idx, pos, group_size[j]) ];`.
-```
-The icar-functions.stan file contains a function called make_phi2 with that adjustment made.
-
-The BYM model includes the parameter vector assigned the ICAR prior plus a vector theta assigned a normal prior with unknown scale: θ ∼ N(0, η), with η assigned some prior such as η ∼ N(0, 1). Again, in practice we assign theta_tilde a standard normal prior and then multiply it by its scale theta_scale. Then the convolution term is
-
-convolution = phi + theta = phi_tilde * spatial_scale + theta_tilde * theta_scale
-
-or optionally with the scaling factor:
-
-convolution = phi_tilde * inv_sqrt_scale_factor * spatial_scale + theta_tilde * theta_scale
-
-The following function combines terms to create the BYM convolution term, making adjustments as needed for disconnected graph structures and observations with zero neighbors. The input for phi should be the parameter vector returned by make_phi (as demonstrated below).
-
-```{stan}
-/**
- * Combine local and global partial-pooling components into the convolved BYM term.
- *
- * @param phi spatially autocorrelated component (not phi_tilde!)
- * @param theta global component (not theta_tilde!)
- * @param n number of spatial units
- * @param k number of connected groups
- * @param group_size number of observational units in each group
- * @param group_idx index of observations in order of their group membership
- *
- * @return BYM convolution vector
- */
-vector convolve_bym(vector phi, vector theta,
-              int n, int k,
-              int[] group_size, int[] group_idx
-              ) {
-  vector[n] convolution;
-  int pos=1;
-  for (j in 1:k) {
-     if (group_size[j] == 1) {
-        convolution[ segment(group_idx, pos, group_size[j]) ] = theta[ segment(group_idx, pos, group_size[j]) ];
-    } else {
-    convolution[ segment(group_idx, pos, group_size[j]) ] =
-      phi[ segment(group_idx, pos, group_size[j]) ] + theta[ segment(group_idx, pos, group_size[j]) ];
-  }
-      pos += group_size[j];
-  }
-  return convolution;
-}
-```
-Riebler et al. (2016) also proposed to combine theta with phi using a mixing parameter rho and a single scale spatial_scale, such that
-
-convolution = spatial_scale * (sqrt(rho * scale_factor^-1) * phi + sqrt(1 - rho) * theta)
-
-The following function creates the convolution term for the BYM2 model and makes adjustments for disconnected graph structures and zero-neighbor observations. If you use this function, do not also use the make_phi function (see BYM2.stan).
-
-```{stan}
-/**
- * Combine local and global partial-pooling components into the convolved BYM2 term.
- *
- * @param phi_tilde local (spatially autocorrelated) component
- * @param theta_tilde global component
- * @param spatial_scale scale parameter for the convolution term
- * @param n number of spatial units
- * @param k number of connected groups
- * @param group_size number of observational units in each group
- * @param group_idx index of observations in order of their group membership
- * @param inv_sqrt_scale_factor The scaling factor for the ICAR variance (see scale_c R function, using R-INLA);
- *                              transformed from 1/scale^2 --> scale. Or, a vector of ones.
- * @param rho proportion of convolution that is spatially autocorrelated
- *
- * @return BYM2 convolution vector
- */
-vector convolve_bym2(vector phi_tilde, vector theta_tilde,
-          real spatial_scale,
-              int n, int k,
-              int[] group_size, int[] group_idx,
-              real rho, vector inv_sqrt_scale_factor
-              ) {
-  vector[n] convolution;
-  int pos=1;
-  for (j in 1:k) {
-    if (group_size[j] == 1) {
-        convolution[ segment(group_idx, pos, group_size[j]) ] = spatial_scale * theta_tilde[ segment(group_idx, pos, group_size[j]) ];
-    } else {
-    convolution[ segment(group_idx, pos, group_size[j]) ] = spatial_scale * (
-     sqrt(rho) * inv_sqrt_scale_factor[j] * phi_tilde[ segment(group_idx, pos, group_size[j]) ] +
-     sqrt(1 - rho) * theta_tilde[ segment(group_idx, pos, group_size[j]) ]
-      );
-  }
-  pos += group_size[j];
-  }
-  return convolution;
-}
-```
-The ICAR model requires the following input as data:
-
-n number of observations
-k number of groups of connected observations (i.e. a connected graph with one disconnected island has k=1)
-group_size an integer array with the number of observations per group
-n_edges total number of edges (sum of all edge_size)
-node1, node2 these contain the indices for each pair of connected nodes
-group_idx integer array (size n), see below. Allows us to extract observations by their group membership
-inv_sqrt_scale_factor a k-length vector of scale factors, one per connected group. Or, a k-length vector of ones.
-m number of connected graph components requiring their own intercept
-    for a single fully connected graph, this is zero; add one to m for each additional connected component with group_size > 1.
-A an n by m matrix of dummy variables indicating to which connected component an observation belongs (for any extra intercepts).
-The demonstration shows how to use some R code to very easily obtain all these items at once. The Stan code appears more complicated than some applications will require, but it is designed to function under a variety of common circumstances.
-
-The Stan code below also includes the following terms, just to provide a complete example:
-
-prior_only Binary indicator, skip the likelihood and just compute the prior or sample from posterior distribution given data
-y outcome data (integer array) (ignored if prior_only=1)
-offset offset term (ignored if prior_only=1).
-This is for the BYM model:
-
-```{stan}
-
-// The BYM model //
-functions {
-#include icar-functions.stan
-}
-data {
-  int n;    // no. observations
-  int<lower=1> k; // no. of groups
-  int group_size[k]; // observational units per group
-  int group_idx[n]; // index of observations, ordered by group
-  int<lower=0> m; // no of components requiring additional intercepts
-  matrix[n, m] A; // dummy variables for any extra graph component intercepts
-  int<lower=1> n_edges;
-  int<lower=1, upper=n> node1[n_edges];
-  int<lower=1, upper=n> node2[n_edges];
-  int<lower=1, upper=k> comp_id[n];
-  vector[k] inv_sqrt_scale_factor; // can be a vector of ones, as a placeholder
-  int<lower=0, upper=1> prior_only;
-  int y[n];
-  vector[n] offset; // e.g., log of population at risk
-}
-
-transformed data {
-  int<lower=0,upper=1> has_theta=1;
-}
-
-parameters {
-  real alpha;
-  vector[m] alpha_phi;
-  vector[n] phi_tilde;
-  real<lower=0> spatial_scale;
-  vector[n] theta_tilde;
-  real<lower=0> theta_scale;
-}
-
-transformed parameters {
-  vector[n] phi = make_phi(phi_tilde, spatial_scale, inv_sqrt_scale_factor, n, k, group_size, group_idx);
-  vector[n] theta = theta_tilde * theta_scale;
-  vector[n] convolution = convolve_bym(phi, theta, n, k, group_size, group_idx);
-  vector[n] eta = offset + alpha + convolution;
-  if (m) eta += A * alpha_phi;
-}
-
-model {
-   // keep the following lines as they are:
-   phi_tilde ~ icar_normal(spatial_scale, node1, node2, k, group_size, group_idx, has_theta);
-   theta_tilde ~ std_normal();
-   // the rest of the priors may need to be adjusted for your own model.
-   spatial_scale ~ std_normal();
-   theta_scale ~ std_normal();
-   alpha ~ normal(0, 10); // this is the prior for the mean log rate.
-   if (m) alpha_phi ~ normal(0, 2);
-   if (!prior_only) y ~ poisson_log(eta);
-}
-```
-The following are R codes to run the BYM2 model is in the BYM2.stan file.
-
-Scaling the ICAR prior
-
-To follow Reibler et al.’s adjustment to the scale of the model, you can use the INLA R package and the following R code:
-
-```{r}
-icar.data <- prep_icar_data(C)
-
-## calculate the scale factor for each of k connected group of nodes, using the scale_c function from M. Morris
-k <- icar.data$k
-scale_factor <- vector(mode = "numeric", length = k)
-for (j in 1:k) {
-  g.idx <- which(icar.data$comp_id == j)
-  if (length(g.idx) == 1) {
-    scale_factor[j] <- 1
-    next
-  }
-  Cg <- C[g.idx, g.idx]
-  scale_factor[j] <- scale_c(Cg)
-}
-
-## update the data list for Stan
-icar.data$inv_sqrt_scale_factor <- 1 / sqrt( scale_factor )
+ 
 
 
-```
+
+
+
 
 ##### Summary of CARBayes methods .. a nice write up
 
@@ -9125,7 +8672,7 @@ For temporal GPs, this approach is optimized to scale as O(N), but seems to fail
   
     # --- Construct Latent Field ---
     
-     # TemporalGPs requires kernels that have a State-Space representation
+    # TemporalGPs requires kernels that have a State-Space representation
     k_rw2 = σ_rw2^2 * Matern32Kernel() # Smooth RW2 approx
     k_ar1 = σ_ar1^2 * with_lengthscale(Matern12Kernel(), -1/log(ρ))
   
@@ -9144,7 +8691,7 @@ end
  
 x, y, z, u, X, Y, Z = example_data("correlated_data")
   
-# Pre-sort the data by x. Unsorted inputs are the primary cause of DomainErrors in TemporalGPs.
+# Pre-sort the data by x for TemporalGPs.
 idx = sortperm(x)
 xs = x[idx]
 ys = y[idx]

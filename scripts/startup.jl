@@ -24,7 +24,7 @@ pkgs = [
     "StatsModels", "StatsFuns", "GLM", "Tables",
     "StaticArrays", "FillArrays",  "SparseArrays", "Graphs", "Distances", "CategoricalArrays",
     "PlotThemes", "Colors", "ColorSchemes", "Plots", "StatsPlots",
-    "MKL", "PDMats", "Optim", "Peaks", "KernelDensity", "Interpolations", 
+    "MKL", "PDMats", "Optim", "Peaks", "KernelDensity", "DSP", "Interpolations", 
     "ADTypes",  "ForwardDiff", 
     "AdvancedVI",  "Turing", "Bijectors", "ArchGDAL",
     "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions", "TemporalGPs"
