@@ -98,7 +98,7 @@ The next few steps uses a traditional (didactic) approach to calculations, usual
 
 ```{julia}
   
-  x, y, z, u, X, Y, Z = example_data("iris")
+  x, y, z, u, X, Y, Z = example_data("PalmerPenguins")
 
   Xmean = sum(X)/n;
   Ymean = sum(Y)/n;
@@ -116,7 +116,7 @@ It is really as simple as that. The sample estimate uses n-1 as the divisor as, 
   # equivalent statements for (sample) covariance:
   # NOTE julia uses corrected=true as default which means use n-1 to compute means (with loss of 1 df for the point estimate of var or cov) 
 
-  x, y, z, u, X, Y, Z = example_data("iris")
+  x, y, z, u, X, Y, Z = example_data("PalmerPenguins")
 
   cov_julia = cov(X, Y)
   cov_definition = sum(X.*Y)/(n-1) − sum(X) / (n-1) * sum(Y) / (n-1)
@@ -186,7 +186,7 @@ To belabour the point, intuition in an algebraic sense is similar to covariance.
 ```{julia}
 # didactic: using above computations of cov and SS
 
-  x, y, z, u, X, Y, Z = example_data("iris")
+  x, y, z, u, X, Y, Z = example_data("PalmerPenguins")
 
   n = length(X)
 
@@ -240,7 +240,7 @@ $$
 
 ```{julia}
 
-x, y, z, u, X, Y, Z = example_data("iris")
+x, y, z, u, X, Y, Z = example_data("PalmerPenguins")
 
 rho_xy = cor(X,Y)
 rho_yz = cor(Y,Z)
@@ -443,7 +443,7 @@ We repeat the above using Julia.
 
 # basic approach
 
-  x, y, z, u, X, Y, Z = example_data("iris")
+  x, y, z, u, X, Y, Z = example_data("PalmerPenguins")
 
   cor_XY = cor(X,Y)
   cor_YX = cor(Y,X) 
@@ -520,7 +520,7 @@ Though it might seem unnecessarily complicating a simple calculation, utility is
 
 ```{julia}
 
-  x, y, z, u, X, Y, Z = example_data("iris")
+  x, y, z, u, X, Y, Z = example_data("PalmerPenguins")
 
   # these are the partial correlations between x and y, controlling for z
   r_xy_z = partialcor(x,y,z)  # 0.8863
@@ -646,7 +646,7 @@ Notice the dot product $X^T X^T$, is our covariance matrix. As this is a common 
 ```{julia}
 # didactic form of linear regression:
 
-  x, y, z, u, X, Y, Z = example_data("iris")
+  x, y, z, u, X, Y, Z = example_data("PalmerPenguins")
   
   n = length(X)
 
@@ -715,7 +715,7 @@ Major Axis Regression is also known as Model 2 Regression. This a second form of
 
 ```{julia}
 
-x, y, z, u, X, Y, Z = example_data("iris")
+x, y, z, u, X, Y, Z = example_data("PalmerPenguins")
   
 a = linear_regression_simple(X, Y; method="MAR_geometric_mean" , toget="res")
 a.Beta[2] # slope of X vs Y
@@ -834,6 +834,486 @@ Of course using Turing, the form of the model can be made more explicitly and th
 
 $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
+
+### Hierarchical models
+
+These also known as mixed effects models and invole permitting multiple intercepts and slopes for each "fixed" group.
+
+
+```{julia}
+
+
+# --- 1. Generate Synthetic Hierarchical Data ---
+
+num_groups = 5
+num_points_per_group = 30
+
+# Hyper-parameters for intercepts (alpha) and slopes (beta)
+# Coefficients for the group-level predictor on mu_alpha
+true_gamma0 = 3.0 # Intercept for mu_alpha
+true_gamma1 = 0.5 # Slope for mu_alpha (effect of Z)
+
+true_sigma_alpha = 1.5
+true_mu_beta = 2.0
+true_sigma_beta = 0.8
+
+true_sigma_obs = 1.0 # Observation noise
+
+# Generate a group-level predictor (e.g., average characteristic per group)
+Z_data = rand(Uniform(0, 10), num_groups) # One Z value per group
+
+# Generate true group-specific intercepts and slopes
+# true_alpha_groups now depends on Z_data
+true_alpha_groups = (true_gamma0 .+ true_gamma1 .* Z_data) .+ rand(Normal(0, true_sigma_alpha), num_groups)
+true_beta_groups = rand(Normal(true_mu_beta, true_sigma_beta), num_groups)
+
+# Prepare data containers
+X_data = Matrix{Float64}(undef, num_groups * num_points_per_group, 1)
+Y_data = Vector{Float64}(undef, num_groups * num_points_per_group)
+Group_indices = Vector{Int}(undef, num_groups * num_points_per_group)
+
+# Generate data for each group
+for g in 1:num_groups
+    # Generate predictor variable X for the current group
+    x_group = rand(Uniform(0, 10), num_points_per_group)
+
+    # Generate observed Y for the current group with noise
+    y_group = true_alpha_groups[g] .+ true_beta_groups[g] .* x_group .+ rand(Normal(0, true_sigma_obs), num_points_per_group)
+
+    # Store in overall data structures
+    idx_start = (g - 1) * num_points_per_group + 1
+    idx_end = g * num_points_per_group
+
+    X_data[idx_start:idx_end, 1] = x_group
+    Y_data[idx_start:idx_end] = y_group
+    Group_indices[idx_start:idx_end] .= g
+end
+
+println("Synthetic hierarchical data generated.")
+println("True group-level predictor Z: ", round.(Z_data, digits=2))
+println("True group intercepts: ", round.(true_alpha_groups, digits=2))
+println("True group slopes:   ", round.(true_beta_groups, digits=2))
+
+# Plotting the synthetic data (optional)
+plot_data = plot(xlabel="X", ylabel="Y", title="Synthetic Hierarchical Data", legend=:topleft)
+for g in 1:num_groups
+    group_mask = (Group_indices .== g)
+    scatter!(plot_data, X_data[group_mask], Y_data[group_mask], label="Group $(g)", markersize=2, alpha=0.7)
+    plot!(plot_data, X_data[group_mask], true_alpha_groups[g] .+ true_beta_groups[g] .* X_data[group_mask], label="_nolegend_", linewidth=2, linestyle=:dash)
+end
+display(plot_data)
+
+# --- 2. Define the Bayesian Hierarchical Model in Turing.jl ---
+
+@model function hierarchical_regression(X, Y, group_indices, Z, num_groups)
+    # Priors for hyper-parameters (overall means and std deviations for alpha and beta)
+    # Coefficients for the group-level predictor on mu_alpha
+    gamma0 ~ Normal(0, 5) # Intercept for the group-level effect on alpha
+    gamma1 ~ Normal(0, 5) # Slope for the group-level effect on alpha (effect of Z)
+
+    # Derived group-level mean for intercepts, based on group-level predictor Z
+    mu_alpha_groups_derived = gamma0 .+ gamma1 .* Z
+
+    sigma_alpha ~ truncated(Normal(0, 5), 0, Inf) # Overall std dev of intercepts
+
+    mu_beta ~ Normal(0, 10) # Overall mean of slopes (not dependent on Z in this example)
+    sigma_beta ~ truncated(Normal(0, 5), 0, Inf) # Overall std dev of slopes
+
+    # Vectorized priors for group-specific intercepts and slopes (drawn from hyper-parameters)
+    alpha_group ~ MvNormal(mu_alpha_groups_derived, sigma_alpha^2 * I(num_groups))
+    beta_group ~ MvNormal(fill(mu_beta, num_groups), sigma_beta^2 * I(num_groups))
+
+    # Prior for observation noise standard deviation
+    sigma_obs ~ truncated(Normal(0, 5), 0, Inf)
+
+    # Likelihood: observed Y values
+    for i in 1:length(Y)
+        g = group_indices[i] # Get the group for the current observation
+        # Linear model for the current observation, using group-specific intercept and slope
+        Y[i] ~ Normal(alpha_group[g] + beta_group[g] * X[i], sigma_obs)
+    end
+end
+
+# --- 3. Instantiate and Sample from the Model ---
+
+# Create an instance of the model with our data, including the new Z_data
+model_hierarchical = hierarchical_regression(X_data, Y_data, Group_indices, Z_data, num_groups);
+
+println("\nSampling from posterior for Hierarchical Regression Model (this may take a moment)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+chain_hierarchical = sample(model_hierarchical, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# --- 4. Display and Interpret Results ---
+
+display(chain_hierarchical)
+
+println("\nTrue Hyper-parameters (Group-level predictor coefficients):")
+println("  gamma0 (Intercept for mu_alpha): ", true_gamma0)
+println("  gamma1 (Slope for mu_alpha on Z): ", true_gamma1)
+println("  sigma_alpha: ", true_sigma_alpha)
+println("  mu_beta: ", true_mu_beta)
+println("  sigma_beta: ", true_sigma_beta)
+println("  sigma_obs: ", true_sigma_obs)
+
+println("\nPosterior Means for Hyper-parameters:")
+println("  gamma0: ", round(mean(chain_hierarchical[:gamma0]), digits=3))
+println("  gamma1: ", round(mean(chain_hierarchical[:gamma1]), digits=3))
+println("  sigma_alpha: ", round(mean(chain_hierarchical[:sigma_alpha]), digits=3))
+println("  mu_beta: ", round(mean(chain_hierarchical[:mu_beta]), digits=3))
+println("  sigma_beta: ", round(mean(chain_hierarchical[:sigma_beta]), digits=3))
+println("  sigma_obs: ", round(mean(chain_hierarchical[:sigma_obs]), digits=3))
+
+println("\nTrue Group-Specific Parameters:")
+for g in 1:num_groups
+    println("  Group $(g): alpha = $(round(true_alpha_groups[g], digits=2)), beta = $(round(true_beta_groups[g], digits=2))")
+end
+
+println("\nPosterior Means for Group-Specific Parameters:")
+for g in 1:num_groups
+    println("  Group $(g): alpha = $(round(mean(chain_hierarchical["alpha_group[" * string(g) * "]"]), digits=3)), beta = $(round(mean(chain_hierarchical["beta_group[" * string(g) * "]"]), digits=3))")
+end
+
+# Optional: Plot posterior predictive lines for each group
+plot_posterior_lines = plot(xlabel="X", ylabel="Y", title="Hierarchical Model: Data and Posterior Mean Lines", legend=:topleft)
+for g in 1:num_groups
+    group_mask = (Group_indices .== g)
+    scatter!(plot_posterior_lines, X_data[group_mask], Y_data[group_mask], label="Group $(g)", markersize=2, alpha=0.7)
+
+    # Get posterior mean for alpha and beta for this group
+    post_mean_alpha = mean(chain_hierarchical["alpha_group[" * string(g) * "]"])
+    post_mean_beta = mean(chain_hierarchical["beta_group[" * string(g) * "]"])
+
+    # Plot the regression line based on posterior means
+    plot!(plot_posterior_lines, X_data[group_mask], post_mean_alpha .+ post_mean_beta .* X_data[group_mask], label="_nolegend_", linewidth=2, color=:black)
+end
+display(plot_posterior_lines)
+
+println("\nThis model successfully estimates both the group-specific intercepts and slopes, as well as the higher-level distributions from which they are drawn. The plots visualize the synthetic data and the fitted regression lines based on the posterior means of the parameters.")
+
+
+
+# Calculate R-hat
+rhat_values = rhat(chain_hierarchical)
+println("\nR-hat values for parameters:")
+display(rhat_values)
+
+# Calculate Effective Sample Size (ESS)
+ess_values = ess(chain_hierarchical)
+println("\nEffective Sample Size (ESS) for parameters:")
+display(ess_values)
+
+println("\nInterpretation:")
+println("- R-hat values close to 1.0 (typically < 1.01-1.05) indicate good chain convergence.")
+println("- ESS values generally represent the number of independent samples from the posterior. Higher ESS is better, indicating more efficient sampling.")
+
+
+```
+
+Compared to pooled model (1 slope and 1 intercept)
+
+```{julia}
+
+%%julia
+using Plots
+
+# --- 4. Comparative Visualization --- 
+
+plot_comparison = plot(xlabel="X", ylabel="Y", title="Hierarchical vs. Pooled Model Comparison", legend=:topleft)
+
+# Plot all raw data points
+scatter!(plot_comparison, X_data, Y_data, label="All Data", markersize=1.5, alpha=0.5, color=:gray)
+
+# Plot True Group-Specific Lines
+for g in 1:num_groups
+    group_mask = (Group_indices .== g)
+    plot!(plot_comparison, X_data[group_mask], true_alpha_groups[g] .+ true_beta_groups[g] .* X_data[group_mask], label="True Group $(g)", linewidth=2, linestyle=:dot, color=palette(:tab10)[g])
+end
+
+# Plot Hierarchical Model Posterior Mean Lines
+for g in 1:num_groups
+    group_mask = (Group_indices .== g)
+    post_mean_alpha_hier = mean(chain_hierarchical["alpha_group[" * string(g) * "]"])
+    post_mean_beta_hier = mean(chain_hierarchical["beta_group[" * string(g) * "]"])
+    plot!(plot_comparison, X_data[group_mask], post_mean_alpha_hier .+ post_mean_beta_hier .* X_data[group_mask], label="Hierarchical Group $(g)", linewidth=1.5, linestyle=:dash, color=palette(:tab10)[g])
+end
+
+# Plot Pooled Model Posterior Mean Line
+post_mean_alpha_pooled = mean(chain_pooled[:alpha])
+post_mean_beta_pooled = mean(chain_pooled[:beta])
+plot!(plot_comparison, [minimum(X_data), maximum(X_data)], 
+    [post_mean_alpha_pooled + post_mean_beta_pooled * minimum(X_data),
+     post_mean_alpha_pooled + post_mean_beta_pooled * maximum(X_data)], 
+    label="Pooled Model", linewidth=3, color=:black)
+
+display(plot_comparison)
+
+println("\n### Comparison Interpretation: ###")
+println("\nThe plot above visually compares the fitted lines from the hierarchical model (dashed lines), the non-hierarchical pooled model (thick black line), and the true underlying group-specific lines (dotted lines).")
+println("\n- **Pooled Model**: The single black line tries to fit all data points with one overall intercept and slope. It often provides a compromise fit, underestimating the slopes for some groups and overestimating for others, especially when there's significant heterogeneity between groups. It does not account for the group-level variability.")
+println("- **Hierarchical Model**: The dashed lines represent the group-specific fits from the hierarchical model. Notice how they adapt to each group's data while still being 'shrunk' towards the overall population means (mu_alpha_groups_derived and mu_beta). This 'partial pooling' is a key advantage, allowing the model to leverage information across groups without assuming they are identical.")
+println("\nIn this synthetic example, the hierarchical model's lines are much closer to the true underlying group lines than the single pooled line, demonstrating its ability to better capture group-level variation.")
+
+
+```
+
+WAIC comparisons
+
+
+```{{julia}
+using LoopVectorization # Optional: For faster loops if used
+using StatsBase # For `loglikelihood`
+using ArviZ # Added for LOO
+
+# --- 1. Define loglikelihood functions for each model ---
+
+# For the Hierarchical Model
+function loglikelihood_hierarchical(chain, X, Y, group_indices, Z, num_groups)
+    num_samples = size(chain, 1)
+    num_chains = size(chain, 3)
+    total_data_points = length(Y)
+
+    # Store point-wise log-likelihoods
+    log_lik_matrix = zeros(total_data_points, num_samples * num_chains)
+
+    for c in 1:num_chains
+        for s in 1:num_samples
+            # Extract parameters for the current sample and chain
+            gamma0 = chain["gamma0"][s, 1, c]
+            gamma1 = chain["gamma1"][s, 1, c]
+            sigma_alpha = chain["sigma_alpha"][s, 1, c]
+            mu_beta = chain["mu_beta"][s, 1, c]
+            sigma_beta = chain["sigma_beta"][s, 1, c]
+            sigma_obs = chain["sigma_obs"][s, 1, c]
+
+            alpha_group = [chain["alpha_group[" * string(g) * "]"][s, 1, c] for g in 1:num_groups]
+            beta_group = [chain["beta_group[" * string(g) * "]"][s, 1, c] for g in 1:num_groups]
+
+            # Calculate point-wise log-likelihoods
+            for i in 1:total_data_points
+                g = group_indices[i]
+                mu = alpha_group[g] + beta_group[g] * X[i]
+                log_lik_matrix[i, (c-1)*num_samples + s] = logpdf(Normal(mu, sigma_obs), Y[i])
+            end
+        end
+    end
+    return log_lik_matrix
+end
+
+# For the Pooled Model
+function loglikelihood_pooled(chain, X, Y)
+    num_samples = size(chain, 1)
+    num_chains = size(chain, 3)
+    total_data_points = length(Y)
+
+    log_lik_matrix = zeros(total_data_points, num_samples * num_chains)
+
+    for c in 1:num_chains
+        for s in 1:num_samples
+            alpha = chain["alpha"][s, 1, c]
+            beta = chain["beta"][s, 1, c]
+            sigma_obs = chain["sigma_obs"][s, 1, c]
+
+            for i in 1:total_data_points
+                mu = alpha + beta * X[i]
+                log_lik_matrix[i, (c-1)*num_samples + s] = logpdf(Normal(mu, sigma_obs), Y[i])
+            end
+        end
+    end
+    return log_lik_matrix
+end
+
+# --- 2. Calculate point-wise log-likelihoods ---
+
+println("Calculating point-wise log-likelihoods for Hierarchical Model...")
+ll_hierarchical = loglikelihood_hierarchical(chain_hierarchical, X_data, Y_data, Group_indices, Z_data, num_groups)
+
+println("Calculating point-wise log-likelihoods for Pooled Model...")
+ll_pooled = loglikelihood_pooled(chain_pooled, X_data, Y_data)
+
+# --- 3. Calculate WAIC ---
+# ArviZ.jl's psis (Pareto Smoothed Importance Sampling) is often preferred for LOO-CV,
+# but for WAIC, we can manually compute it from the point-wise log-likelihoods.
+
+# Function to calculate WAIC from a matrix of point-wise log-likelihoods
+function calculate_waic(log_lik_matrix)
+    # log predictive density (lpd)
+    lpd = sum(logmeanexp(log_lik_matrix, dims=2))
+
+    # penalty term (p_waic) based on variance of log-likelihoods
+    p_waic = sum(var(log_lik_matrix, dims=2))
+
+    waic = -2 * (lpd - p_waic)
+    return (waic=waic, lpd=lpd, p_waic=p_waic)
+end
+
+# Helper function for logsumexp (for logmeanexp)
+function logsumexp(x; dims=:) 
+    if dims == : 
+        x_max = maximum(x)
+        return x_max + log(sum(exp.(x .- x_max)))
+    else
+        x_max = maximum(x, dims=dims)
+        return x_max .+ log.(sum(exp.(x .- x_max), dims=dims))
+    end
+end
+
+# Helper function for logmeanexp (mean of exponents of log-likelihoods)
+logmeanexp(x; dims=:) = logsumexp(x, dims=dims) .- log.(size(x, dims==: ? 1 : dims))
+
+println("\n--- WAIC Results ---")
+waic_hierarchical = calculate_waic(ll_hierarchical)
+println("Hierarchical Model WAIC: ", round(waic_hierarchical.waic, digits=2))
+println("  lpd: ", round(waic_hierarchical.lpd, digits=2))
+println("  p_waic: ", round(waic_hierarchical.p_waic, digits=2))
+
+waic_pooled = calculate_waic(ll_pooled)
+println("Pooled Model WAIC: ", round(waic_pooled.waic, digits=2))
+println("  lpd: ", round(waic_pooled.lpd, digits=2))
+println("  p_waic: ", round(waic_pooled.p_waic, digits=2))
+
+println("\nInterpretation: A lower WAIC value indicates a better-fitting model. The p_waic term estimates the effective number of parameters, penalizing models with greater complexity. In general, differences in WAIC of less than 4-10 are often considered negligible.")
+
+
+# Calculate the difference in WAIC
+waic_diff = waic_hierarchical.waic - waic_pooled.waic
+
+println("\n--- WAIC Difference ---")
+println("WAIC (Hierarchical) - WAIC (Pooled) = ", round(waic_diff, digits=2))
+
+println("\nInterpretation: A negative difference indicates that the hierarchical model has a lower (better) WAIC value than the pooled model. The magnitude of the difference can be interpreted relative to the standard error of the difference (which is not computed here but is typically considered for robust comparisons). A difference greater than 4-10 usually suggests a meaningful improvement.")
+
+
+# --- 4. Calculate PSIS-LOO using ArviZ.jl ---
+println("\n--- PSIS-LOO Results (using ArviZ.jl) ---")
+
+# Create InferenceData objects
+idata_hier = InferenceData(Dict(:log_likelihood => ll_hierarchical))
+idata_pooled = InferenceData(Dict(:log_likelihood => ll_pooled))
+
+# Calculate LOO
+loo_hierarchical = loo(idata_hier)
+loo_pooled = loo(idata_pooled)
+
+println("Hierarchical Model LOO: ", loo_hierarchical)
+println("Pooled Model LOO: ", loo_pooled)
+
+println("\nInterpretation: Similar to WAIC, a lower LOO value indicates better out-of-sample predictive accuracy. ArviZ's `loo` function also provides diagnostics like Pareto k values, which indicate the reliability of the LOO approximation. Values of k > 0.7 can suggest that the LOO approximation is unreliable for some data points.")
+
+
+
+
+
+
+```
+
+### Censored regression
+
+
+```{julia}
+
+# --- 1. Generate Synthetic Left-Censored Data ---
+
+true_mu = 5.0
+true_sigma = 2.0
+censoring_threshold = 2.5 # Values below this will be censored
+num_samples = 200
+
+# Generate underlying true data
+true_data = rand(Normal(true_mu, true_sigma), num_samples)
+
+# Create observed data with left-censoring
+y_censored = Vector{Float64}(undef, num_samples)
+censored_status = Vector{Bool}(undef, num_samples)
+
+for i in 1:num_samples
+    if true_data[i] < censoring_threshold
+        y_censored[i] = censoring_threshold # Reported as the threshold
+        censored_status[i] = true # Mark as censored
+    else
+        y_censored[i] = true_data[i]
+        censored_status[i] = false # Mark as uncensored
+    end
+end
+
+println("Synthetic Left-Censored Data Generated.")
+println("Number of censored observations: ", sum(censored_status))
+println("First 10 observed values (and censored status):")
+display(hcat(round.(y_censored[1:10], digits=2), censored_status[1:10]))
+
+# Plotting the censored data
+plot_data = histogram(y_censored, bins=20, normalize=:pdf, label="Observed Data (Censored)",
+                      title="Synthetic Left-Censored Data", xlabel="Value", ylabel="Density",
+                      color=:lightblue, linecolor=:black, legend=:topright)
+
+# Overlay the true underlying distribution for comparison
+x_vals = range(minimum(y_censored), maximum(y_censored) + 2, length=100)
+plot!(x_vals, pdf.(Normal(true_mu, true_sigma), x_vals), label="True Underlying Distribution",
+      linewidth=2, linestyle=:dash, color=:red)
+
+display(plot_data)
+
+# --- 2. Define the Bayesian Censored Model in Turing.jl ---
+
+@model function censored_normal_model(y_obs, censored_status, censoring_threshold)
+    # Priors for the underlying Normal distribution parameters
+    mu ~ Normal(0, 10) # Broad prior for the mean
+    sigma ~ truncated(Normal(0, 5), 0, Inf) # Positive prior for the standard deviation
+
+    # Likelihood: Handle censored and uncensored observations differently
+    for i in 1:length(y_obs)
+        if censored_status[i] # If the observation is censored
+            # The likelihood is the probability of the true value being below the threshold
+            # This is equivalent to `true_value ~ truncated(Normal(mu, sigma), -Inf, censoring_threshold)`
+            # But for censoring, we use the CDF of the Normal distribution.
+            Turing.@addlogprob! logcdf(Normal(mu, sigma), censoring_threshold)
+        else # If the observation is uncensored
+            # The observation is directly from the Normal distribution
+            y_obs[i] ~ Normal(mu, sigma)
+        end
+    end
+end
+
+# --- 3. Instantiate and Sample from the Model ---
+
+model_censored = censored_normal_model(y_censored, censored_status, censoring_threshold);
+
+println("\nSampling from posterior for Censored Normal Model (this may take a moment)... Using NUTS sampler.")
+# Sample from the posterior distribution using NUTS
+chain_censored = sample(model_censored, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+# --- 4. Display and Interpret Results ---
+
+display(chain_censored)
+
+println("\nTrue Parameters:")
+println("  True mu: ", true_mu)
+println("  True sigma: ", true_sigma)
+
+println("\nPosterior Means for Parameters:")
+println("  Inferred mu: ", round(mean(chain_censored[:mu]), digits=3))
+println("  Inferred sigma: ", round(mean(chain_censored[:sigma]), digits=3))
+
+println("\nInterpretation: Despite some data points being censored (reported as the threshold), the Bayesian model is able to infer the parameters (mu and sigma) of the true underlying normal distribution quite accurately. The censored observations contribute information through the cumulative distribution function (CDF) of the Normal distribution.")
+
+
+```
+
+The logcdf function is crucial for correctly incorporating censored data into the likelihood calculation. Here's a breakdown:
+
+Censored Data Nature: When an observation is left-censored, we don't know its exact value, only that it is less than or equal to a certain threshold (the censoring_threshold). For example, a water sample might be reported as < 0.01 ppm, meaning the true concentration is somewhere between 0 and 0.01 ppm.
+
+Likelihood Contribution: For uncensored data, the likelihood contribution is straightforward: it's the probability density at the observed value (logpdf(Normal(mu, sigma), y_obs[i])).
+
+Handling Censoring with CDF: For a censored observation, the true value could be any value below the threshold. The probability of observing a value less than or equal to the censoring_threshold (given the model parameters mu and sigma) is given by the Cumulative Distribution Function (CDF) of the underlying distribution at that threshold. Specifically, cdf(Normal(mu, sigma), censoring_threshold) calculates P(X <= censoring_threshold).
+
+logcdf for Numerical Stability: Turing.jl models work with log-probabilities for numerical stability. Therefore, instead of directly using cdf, we use logcdf(Normal(mu, sigma), censoring_threshold). This term is added to the model's total log-probability, representing the likelihood contribution from that specific censored observation.
+
+By using logcdf, the model acknowledges that censored data still provides valuable information (i.e., the true value lies within a certain range) and uses this information to update the posterior distributions of mu and sigma, leading to more accurate parameter estimates than if censored data were simply ignored or treated as exact values
+
+
+
+
+
 ## Generalized Linear Models
 
 Generalized Linear Models (GLMs) essentially use the infrastructure of Linear Models for an invertable family of distributions through a link function to a Multivariate Normal internal distribution. The form of a GLM is (Banerjee et al. 2004):
@@ -907,11 +1387,11 @@ See [TuringGLM.jl](https://turinglang.org/TuringGLM.jl/stable/)
 
 using LinearAlgebra, Distributions, TuringGLM, MixedModels, CSV, StatsModels, DataFrames 
 
-iris = RDatasets.dataset("datasets", "iris")
+PalmerPenguins = DataFrame(PalmerPenguins.load())
 
-# treat "Species" as fixed effects
-fm = @formula(SepalLength ~ SepalWidth * Species )
-model = turing_model(fm, iris);
+# treat "species" as fixed effects
+fm = @formula(body_mass_g ~ flipper_length_mm * species )
+model = turing_model(fm, PalmerPenguins);
 
 n_samples = 1_000;
 chns = sample(model, Turing.NUTS(), n_samples);
@@ -919,9 +1399,9 @@ chns = sample(model, Turing.NUTS(), n_samples);
 showall(chns)
   
 
-# Species as fixed effects with random intercept
-fm = @formula(SepalLength ~ SepalWidth + (1|Species) )
-model = turing_model(fm, iris);
+# species as fixed effects with random intercept
+fm = @formula(body_mass_g ~ flipper_length_mm + (1|species) )
+model = turing_model(fm, PalmerPenguins);
 
 n_samples = 1_000;
 chns = sample(model, Turing.NUTS(), n_samples);
@@ -931,10 +1411,10 @@ showall(chns)
  
 # low level access to TuringGLM data structures and methods, etc:
 
-y = TuringGLM.data_response(fm, iris) # independent variable
-X = TuringGLM.data_fixed_effects(fm, iris)  # design matrix
+y = TuringGLM.data_response(fm, PalmerPenguins) # independent variable
+X = TuringGLM.data_fixed_effects(fm, PalmerPenguins)  # design matrix
 
-Z = TuringGLM.data_random_effects(fm, iris) # random effects, if any
+Z = TuringGLM.data_random_effects(fm, PalmerPenguins) # random effects, if any
 
 raneffects = TuringGLM.ranef(fm)
 
@@ -979,17 +1459,154 @@ isapprox(g1, g2)
 
 ```
 
+
+
+
+
 $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 ### Binomial regression
 
 The standard Binomial distribution assumes that the probability of success p is constant for all trials. 
 
+The ROC is useful in such binomial models.
+
+
 ```{julia}
 
 using StatsAPI # Provides logistic and logit functions
 using LinearAlgebra # For I (identity matrix)
  
+using LoopVectorization # Optional: For faster loops if used
+using StatsBase # For `loglikelihood`
+using ArviZ # Added for LOO
+using ScikitLearn.Metrics: roc_curve, roc_auc_score # For ROC curve and AUC
+
+# --- 1. Define loglikelihood functions for each model ---
+
+# For the Hierarchical Model (now with BernoulliLogit likelihood)
+function loglikelihood_hierarchical(chain, X, Y_binary, group_indices, Z, num_groups)
+    num_samples = size(chain, 1)
+    num_chains = size(chain, 3)
+    total_data_points = length(Y_binary)
+
+    # Store point-wise log-likelihoods
+    log_lik_matrix = zeros(total_data_points, num_samples * num_chains)
+
+    for c in 1:num_chains
+        for s in 1:num_samples
+            # Extract parameters for the current sample and chain
+            gamma0 = chain["gamma0"][s, 1, c]
+            gamma1 = chain["gamma1"][s, 1, c]
+            sigma_alpha = chain["sigma_alpha"][s, 1, c]
+            mu_beta = chain["mu_beta"][s, 1, c]
+            sigma_beta = chain["sigma_beta"][s, 1, c]
+            # sigma_obs is no longer part of BernoulliLogit model
+
+            alpha_group = [chain["alpha_group[" * string(g) * "]"][s, 1, c] for g in 1:num_groups]
+            beta_group = [chain["beta_group[" * string(g) * "]"][s, 1, c] for g in 1:num_groups]
+
+            # Calculate point-wise log-likelihoods using BernoulliLogit
+            for i in 1:total_data_points
+                g = group_indices[i]
+                logit_p = alpha_group[g] + beta_group[g] * X[i]
+                log_lik_matrix[i, (c-1)*num_samples + s] = logpdf(BernoulliLogit(logit_p), Y_binary[i])
+            end
+        end
+    end
+    return log_lik_matrix
+end
+
+# For the Pooled Model (now with BernoulliLogit likelihood)
+function loglikelihood_pooled(chain, X, Y_binary)
+    num_samples = size(chain, 1)
+    num_chains = size(chain, 3)
+    total_data_points = length(Y_binary)
+
+    log_lik_matrix = zeros(total_data_points, num_samples * num_chains)
+
+    for c in 1:num_chains
+        for s in 1:num_samples
+            alpha = chain["alpha"][s, 1, c]
+            beta = chain["beta"][s, 1, c]
+            # sigma_obs is no longer part of BernoulliLogit model
+
+            for i in 1:total_data_points
+                logit_p = alpha + beta * X[i]
+                log_lik_matrix[i, (c-1)*num_samples + s] = logpdf(BernoulliLogit(logit_p), Y_binary[i])
+            end
+        end
+    end
+    return log_lik_matrix
+end
+
+# --- 2. Calculate point-wise log-likelihoods ---
+
+println("Calculating point-wise log-likelihoods for Hierarchical Model...")
+ll_hierarchical = loglikelihood_hierarchical(chain_hierarchical, X_data, Y_binary, Group_indices, Z_data, num_groups)
+
+println("Calculating point-wise log-likelihoods for Pooled Model...")
+ll_pooled = loglikelihood_pooled(chain_pooled, X_data, Y_binary)
+
+# --- 3. Calculate WAIC ---
+# ArviZ.jl's psis (Pareto Smoothed Importance Sampling) is often preferred for LOO-CV,
+# but for WAIC, we can manually compute it from the point-wise log-likelihoods.
+
+# Function to calculate WAIC from a matrix of point-wise log-likelihoods
+function calculate_waic(log_lik_matrix)
+    # log predictive density (lpd)
+    lpd = sum(logmeanexp(log_lik_matrix, dims=2))
+
+    # penalty term (p_waic) based on variance of log-likelihoods
+    p_waic = sum(var(log_lik_matrix, dims=2))
+
+    waic = -2 * (lpd - p_waic)
+    return (waic=waic, lpd=lpd, p_waic=p_waic)
+end
+
+# Helper function for logsumexp (for logmeanexp)
+function logsumexp(x; dims=:)
+    if dims == :
+        x_max = maximum(x)
+        return x_max + log(sum(exp.(x .- x_max)))
+    else
+        x_max = maximum(x, dims=dims)
+        return x_max .+ log.(sum(exp.(x .- x_max), dims=dims))
+    end
+end
+
+# Helper function for logmeanexp (mean of exponents of log-likelihoods)
+logmeanexp(x; dims=:) = logsumexp(x, dims=dims) .- log.(size(x, dims==: ? 1 : dims))
+
+println("\n--- WAIC Results ---")
+waic_hierarchical = calculate_waic(ll_hierarchical)
+println("Hierarchical Model WAIC: ", round(waic_hierarchical.waic, digits=2))
+println("  lpd: ", round(waic_hierarchical.lpd, digits=2))
+println("  p_waic: ", round(waic_hierarchical.p_waic, digits=2))
+
+waic_pooled = calculate_waic(ll_pooled)
+println("Pooled Model WAIC: ", round(waic_pooled.waic, digits=2))
+println("  lpd: ", round(waic_pooled.lpd, digits=2))
+println("  p_waic: ", round(waic_pooled.p_waic, digits=2))
+
+println("\nInterpretation: A lower WAIC value indicates a better-fitting model. The p_waic term estimates the effective number of parameters, penalizing models with greater complexity. In general, differences in WAIC of less than 4-10 are often considered negligible.")
+
+# --- 4. Calculate PSIS-LOO using ArviZ.jl ---
+println("\n--- PSIS-LOO Results (using ArviZ.jl) ---")
+
+# Create InferenceData objects
+idata_hier = InferenceData(Dict(:log_likelihood => ll_hierarchical))
+idata_pooled = InferenceData(Dict(:log_likelihood => ll_pooled))
+
+# Calculate LOO
+loo_hierarchical = loo(idata_hier)
+loo_pooled = loo(idata_pooled)
+
+println("Hierarchical Model LOO: ", loo_hierarchical)
+println("Pooled Model LOO: ", loo_pooled)
+
+println("\nInterpretation: Similar to WAIC, a lower LOO value indicates better out-of-sample predictive accuracy. ArviZ's `loo` function also provides diagnostics like Pareto k values, which indicate the reliability of the LOO approximation. Values of k > 0.7 can suggest that the LOO approximation is unreliable for some data points.")
+
 
 # 1. Generate Synthetic Data for Binomial Regression
 num_samples = 100
@@ -1060,6 +1677,102 @@ println("Beta1 (beta[2]): ", round(mean(chain[:beta___2]), digits=3))
 println("Beta2 (beta[3]): ", round(mean(chain[:beta___3]), digits=3))
 
 # You can also get credible intervals or plot the posterior distributions
+
+
+using ScikitLearn.Metrics: roc_curve, roc_auc_score
+
+# --- 1. Function to get predicted probabilities from posterior ---
+
+function get_predicted_probabilities_hierarchical(chain, X, group_indices, num_groups)
+    num_samples = size(chain, 1) * size(chain, 3) # Total number of posterior samples
+    num_data_points = length(X)
+    
+    # Store predicted probabilities for each data point across all posterior samples
+    all_predicted_probs = Matrix{Float64}(undef, num_data_points, num_samples)
+
+    sample_idx = 1
+    for c in 1:size(chain, 3) # Iterate through chains
+        for s in 1:size(chain, 1) # Iterate through samples per chain
+            alpha_group = [chain["alpha_group[" * string(g) * "]"][s, 1, c] for g in 1:num_groups]
+            beta_group = [chain["beta_group[" * string(g) * "]"][s, 1, c] for g in 1:num_groups]
+
+            for i in 1:num_data_points
+                g = group_indices[i]
+                logit_p = alpha_group[g] + beta_group[g] * X[i]
+                all_predicted_probs[i, sample_idx] = logistic(logit_p)
+            end
+            sample_idx += 1
+        end
+    end
+    
+    # Return the mean predicted probability for each data point
+    return vec(mean(all_predicted_probs, dims=2))
+end
+
+function get_predicted_probabilities_pooled(chain, X)
+    num_samples = size(chain, 1) * size(chain, 3) # Total number of posterior samples
+    num_data_points = length(X)
+
+    all_predicted_probs = Matrix{Float64}(undef, num_data_points, num_samples)
+
+    sample_idx = 1
+    for c in 1:size(chain, 3) # Iterate through chains
+        for s in 1:size(chain, 1) # Iterate through samples per chain
+            alpha = chain["alpha"][s, 1, c]
+            beta = chain["beta"][s, 1, c]
+
+            for i in 1:num_data_points
+                logit_p = alpha + beta * X[i]
+                all_predicted_probs[i, sample_idx] = logistic(logit_p)
+            end
+            sample_idx += 1
+        end
+    end
+
+    return vec(mean(all_predicted_probs, dims=2))
+end
+
+# --- 2. Calculate Predicted Probabilities ---
+
+println("Calculating predicted probabilities for Hierarchical Model...")
+predicted_probs_hierarchical = get_predicted_probabilities_hierarchical(chain_hierarchical, X_data, Group_indices, num_groups)
+
+println("Calculating predicted probabilities for Pooled Model...")
+predicted_probs_pooled = get_predicted_probabilities_pooled(chain_pooled, X_data)
+
+# --- 3. Compute ROC Curves and AUC Scores ---
+
+# Hierarchical Model
+fpr_hierarchical, tpr_hierarchical, _ = roc_curve(Y_binary, predicted_probs_hierarchical)
+auc_hierarchical = roc_auc_score(Y_binary, predicted_probs_hierarchical)
+
+# Pooled Model
+fpr_pooled, tpr_pooled, _ = roc_curve(Y_binary, predicted_probs_pooled)
+auc_pooled = roc_auc_score(Y_binary, predicted_probs_pooled)
+
+println("\n--- ROC Curve and AUC Results ---")
+println("Hierarchical Model AUC: ", round(auc_hierarchical, digits=3))
+println("Pooled Model AUC: ", round(auc_pooled, digits=3))
+
+# --- 4. Plot ROC Curves ---
+
+plot_roc = plot(xlabel="False Positive Rate", ylabel="True Positive Rate",
+                title="ROC Curves for Hierarchical vs. Pooled Models",
+                legend=:bottomright, aspect_ratio=:equal)
+
+plot!(plot_roc, fpr_hierarchical, tpr_hierarchical, label="Hierarchical Model (AUC = $(round(auc_hierarchical, digits=3)))",
+      linewidth=2, color=:blue)
+
+plot!(plot_roc, fpr_pooled, tpr_pooled, label="Pooled Model (AUC = $(round(auc_pooled, digits=3)))",
+      linewidth=2, color=:red)
+
+plot!(plot_roc, [0, 1], [0, 1], linestyle=:dash, color=:gray, label="Random Classifier")
+
+display(plot_roc)
+
+println("\nInterpretation: The ROC curve illustrates the diagnostic ability of a binary classifier system as its discrimination threshold is varied. The Area Under the Curve (AUC) provides an aggregate measure of performance across all possible classification thresholds. A higher AUC (closer to 1.0) indicates a better performing model. The dashed gray line represents a random classifier (AUC = 0.5).")
+
+
 
 
 ```
@@ -5732,7 +6445,7 @@ using LinearAlgebra
 using Distances
 
 
-y, X_space, X_time, X_st, inducing_locs_st = example_data("ApproximateGP")
+y, X_space, X_time, X_st, inducing_locs_st = example_data("spatiotemporal_testdata")
 
 # Instantiate the model from previous turn
 # Ensure you have the 'svgp_spatial_model' function defined!
@@ -5773,7 +6486,7 @@ end
 
 ```{julia}
 
-y, X_space, X_time, X_st, inducing_locs_st = example_data("ApproximateGP")
+y, X_space, X_time, X_st, inducing_locs_st = example_data("spatiotemporal_testdata")
 
 @model function svgp_spatial_model(y, X_space, X_time, X_st, inducing_locs_st)
   
@@ -5885,43 +6598,21 @@ Test by varing the noise multiplier in step 3 to: 1.5 * randn(N).
 
 ```{julia}
 
-using ApproximateGPs
-using Flux
-using KernelFunctions
-using LinearAlgebra
-using Zygote
-using Distributions
-using Random
- 
+# using ApproximateGPs, Flux, KernelFunctions, LinearAlgebra, Zygote, Distributions, Random
 
-
-# --- Usage ---
-# Generate the massive dataset
-
-X_full, y_full = example_data("SpatialSVGP")
-
-println("Data Generated!")
-println("Input Shape: ", size(X_full)) # Should be (3, 100000)
-println("Target Shape: ", size(y_full)) # Should be (100000,)
-
-
-# 1. Data & Mini-Batch Setup
-
-# Assume we have 100,000 points (Big Data)
-N_total = 100_000
 Batch_Size = 256
+N_total = Batch_Size * 4
 
-# Synthetic Space-Time Data (3D Inputs: Time, Lat, Lon)
-# X is 3 x N matrix
-X_full = randn(3, N_total) 
-y_full = sin.(X_full[1, :]) .+ cos.(X_full[2, :]) .+ 0.1 .* randn(N_total)
+y_full, X_space, X_time, X_st, inducing_locs_st = example_data("spatiotemporal_testdata", N_obs=N_total)
 
-# Create the Mini-Batch Loader
-# shuffle=true ensures we get random samples every epoch (Stochasticity)
+X_full = hcat(X_st...)
+
+
+# Create the Mini-Batch Loader shuffle=true ensures we get random samples every epoch (Stochasticity)
 train_loader = Flux.DataLoader((X_full, y_full), batchsize=Batch_Size, shuffle=true)
 
-# 2. Model Definition (Variational Parameters)
 
+# Model Definition (Variational Parameters)
 # We treat the model parameters as a Flux struct so we can optimize them
 struct SpatialSVGP
     # Kernel Hyperparameters (in log domain for positivity)
@@ -5953,7 +6644,7 @@ model_params = SpatialSVGP(
 
 # Helper to unpack parameters into a valid ApproximateGPs Object
 function build_vgp(p::SpatialSVGP)
-    # 1. Construct Kernel (Time ⊗ Space)
+    # Construct Kernel (Time ⊗ Space)
     σ = exp(p.log_σ[1])
     ℓ_t = exp(p.log_ℓ_time[1])
     ℓ_s = exp(p.log_ℓ_space[1])
@@ -5965,42 +6656,43 @@ function build_vgp(p::SpatialSVGP)
   
     kernel = σ^2 * k_time * k_space
   
-    # 2. Unpack Variational Covariance (L)
-    # We reconstruct the LowerTriangular matrix from the vector
+    # Unpack Variational Covariance (L)
+    # reconstruct the LowerTriangular matrix from the vector
     L_mat = ApproximateGPs.vec_to_tril(p.L_vec, size(p.Z, 2))
   
-    # 3. Build VGP
-    # This object represents the approximate posterior q(f)
-    return ApproximateGPs.VGP(
+    # Build VGP, the approximate posterior q(f)
+    apost = ApproximateGPs.VGP(
         GP(kernel),          # The Prior
         ColVecs(p.Z),        # Inducing inputs
         p.m,                 # Variational Mean
         L_mat * L_mat' + 1e-6*I # Variational Covariance S = LL' (ensure pos-def)
     )
+
+    return apost
 end
 
-# 3. The Mini-Batch Loss Function (ELBO)
+# Mini-Batch Loss Function (ELBO)
 
 # The Objective: Minimize Negative ELBO
 function loss(p::SpatialSVGP, x_batch, y_batch)
-    # 1. Build the model with current params
+    # Build the model with current params
     vgp = build_vgp(p)
   
-    # 2. Project VGP onto the mini-batch locations
+    # Project VGP onto the mini-batch locations
     # f_approx is the distribution q(f(x_batch))
     f_approx = vgp(ColVecs(x_batch))
   
-    # 3. Calculate Expected Log-Likelihood for this batch
-    # We assume Gaussian noise with std=0.1 for simplicity (or make it learnable)
+    # Calculate Expected Log-Likelihood for this batch
+    # Assume Gaussian noise with std=0.1 for simplicity (or make it learnable)
     noise_std = 0.1
     log_like_batch = mean(logpdf(Normal(μ, noise_std), y) for (μ, y) in zip(mean(f_approx), y_batch))
   
-    # CRITICAL: Scale batch likelihood up to full dataset size
+    # Scale batch likelihood up to full dataset size
     # Expected Log Like ≈ (N / BatchSize) * ∑ batch_log_like
     scale_factor = N_total / length(y_batch)
     total_log_like = scale_factor * sum(logpdf(Normal(μ, noise_std), y) for (μ, y) in zip(mean(f_approx), y_batch))
   
-    # 4. KL Divergence (Regularization)
+    # KL Divergence (Regularization)
     # This penalizes the approximation for drifting too far from the prior
     # ApproximateGPs calculates this automatically between VGP and Prior
     kl = approximate_kl(vgp) 
@@ -6009,30 +6701,29 @@ function loss(p::SpatialSVGP, x_batch, y_batch)
     return -(total_log_like - kl)
 end
 
-# 4. The Training Loop (Flux)
+# The Training Loop (Flux)
 
 optimizer = Flux.Adam(0.01) # Standard optimizer
-params_flux = Flux.params(model_params) # Tell Flux what to update
+params_flux = Flux.params(model_params) 
 
-# Run for 5 Epochs
 for epoch in 1:5
     println("Starting Epoch $epoch...")
   
     for (x_b, y_b) in train_loader
         # Compute Gradient of the Loss w.r.t Parameters
         grads = Zygote.gradient(() -> loss(model_params, x_b, y_b), params_flux)
-      
-        # Update Parameters
+
         Flux.update!(optimizer, params_flux, grads)
     end
   
-    # Optional: Print loss
     current_loss = loss(model_params, X_full[:, 1:100], y_full[1:100])
     println("Epoch $epoch Loss: $current_loss")
 end
 
 
 ```
+
+
 #### Spectral approximation (2-D FFT)
 
 Spatial FFT 2D approximation of covariance
@@ -6853,7 +7544,20 @@ end
 end
  
   
-y_data, a_data, u_data, v_grid_time, v_grid_space, adj = example_data("basic_gp")
+# Fake Graph (4 nodes in a ring)
+adj = [0 1 0 1; 1 0 1 0; 0 1 0 1; 1 0 1 0]
+ynodes = [1:4]
+
+ytimes = [1:5]
+
+v_grid_time = repeat(ytimes, inner=4) # [1,1,1,1, 2,2,2,2...]
+v_grid_space = repeat(ynodes, outer=5) # [1,2,3,4, 1,2,3,4...]
+
+# Indices for A (Time) and U (Space)
+a_data = v_grid_time
+u_data = v_grid_space
+
+y_data = randn(20)
 
 model = model_basic_gp(y_data, a_data, u_data, v_grid_time, v_grid_space, adj)
 
@@ -8965,23 +9669,17 @@ https://stats.stackexchange.com/questions/104306/what-is-the-difference-between-
 ```{julia}
 
 # include( srcdir( "pca_functions.jl" ))   # support functions  
-   
-# X has an embedded nonlinear pattern 
-# id, sps, X, G, vn = example_data( "iris_pca_nonlinear" )  
-
-id, sps, X, G, vn = example_data("iris_pca")
+ 
+id, sps, X, G, vn = example_data("PalmerPenguins_pca")
 nData, nvar = size(X)   
 nz = 2  # no latent factors to use
-
-
+ 
 # test covariances...  
 isapprox(X'*X/(nData-1), cov(X) )  # ok
 
 XX = X .- mean(X, dims=2) # must center first (x is already centered by column)
 isapprox( XX*XX'/(nvar-1),  cov(XX') )  # ok
- 
-
- 
+  
 # this is the core of eigendecomposition
 eigen( cov(X) )
 
@@ -9418,7 +10116,7 @@ $$
 ```{julia}
  
     # refresh data in case of changes:
-    id, sps, X, G, vn = example_data("iris_pca")
+    id, sps, X, G, vn = example_data("PalmerPenguins_pca")
     nData, nvar =  size(X)
     nz = 2  # no latent factors to use
  
@@ -9508,17 +10206,17 @@ $$
 ```
 #### Nonlinear data: separation is weaker
 
-NOTE:: most of this is copied directly from the Turing tutorials (all
-credit to the original authors)
+NOTE:: most of this is adapted or copied directly from the Turing tutorials (all credit to the original authors)
 
 Get nonlinear data:
 
 ```{julia}
     # X has an embedded nonlinear pattern 
-    id, sps, X, G, vn = example_data("iris_pca_nonlinear")  
+    id, sps, X, G, vn = example_data("PalmerPenguins_pca_nonlinear")  
     nData, nvar =  size(X)
     nz = 2  # no latent factors to uses
 ```
+
 #### Simple standard pca
 
 ```{julia}
@@ -12292,7 +12990,7 @@ end
 # 2. The Turing Model (GMRF Version)
 
 # Generate spatio-temporal data
-y, a_idx, u_idx, group_idx, W, N_times, N_areas, N_obs = example_data("icar")
+y, a_idx, u_idx, group_idx, W, N_times, N_areas, N_obs = example_data("spatiotemporal_icar")
 
 @model function inla_gmrf_model(y, a_idx, u_idx, v_time, v_space, adj)
   

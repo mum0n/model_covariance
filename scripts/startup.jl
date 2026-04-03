@@ -19,12 +19,14 @@ push!( LOAD_PATH, project_directory )  # add the directory to the load path, so 
 
 pkgs = [  
     "Revise", "Memoization", "BenchmarkTools", "OhMyREPL",
-    "DataFrames", "CSV", "RData", "RDatasets", "JLD2", "ParameterHandling",  # "ArviZ", 
+    "DataFrames", "CSV", "PalmerPenguins", "JLD2", "ParameterHandling",  # "ArviZ", 
     "StatsBase", "Statistics", "MultivariateStats", "LinearAlgebra", "Distributions", "Random", "StatsAPI", 
     "StatsModels", "StatsFuns", "GLM", "Tables",
     "StaticArrays", "FillArrays",  "SparseArrays", "Graphs", "Distances", "CategoricalArrays",
     "PlotThemes", "Colors", "ColorSchemes", "Plots", "StatsPlots",
-    "MKL", "PDMats", "Optim", "Peaks", "KernelDensity", "DSP", "Interpolations", 
+    "MKL", "PDMats", 
+    "Optim", "Flux",  
+    "Peaks", "KernelDensity", "DSP", "Interpolations", 
     "ADTypes",  "ForwardDiff", 
     "AdvancedVI",  "Turing", "Bijectors", "ArchGDAL",
     "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions", "TemporalGPs"

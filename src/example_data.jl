@@ -1,5 +1,5 @@
 
-function example_data( datatype )
+function example_data( datatype, N_obs=200, N_inducing=10 )
   
 
   if datatype == "scottish_lip_cancer_data"
@@ -186,66 +186,20 @@ function example_data( datatype )
 
   end
 
+ 
 
-  if datatype == "SpatialSVGP"
-
-    N = 10_000  # larger number
-    
-    # 1. Generate Random Inputs in Domain
-    # Time: 0 to 10 years
-    t = rand(Uniform(0, 10), N)
-    
-    # Space: -5 to 5 (Lat/Lon grid)
-    lat = rand(Uniform(-5, 5), N)
-    lon = rand(Uniform(-5, 5), N)
-    
-    # 2. Define the True Latent Function f(x)
-    # Temporal Component: Periodic Seasonality + Slight Trend
-    f_time(t) = sin.(t .* 2) .+ (0.1 .* t)
-    
-    # Spatial Component: A "Gaussian Hill" at center + "Waves"
-    # This ensures points near each other have similar values (Spatial Correlation)
-    f_space(x, y) = 2.0 .* exp.(-(x.^2 + y.^2)/10) .+ 0.5 .* cos.(x)
-    
-    # 3. Combine + Add Noise
-    # y = f_time(t) + f_space(lat, lon) + Noise
-    signal = f_time(t) .+ f_space(lat, lon)
-    noise = 0.2 .* randn(N)
-    
-    y = signal .+ noise
-    
-    # 4. Format for Flux/ApproximateGPs
-    # X must be a Matrix of size (D_input x N_samples)
-    # D_input = 3 (Time, Lat, Lon)
-    X = vcat(t', lat', lon')
-    
-    return X, y
-  end
-
-
-  if datatype == "ApproximateGP"
+  if datatype == "spatiotemporal_testdata"
      
     # A seasonal trend (Time) and a geographic hotspot (Space).
     # X_st (Inputs): A 3 x N matrix where Row 1 is Time, and Rows 2-3 are Space (Lat/Lon).
     # y (Observations): The noisy signal values.
-    # inducing_locs_st: A 3 x M subset of inputs that the GP uses to approximate the surface.
     
-    # 1. Configuration
-    # Note: For full MCMC (NUTS) in Turing, we keep N relatively small (< 500) 
-    # because we are sampling the variational parameters.
-    # If using VI (Variational Inference), N can be much larger.
-    N_obs = 200       # Number of observations
-    M_inducing = 20   # Number of inducing points (Sparse approximation)
-    
-    # 2. Generate Synthetic Coordinates
     # Time: Continuous (0.0 to 10.0)
     # Space: Continuous Lat/Lon (-5.0 to 5.0)
     
     raw_time = rand(Uniform(0, 10), N_obs)
     raw_space = rand(Uniform(-5, 5), 2, N_obs) # 2 rows (Lat, Lon)
     
-    # 3. Construct "Ground Truth" Function
-    # We create a signal that varies over Time and Space
     # Signal = Sinusoidal Time + Gaussian Spatial Blob
 
     # Calculate true Y without noise
@@ -270,10 +224,10 @@ function example_data( datatype )
     # Add observational noise (Sigma = 0.3)
     y = y_true .+ 0.3 .* randn(N_obs)
     
-    # 4. Format Inputs for ApproximateGPs
+    # Format Inputs for ApproximateGPs
     # The model expects ColVecs (Column Vectors) wrapper for the kernel computations.
     
-    # A. Full Data Inputs
+    # Full Data Inputs
     X_time = ColVecs(reshape(raw_time, 1, :)) # 1xN Matrix wrapped
     X_space = ColVecs(raw_space)              # 2xN Matrix wrapped
     
@@ -281,12 +235,8 @@ function example_data( datatype )
     raw_st = vcat(reshape(raw_time, 1, :), raw_space)
     X_st = ColVecs(raw_st)
     
-    # 5. Select Inducing Points (The "Sparse" Step)
-    # Strategy: Random Subset
-    # We pick M random points from the training data to serve as inducing points.
-    # Ideally, use K-Means, but random selection works for toy data.
-    
-    idx_inducing = randperm(N_obs)[1:M_inducing]
+    # inducing points, consider using K-Means for real work
+    idx_inducing = randperm(N_obs)[1:N_inducing]
     inducing_matrix = raw_st[:, idx_inducing] # 3xM Matrix
     inducing_locs_st = ColVecs(inducing_matrix)
       
@@ -294,34 +244,9 @@ function example_data( datatype )
  
   end
 
+ 
 
-  if datatype == "basic_gp"
-     
-    # 1. Fake Graph (4 nodes in a ring)
-    adj = [0 1 0 1; 1 0 1 0; 0 1 0 1; 1 0 1 0]
-    ynodes = [1:4]
-    
-    # 2. Fake Time (5 steps)
-    ytimes = [1:5]
-    
-    # 3. Generate Grid for V (Space-Time)
-    # We observe every node at every time step -> 20 observations
-    v_grid_time = repeat(ytimes, inner=4) # [1,1,1,1, 2,2,2,2...]
-    v_grid_space = repeat(ynodes, outer=5) # [1,2,3,4, 1,2,3,4...]
-    
-    # 4. Indices for A (Time) and U (Space)
-    a_data = v_grid_time
-    u_data = v_grid_space
-    
-    # 5. Fake Y
-    y_data = randn(20)
-
-    return y_data, a_data, u_data, v_grid_time, v_grid_space, adj
-
-  end
-
-
-  if datatype =="icar"
+  if datatype =="spatiotemporal_icar"
     
     # Space and spatiotemporal model (ICAR)
      
@@ -386,7 +311,7 @@ function example_data( datatype )
     end
     
     # println("Generated $(length(y)) observations for $N_areas areas over $N_times time steps.")
-     
+
     return y, a_idx, u_idx, group_idx, W, N_times, N_areas, N_obs
 
   end
@@ -411,242 +336,88 @@ function example_data( datatype )
     return x,y,z,u,X,Y,Z  
   end
 
-
-  if datatype=="peltzer"
-  
-    fn = joinpath( project_directory, "reference", "data.txt" )
-    testdata = CSV.read(fn, DataFrame, delim=",", ignorerepeated=true )
-    X = testdata[!, "X"] 
-    Y = testdata[!, "Y"] 
-    n = length(X)
-    x = (X .- mean(X)) ./ std(X)
-    y = (Y .- mean(Y)) ./ std(Y)
-    z = (Z .- mean(Z)) ./ std(Z)
+ 
+  if datatype == "PalmerPenguins"
     
-    # add categorical "data" (factors)
-    nu = 5
-    u = sample(1:nu, length(x), replace=true)  # categorical index
-        
-    return x,y,z,u,X,Y,Z
-  end
-  
-  if datatype == "iris"
-  
-    iris = RDatasets.dataset("datasets", "iris")
-    X = iris[!,:PetalWidth]
-    Y = iris[!,:PetalLength]
-    Z = iris[!,:SepalLength]
-    n = length(Y)
+    o = DataFrame(PalmerPenguins.load())
+
+# names(o)
+# 7-element Vector{String}:
+#  "species"
+#  "island"
+#  "bill_length_mm"
+#  "bill_depth_mm"
+#  "flipper_length_mm"
+#  "body_mass_g"
+#  "sex"
+
+    X = o[!,:bill_length_mm]
+    Y = o[!,:flipper_length_mm]
+    Z = o[!,:body_mass_g]
+    n = size(o)[1]
 
     x = (X .- mean(X)) ./ std(X)
     y = (Y .- mean(Y)) ./ std(Y)
     z = (Z .- mean(Z)) ./ std(Z)
     
-    # add categorical "data" (factors)
-    nu = 5
-    u = sample(1:nu, length(x), replace=true)  # categorical index
-        
+    # categorical "data" (factors)
+    u = o[!,:island]
+    
     return x,y,z,u,X,Y,Z  
   
   end
 
   
-  if datatype == "iris_pca"
+  if datatype == "PalmerPenguins_pca"
     
-    nonlinear=false
-    subset_data=0 
-    center=true 
-    scale=false
-    obs="rows" 
+    o = DataFrame(PalmerPenguins.load())
 
-    # from R: data("iris")
-    # write.csv( iris, file=file.path("~", "projects", "model_covariance" , "data", "iris.csv") )
-    # Xdata = CSV.read( joinpath( project_directory, "data", "iris.csv"), DataFrame )
-    Xdata = RDatasets.dataset("datasets", "iris")
-    sps = Xdata.Species
-
-    if subset_data > 0
-        index = shuffle(1:size(Xdata,1))[1:subset_data]
-        Xdata = Xdata[index,:]
-        sps = sps[index]
-    end
-
-    X = Xdata[:, 1:4]
+# names(o)
+# 7-element Vector{String}:
+#  "species"
+#  "island"
+#  "bill_length_mm"
+#  "bill_depth_mm"
+#  "flipper_length_mm"
+#  "body_mass_g"
+#  "sex"
+  
+    sps = o[!,:species]
+ 
+    X = o[:, [:bill_length_mm, :bill_depth_mm, :flipper_length_mm, :body_mass_g] ]
     vn = names(X)
     
     X = Matrix(X)
     nData = size(X, 1)
 
-    if center
-        X = X .- mean(X, dims=1)
-    end
- 
-    if scale
-        X = X ./ std(X, dims=1)
-    end
+    X = X .- mean(X, dims=1)  # center
 
     # fake covariates
     G = zeros(nData, 2)
     G[:,1] = rand(Poisson(10), nData)
     G[:,2] = rand(Poisson(20), nData)
     
-    id = recode(unwrap.( sps ), "setosa"=>1, "versicolor"=>2, "virginica"=>3)
-    
-    if obs=="cols"
-        X = X'  # [[NOTE:: X is transposed relative to ecology]]
-        G = G'
-    end
-    
+    id = recode(unwrap.( sps ), "Adelie"=>1, "Gentoo"=>2, "Chinstrap"=>3)
+     
     return id, sps, X, G, vn 
   end
 
     
-  if datatype == "iris_pca_nonlinear"
+  if datatype == "PalmerPenguins_pca_nonlinear"
     
-    nonlinear=true
-    subset_data=0 
-    center=true 
-    scale=false
-    obs="rows" 
-
-    # from R: data("iris")
-    # write.csv( iris, file=file.path("~", "projects", "model_covariance" , "data", "iris.csv") )
-    # Xdata = CSV.read( joinpath( project_directory, "data", "iris.csv"), DataFrame )
-    Xdata = RDatasets.dataset("datasets", "iris")
-    sps = Xdata.Species
-
-    if subset_data > 0
-        index = shuffle(1:size(Xdata,1))[1:subset_data]
-        Xdata = Xdata[index,:]
-        sps = sps[index]
-    end
-
-    X = Xdata[:, 1:4]
-    vn = names(X)
-
-    if nonlinear
-        # non-linearize data to demonstrate ability of GPs to deal with non-linearity
-        X[:, 1] = 0.5 * X[:, 1] .^ 2 + 0.1 * X[:, 1] .^ 3
-        X[:, 2] = X[:, 2] .^ 3 + 0.2 * X[:, 2] .^ 4
-        X[:, 3] = 0.1 * exp.(X[:, 3]) - 0.2 * X[:, 3] .^ 2
-        X[:, 4] = 0.5 * (X[:, 4]).^ 2 + 0.01 * X[:, 4].^ 5
-    end
+    id, sps, X, G, vn = example_data("PalmerPenguins")
+  
+    # non-linearize data to demonstrate ability of GPs to deal with non-linearity
+    X[:, 1] = 0.5 * X[:, 1] .^ 2 + 0.1 * X[:, 1] .^ 3
+    X[:, 2] = X[:, 2] .^ 3 + 0.2 * X[:, 2] .^ 4
+    X[:, 3] = 0.1 * exp.(X[:, 3]) - 0.2 * X[:, 3] .^ 2
+    X[:, 4] = 0.5 * (X[:, 4]).^ 2 + 0.01 * X[:, 4].^ 5
     
-    X = Matrix(X)
-    nData = size(X, 1)
-
-    if center
-        X = X .- mean(X, dims=1)
-    end
- 
-    if scale
-        X = X ./ std(X, dims=1)
-    end
-
-    # fake covariates
-    G = zeros(nData, 2)
-    G[:,1] = rand(Poisson(10), nData)
-    G[:,2] = rand(Poisson(20), nData)
-    
-    id = recode(unwrap.( sps ), "setosa"=>1, "versicolor"=>2, "virginica"=>3)
-    
-    if obs=="cols"
-        X = X'  # [[NOTE:: X is transposed relative to ecology]]
-        G = G'
-    end
+    # center
+    X = X .- mean(X, dims=1)
     
     return id, sps, X, G, vn 
   end
 
 end
- 
-
-function lattice_adjacency_matrix(rows, cols)
-    geoms = []
-    for r in 1:rows, c in 1:cols
-        # Create a unit square for each cell
-        poly = ArchGDAL.createpolygon([
-            (Float64(c-1), Float64(r-1)), (Float64(c), Float64(r-1)),
-            (Float64(c), Float64(r)), (Float64(c-1), Float64(r)),
-            (Float64(c-1), Float64(r-1))
-        ])
-        push!(geoms, poly)
-    end
-    
-    n = length(geoms)
-    W = spzeros(Int, n, n)
-    for i in 1:n
-        prep_i = ArchGDAL.preparegeom(geoms[i])
-        for j in (i+1):n
-            # Queen contiguity (any shared point)
-            if ArchGDAL.intersects(prep_i, geoms[j])
-                W[i, j] = W[j, i] = 1
-            end
-        end
-    end
-    return W
-end
-
-
-function discretize_data(x; dx=0.5, nx=13, method="regular")   
-
-  if method=="regular"    
-
-    xd = round.(Int, x ./ dx ) .* dx   # resolution to 0.1 units
-    xd_breaks = collect( minimum(xd):dx:maximum(xd) + dx  ) 
-    xd_mid = midpoints(xd_breaks)
-    nx = length(xd_mid)
-    
-    xd_cut = cut(x, xd_breaks, extend=true)  # from CategoricalArrays
-    xi = levelcode.(xd_cut)  # integer index
-  
-  elseif method=="quantile"
-  
-    xd_breaks = quantile(x, range(0, 1, length=nx+1))
-    xd_mid = midpoints(xd_breaks)
-    xd_cut = cut(x, xd_breaks, extend=true)  # from CategoricalArrays
-    xi = levelcode.(xd_cut)  # integer index
-    dx = diff(xd_mid)[1]
-    xd = xd_mid[xi] 
-
-  end
-
-  return xd, xi, xd_mid, nx, dx
-
-end
-
-
-
-
-  function random_correlation_matrix(d=3, eta=1)
-   
-    # etas = [1 10 100 1000 1e+4 1e+5];
-    # d = size of matrix
-  
-   # EXTENDED ONION METHOD to generate random correlation matrices
-   # distributed ~ det(S)^eta [or maybe det(S)^(eta-1), not sure]
-   # https://stats.stackexchange.com/questions/2746/how-to-efficiently-generate-random-positive-semidefinite-correlation-matrices
-   
-   # LKJ modify this method slightly, in order to be able to sample correlation matrices C from a distribution proportional to [detC]η−1. The larger the η, the larger will be the determinant, meaning that generated correlation matrices will more and more approach the identity matrix. The value η=1 corresponds to uniform distribution. On the figure below the matrices are generated with η=1,10,100,1000,10000,100000. 
- 
-     beta = eta + (d-2)/2;
-     u = rand( Beta(beta, beta) );
-     r12 = 2*u - 1;
-     S = [1 r12; r12 1];  
- 
-     for k = 3:d
-         beta = beta - 1/2;
-         y = rand( Beta((k-1)/2, beta) );  # sample from beta
-         r = sqrt(y);
-         theta = randn(k-1,1);
-         theta = theta/norm(theta);
-         w = r*theta;
-         U, E = eigen(S);
-         U = hcat(U)
-         R = U' * sqrt(E) * U; # R is a square root of S
-         q = R[].re * w;
-         S = [S q; q' 1];
-     end
-     return S
- end
  

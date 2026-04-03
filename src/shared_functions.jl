@@ -124,3 +124,68 @@ function turingindex( indices, sym=nothing, dims=nothing  )
     return out 
   end
 
+
+
+
+
+function discretize_data(x; dx=0.5, nx=13, method="regular")   
+
+  if method=="regular"    
+
+    xd = round.(Int, x ./ dx ) .* dx   # resolution to 0.1 units
+    xd_breaks = collect( minimum(xd):dx:maximum(xd) + dx  ) 
+    xd_mid = midpoints(xd_breaks)
+    nx = length(xd_mid)
+    
+    xd_cut = cut(x, xd_breaks, extend=true)  # from CategoricalArrays
+    xi = levelcode.(xd_cut)  # integer index
+  
+  elseif method=="quantile"
+  
+    xd_breaks = quantile(x, range(0, 1, length=nx+1))
+    xd_mid = midpoints(xd_breaks)
+    xd_cut = cut(x, xd_breaks, extend=true)  # from CategoricalArrays
+    xi = levelcode.(xd_cut)  # integer index
+    dx = diff(xd_mid)[1]
+    xd = xd_mid[xi] 
+
+  end
+
+  return xd, xi, xd_mid, nx, dx
+
+end
+
+
+
+
+function random_correlation_matrix(d=3, eta=1)
+
+# etas = [1 10 100 1000 1e+4 1e+5];
+# d = size of matrix
+
+# EXTENDED ONION METHOD to generate random correlation matrices
+# distributed ~ det(S)^eta [or maybe det(S)^(eta-1), not sure]
+# https://stats.stackexchange.com/questions/2746/how-to-efficiently-generate-random-positive-semidefinite-correlation-matrices
+
+# LKJ modify this method slightly, in order to be able to sample correlation matrices C from a distribution proportional to [detC]η−1. The larger the η, the larger will be the determinant, meaning that generated correlation matrices will more and more approach the identity matrix. The value η=1 corresponds to uniform distribution. On the figure below the matrices are generated with η=1,10,100,1000,10000,100000. 
+
+    beta = eta + (d-2)/2;
+    u = rand( Beta(beta, beta) );
+    r12 = 2*u - 1;
+    S = [1 r12; r12 1];  
+
+    for k = 3:d
+        beta = beta - 1/2;
+        y = rand( Beta((k-1)/2, beta) );  # sample from beta
+        r = sqrt(y);
+        theta = randn(k-1,1);
+        theta = theta/norm(theta);
+        w = r*theta;
+        U, E = eigen(S);
+        U = hcat(U)
+        R = U' * sqrt(E) * U; # R is a square root of S
+        q = R[].re * w;
+        S = [S q; q' 1];
+    end
+    return S
+end

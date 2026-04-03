@@ -288,3 +288,30 @@ Turing.@model function carstm_temperature( Y, ::Type{T}=Float64;
     return 
 end
  
+
+function lattice_adjacency_matrix(rows, cols)
+    geoms = []
+    for r in 1:rows, c in 1:cols
+        # Create a unit square for each cell
+        poly = ArchGDAL.createpolygon([
+            (Float64(c-1), Float64(r-1)), (Float64(c), Float64(r-1)),
+            (Float64(c), Float64(r)), (Float64(c-1), Float64(r)),
+            (Float64(c-1), Float64(r-1))
+        ])
+        push!(geoms, poly)
+    end
+    
+    n = length(geoms)
+    W = spzeros(Int, n, n)
+    for i in 1:n
+        prep_i = ArchGDAL.preparegeom(geoms[i])
+        for j in (i+1):n
+            # Queen contiguity (any shared point)
+            if ArchGDAL.intersects(prep_i, geoms[j])
+                W[i, j] = W[j, i] = 1
+            end
+        end
+    end
+    return W
+end
+
