@@ -1,29 +1,37 @@
 # automatic load of things related to all projects go here
 
-# load environment, libraries  
-using DrWatson  # install this if you do not have it
+using Pkg
+Pkg.add( ["DrWatson", "Revise", "Requires", "PrecompileTools", "PackageCompiler"] )
+
+using DrWatson, Revise, Requires, PrecompileTools, PackageCompiler
 
 if !@isdefined project_directory 
     project_directory = joinpath( homedir(), "projects", "model_covariance" )
 end
 
 quickactivate(project_directory) 
- 
+
+# the following are now handled by DrWatson.quickactivate()
+# Pkg.activate(project_directory)  # so now you activate the package
+# Base.active_project()  
+# push!( LOAD_PATH, project_directory )  # add the directory to the load path, so it can be found
+
 current_directory =  @__DIR__() 
 print( "Current directory is: ", current_directory, "\n\n" )
- 
-import Pkg  # or using Pkg
-Pkg.activate(project_directory)  # so now you activate the package
-Base.active_project()  
-push!( LOAD_PATH, project_directory )  # add the directory to the load path, so it can be found
 
 pkgs = [  
-    "Revise", "Memoization", "BenchmarkTools", "OhMyREPL",
-    "DataFrames", "CSV", "PalmerPenguins", "JLD2", "ParameterHandling",  # "ArviZ", 
-    "StatsBase", "Statistics", "MultivariateStats", "LinearAlgebra", "Distributions", "Random", "StatsAPI", 
-    "StatsModels", "StatsFuns", "GLM", "Tables",
-    "StaticArrays", "FillArrays",  "SparseArrays", "Graphs", "Distances", "CategoricalArrays",
-    "PlotThemes", "Colors", "ColorSchemes", "Plots", "StatsPlots",
+    "DrWatson", "Revise", "Requires", 
+    "CurlHTTP",
+    "PrecompileTools", "PackageCompiler","Memoization", "BenchmarkTools", "OhMyREPL",
+    "DataFrames", "CSV", "JLD2", "Tables",
+    "PalmerPenguins", 
+    #"ForecastData", 
+    "StatsBase", "Statistics", "MultivariateStats", "LinearAlgebra", "Distributions", "Random", "StatsAPI", "StatsModels", "StatsFuns", "GLM", 
+    "StaticArrays", "FillArrays",  "SparseArrays",#"LazyArrays", 
+    #"ParameterHandling",  
+    # "ArviZ", 
+    "Graphs", "PlotThemes", "Colors", "ColorSchemes", "Plots", "StatsPlots", 
+    "Distances", "CategoricalArrays",
     "MKL", "PDMats", 
     "Optim", "Flux",  
     "Peaks", "KernelDensity", "DSP", "Interpolations", 
@@ -37,7 +45,7 @@ pkgs = [
     # "Symbolics", "Logging",  
  
 # load directly can cause conflicts due to same function names 
-pkgtoskipload = [   "CairoMakie", "PlotlyJS",  "PlotlyBase",  "PlotlyKaleido", "LazyArrays" ]
+pkgtoskipload = [ "CairoMakie", "PlotlyJS"   ]
   # "RCall",
    
 print( "Loading libraries:\n\n" ) 

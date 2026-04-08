@@ -3876,7 +3876,7 @@ println("\nKey parameters to tune for `mt_pgram` are `nw` (time-bandwidth produc
 
 ```
 
-The classical periodogram above shows peaks at the dominant frequencies present in the signal (50 Hz and 120 Hz in this synthetic example).
+The classical periodogram above shows peaks at the dominant frequencies present in the signal.
 
 
 One possible improvement to the periodogram estimate of the spectral density is to smooth it using centered moving averages.  An additional “smoothing” can be created using tapering methods which weight the ends (in time) of the series less than the center of the data.  We’ll not cover tapering in this lesson.  Interested parties can see Section 4.5 in the book and various Internet sources.
@@ -3956,41 +3956,9 @@ Now, for a Bayesian approach using Turing.jl, instead of directly computing a pe
 
 
 ```{julia}
+ 
 
-# Pkg.add("Turing")
-# Pkg.add("Distributions")
-# Pkg.add("LinearAlgebra")
-# Pkg.add("Plots")
-using Turing
-using Distributions
-using LinearAlgebra # For I (identity matrix)
-using Random
-using Plots
-
-# Set a seed for reproducibility
-Random.seed!(6789);
-
-# 1. Generate Synthetic Data for a single periodic component with noise
-fs_turing = 100 # sampling frequency
-t_data = 0:1/fs_turing:1-1/fs_turing # time vector (1 second duration)
-true_amplitude = 2.0
-true_frequency = 5.0 # Hz
-true_phase = π/4
-true_noise_std = 0.5
-
-y_obs = true_amplitude * sin.(2π * true_frequency * t_data + true_phase) + true_noise_std * randn(length(t_data))
-
-# Plot the synthetic data
-plot_data = plot(t_data, y_obs,
-     xlabel="Time (s)",
-     ylabel="Amplitude",
-     title="Synthetic Time Series with Periodic Component",
-     label="Observed Data",
-     legend=:topright)
-display(plot_data)
-
-# 2. Define the Bayesian model for a single periodic component
-@model function bayesian_periodic_model(y_obs, t_data, fs_max)
+@model function bayesian_periodic_model(y, x, fs_max)
     # Priors for parameters
     amplitude ~ truncated(Normal(0, 5), 0, Inf) # Amplitude must be positive
     # Frequency must be positive and less than Nyquist frequency (fs_max / 2)
@@ -3999,41 +3967,37 @@ display(plot_data)
     noise_std ~ InverseGamma(2, 3) # Prior for standard deviation of noise
 
     # Calculate the expected signal based on parameters
-    expected_signal = amplitude * sin.(2π * frequency * t_data .+ phase)
+    expected_signal = amplitude * sin.(2π * frequency * x .+ phase)
 
     # Likelihood: Observed data are normally distributed around the expected signal
-    y_obs ~ MvNormal(expected_signal, noise_std^2 * I)
+    y ~ MvNormal(expected_signal, noise_std^2 * I)
 end
 
-# 3. Instantiate and Sample from the Model
-# Instantiate the model with our data and the sampling frequency for prior limits
-model_periodic = bayesian_periodic_model(y_obs, t_data, fs_turing);
 
-println("\nSampling from posterior for Bayesian Periodic Model (this may take a moment)... Using NUTS sampler.")
-# Sample from the posterior distribution using NUTS
+x, y, fsmax = example_data("maunaloa_co2")
+# x, y, fsmax = example_data( "timeseries_testdata" )
+# fsmax = sampling frequency; Nyquist frequency = (fs_max / 2)
+
+
+model_periodic = bayesian_periodic_model(y, x, fsmax);
+
 chain_periodic = sample(model_periodic, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
 
-# 4. Display and Interpret Results
 display(chain_periodic)
-
-println("\nTrue Parameters:")
-println("  Amplitude: $(true_amplitude)")
-println("  Frequency: $(true_frequency)")
-println("  Phase: $(true_phase)")
-println("  Noise Std: $(true_noise_std)")
-
+ 
 println("\nPosterior Means for Parameters:")
 println("  Amplitude: $(round(mean(chain_periodic[:amplitude]), digits=3))")
 println("  Frequency: $(round(mean(chain_periodic[:frequency]), digits=3))")
 println("  Phase: $(round(mean(chain_periodic[:phase]), digits=3))")
 println("  Noise Std: $(round(mean(chain_periodic[:noise_std]), digits=3))")
 
-# 5. Optional: Plot posterior predictions
+
+# Plot posterior predictions
 posterior_amplitudes = chain_periodic[:amplitude].data[:]
 posterior_frequencies = chain_periodic[:frequency].data[:]
 posterior_phases = chain_periodic[:phase].data[:]
 
-plot_predictions = plot(t_data, y_obs,
+plot_predictions = plot(x, y,
      xlabel="Time (s)",
      ylabel="Amplitude",
      title="Bayesian Periodic Model: Data and Posterior Predictions",
@@ -4043,22 +4007,22 @@ plot_predictions = plot(t_data, y_obs,
      color=:black,
      markershape=:circle, markersize=2)
 
-# Plot a few posterior predictive samples to visualize uncertainty
-for _ in 1:10 # Plot 10 random posterior predictive samples
+# posterior predictive samples to visualize uncertainty
+for _ in 1:10  
     idx = rand(1:length(posterior_amplitudes))
     A_pred = posterior_amplitudes[idx]
     f_pred = posterior_frequencies[idx]
     phi_pred = posterior_phases[idx]
-    predicted_curve = A_pred * sin.(2π * f_pred * t_data .+ phi_pred)
-    plot!(t_data, predicted_curve, label="", alpha=0.1, color=:blue)
+    predicted_curve = A_pred * sin.(2π * f_pred * x .+ phi_pred)
+    plot!(x, predicted_curve, label="", alpha=0.1, color=:blue)
 end
 
-# Plot posterior mean curve (using the mean of the sampled parameters)
+# posterior mean curve (using the mean of the sampled parameters)
 mean_A = mean(posterior_amplitudes)
 mean_f = mean(posterior_frequencies)
 mean_phi = mean(posterior_phases)
-mean_curve = mean_A * sin.(2π * mean_f * t_data .+ mean_phi)
-plot!(t_data, mean_curve, label="Posterior Mean Curve", line=(:dash, 2, :red), color=:red)
+mean_curve = mean_A * sin.(2π * mean_f * x .+ mean_phi)
+plot!(x, mean_curve, label="Posterior Mean Curve", line=(:dash, 2, :red), color=:red)
 display(plot_predictions)
 
 
@@ -4707,32 +4671,18 @@ $$
 
 using FFTW # For Fast Fourier Transform
 
-# 1. Generate a Synthetic Time Series
-# Define parameters
-fs = 100        # Sampling frequency (samples per second)
-T = 2           # Duration of the signal (seconds)
-n = fs * T      # Number of samples
-t = range(0, T, length=n) # Time vector
+x, y, fsmax = example_data("maunaloa_co2")
+# x, y, fsmax = example_data( "timeseries_testdata" )
+# fsmax = sampling frequency; Nyquist frequency = (fs_max / 2)
 
-# Create a signal with multiple sine waves (harmonics) and some noise
-f1 = 5          # Frequency 1 (Hz)
-f2 = 12         # Frequency 2 (Hz)
-f3 = 20         # Frequency 3 (Hz)
 
-signal = 1.0 * sin.(2π * f1 * t) .+ \
-         0.5 * sin.(2π * f2 * t) .+ \
-         0.2 * sin.(2π * f3 * t) .+ \
-         0.1 * randn(n) # Add some random noise
-
-# 2. Perform FFT
-Y = fft(signal) # Compute the FFT
+Y = fft(y) # Compute the FFT
 
 # Get the corresponding frequencies
 # The frequencies span from 0 to fs/2 for the positive frequencies
 frequencies = fftfreq(n, fs)
 
-# We are typically interested in the positive frequencies only
-# The FFT output is symmetric, so we take the first half (excluding the DC component at 0 if desired)
+# The FFT output is symmetric, so take the first half (excluding the DC component at 0 if desired)
 positive_frequencies = frequencies[1:n÷2+1]
 
 # Calculate the magnitude/amplitude spectrum
@@ -4746,8 +4696,8 @@ if n % 2 == 0
     amplitude_spectrum[n÷2+1] = abs(Y[n÷2+1])/n
 end
 
-# 3. Visualize the Results
-plot1 = plot(t, signal,
+# Visualize the Results
+plot1 = plot(x, y,
              title="Synthetic Time Series",
              xlabel="Time (s)",
              ylabel="Amplitude",
@@ -4793,28 +4743,14 @@ However, performing the fft operation on the generated signal at every MCMC step
 
 using FFTW # For Fast Fourier Transform  
 
-# 1. Generate a Synthetic Time Series with a single dominant frequency
-fs = 100        # Sampling frequency (samples per second)
-T = 2           # Duration of the signal (seconds)
-n = fs * T      # Number of samples
-t = range(0, T, length=n) # Time vector
+x, y, fsmax = example_data("maunaloa_co2")
+# x, y, fsmax = example_data( "timeseries_testdata" )
+# fsmax = sampling frequency; Nyquist frequency = (fs_max / 2)
 
-# True parameters for the synthetic signal
-true_f = 5.0
-true_amp = 1.0
-true_phase = π/4
-true_noise_std = 0.1
 
-# Convert amplitude and phase to C and S coefficients for generating the signal
-true_C = true_amp * cos(true_phase)
-true_S = true_amp * sin(true_phase)
+plot(x, y, label="Synthetic Time Series", xlabel="Time (s)", ylabel="Amplitude", title="Synthetic Signal for Bayesian FFT Likelihood", legend=:bottomleft)
 
-signal = (true_C * sin.(2π * true_f * t) + true_S * cos.(2π * true_f * t)) .+
-         true_noise_std * randn(n);
-
-plot(t, signal, label="Synthetic Time Series", xlabel="Time (s)", ylabel="Amplitude", title="Synthetic Signal for Bayesian FFT Likelihood", legend=:bottomleft)
-
-# 2. Pre-process the observed signal for the model (FFT calculation)
+# Pre-process the observed signal for the model (FFT calculation)
 Y_obs_fft = fft(signal)
 fftfreqs = FFTW.fftfreq(n, fs) # Get the corresponding frequencies for FFT bins
 
@@ -4826,7 +4762,8 @@ if isnothing(target_fft_bin_idx)
     target_fft_bin_idx = argmin(abs.(fftfreqs .- true_f))
 end
 
-# 3. Define the Bayesian Model with FFT-based Likelihood
+# Define the Bayesian Model with FFT-based Likelihood
+
 @model function bayesian_fft_likelihood_example(Y_obs_fft_target_bin, t_vec, target_freq, target_bin_index)
     # Priors for the sine and cosine coefficients of the single harmonic
     C ~ Normal(0, 2)
@@ -4849,21 +4786,17 @@ end
     imag(Y_obs_fft_target_bin) ~ Normal(imag(Y_model_fft[target_bin_index]), σ_fft)
 end
 
-# 4. Prepare data for the model
 # We pass the complex FFT coefficient at the target bin as observed data
 observed_fft_target_bin = Y_obs_fft[target_fft_bin_idx]
 
 # Instantiate the model
-bayesian_model_fft = bayesian_fft_likelihood_example(observed_fft_target_bin, t, true_f, target_fft_bin_idx);
+bayesian_model_fft = bayesian_fft_likelihood_example(observed_fft_target_bin, x, true_f, target_fft_bin_idx);
 
-# 5. Sample from the posterior distribution using NUTS
-println("Sampling from posterior with FFT likelihood (this may take a moment)...")
 chain_fft = sample(bayesian_model_fft, NUTS(0.65), 1000, 2); # 1000 draws per chain, 2 chains
 
-# Display the chain summary
 display(chain_fft)
 
-# 6. Extract and interpret results
+# Extract and interpret results
 # Get posterior means of the coefficients
 mean_C_fft = mean(chain_fft[:C])
 mean_S_fft = mean(chain_fft[:S])
@@ -4881,11 +4814,11 @@ println("\nPosterior Estimated Amplitude (FFT Likelihood): ", round(posterior_am
 println("Posterior Estimated Phase (FFT Likelihood, radians): ", round(posterior_phase_fft, digits=3))
 
 # Reconstruct the signal using posterior mean parameters
-reconstructed_signal_fft = (mean_C_fft * sin.(2π * true_f * t) + mean_S_fft * cos.(2π * true_f * t))
+reconstructed_signal_fft = (mean_C_fft * sin.(2π * true_f * x) + mean_S_fft * cos.(2π * true_f * x))
 
 # Plot original vs. reconstructed signal
-plot(t, signal, label="Original Signal", lw=2)
-plot!(t, reconstructed_signal_fft, label="Reconstructed Signal (FFT Likelihood)", lw=2, linestyle=:dash)
+plot(x, y, label="Original Signal", lw=2)
+plot!(x, reconstructed_signal_fft, label="Reconstructed Signal (FFT Likelihood)", lw=2, linestyle=:dash)
 xlabel!("Time (s)")
 ylabel!("Amplitude")
 title!("Bayesian Harmonic Decomposition: Original vs. Reconstructed (FFT Likelihood)")
@@ -4919,33 +4852,9 @@ https://nbviewer.org/github/JuliaGaussianProcesses/AbstractGPs.jl/blob/gh-pages/
 Note: check out LaplaceRedux.jl and do a MAP version
 
 ```{julia}
-  
-
-# download and save from: https://scrippsco2.ucsd.edu/data/atmospheric_co2/primary_mlo_co2_record.html
  
-fn = joinpath( project_directory, "data", "monthly_in_situ_co2_mlo.csv" )
+# simple latent trend process with a constant intercept (nugget)
 
-maunaloa = CSV.read(fn, DataFrame, skipto=65)
-
-maunaloa = maunaloa[!, [ 4,5]]
-rename!(maunaloa, [ :datestamp, :co2ppm])
-maunaloa.co2ppm = map(x -> x == -99.99 ? missing : x, maunaloa.co2ppm)
-maunaloa.co2 = (maunaloa.co2ppm .- mean(skipmissing(maunaloa.co2ppm))) ./ std(skipmissing(maunaloa.co2ppm))
-maunaloa.float_date = Float64.(maunaloa.datestamp)
-
-maunaloa= filter(:co2 => !ismissing, maunaloa)
-
-
-### <<<<<<<<<<<<< IMPORTANT .. 
-### presence of Missing Type confuses logpdf function, 
-### this does an element-wise copy, drooping the Missing Type (yes Types can be a pain)
-# x = map(v->v, maunaloa.float_date)
-# y = map(v->v, maunaloa.co2)  
-x = identity.(maunaloa.float_date)
-y = identity.(maunaloa.co2)
-### <<<<<<<<<<<<< IMPORTANT .. 
-  
-# simple latent trend process with a constant (intercept (nugget)
 Turing.@model function ts_fit( y, x, lambda=0.0001, gpc=GPC() )
  
   λ_trend ~ Gamma(1, 1)  
@@ -4961,10 +4870,15 @@ Turing.@model function ts_fit( y, x, lambda=0.0001, gpc=GPC() )
   fgp = atomic(AbstractGPs.GP(fkernel), gpc)
   fobs = fgp(x, lambda)
 
-  Turing.@addlogprob!  -logpdf(fobs, y)
+  Turing.@addlogprob! -logpdf(fobs, y)
 
   return 
 end
+
+
+x, y, fsmax = example_data("maunaloa_co2")
+# x, y, fsmax = example_data( "timeseries_testdata" )
+# fsmax = sampling frequency; Nyquist frequency = (fs_max / 2)
 
 
 m = ts_fit( y, x )
@@ -4983,13 +4897,13 @@ plot(x, y; markersize=1 )  # latent "truth"
 
 # setting ribbon_scale=2 to visualize the uncertainty band with ±2 (instead of the default ±1) standard deviations.
 
-  fkernel =  
-    ol.σ2_trend * SEKernel() ∘ ScaleTransform( ol.λ_trend )   + 
-    ol.σ2_m * ConstantKernel()
+fkernel =  
+  ol.σ2_trend * SEKernel() ∘ ScaleTransform( ol.λ_trend )   + 
+  ol.σ2_m * ConstantKernel()
 
-  fgp = atomic(AbstractGPs.GP(fkernel), GPC())
-  fobs = fgp(x, lambda)
-  fposterior = posterior(fobs, y) 
+fgp = atomic(AbstractGPs.GP(fkernel), GPC())
+fobs = fgp(x, lambda)
+fposterior = posterior(fobs, y) 
 
 plot!(fposterior(1990:0.1:2020); ribbon_scale=2, linewidth=1, label="posterior f(⋅)")
   
@@ -5000,7 +4914,7 @@ SE(σ, ℓ) = σ^2 * with_lengthscale(SqExponentialKernel(), ℓ)
 Per(p, ℓ) = with_lengthscale(PeriodicKernel(; r=[ℓ / 2]), p)  # NOTE- discrepancy with GaussianProcesses.jl
 RQ(σ, ℓ, α) = σ^2 * with_lengthscale(RationalQuadraticKernel(; α=α), ℓ)
 
-# simple latent trend process with a constant (intercept (nugget) 
+# simple latent trend process with a constant intercept (nugget) 
 Turing.@model function ts_fit( y, x, lambda=0.0001, gpc=GPC() )
  
   λ_trend ~ Exponential(4)  
@@ -5033,6 +4947,11 @@ Turing.@model function ts_fit( y, x, lambda=0.0001, gpc=GPC() )
 
   return 
 end
+
+
+x, y, fsmax = example_data("maunaloa_co2")
+# x, y, fsmax = example_data( "timeseries_testdata" )
+# fsmax = sampling frequency; Nyquist frequency = (fs_max / 2)
 
 
 m = ts_fit( y, x  )
@@ -5115,9 +5034,11 @@ Similar to AR1, but a Gaussian random walk -- second order difference
 
 end
 
- 
-# partially correlated data
-x, y, z, u, X, Y, Z = example_data("correlated_data")
+
+x, y, fsmax = example_data("maunaloa_co2")
+# x, y, fsmax = example_data( "timeseries_testdata" )
+# fsmax = sampling frequency; Nyquist frequency = (fs_max / 2)
+
 
 # x variable needs to be quantized for the recursive methods 
 xd, xi, xd_mid, nx, dx = discretize_data(x, dx=0.5)
@@ -5166,7 +5087,11 @@ A simple approximation is to use a smoother Matern 3/2 kernel to mimic an RW2 pr
     y ~ gp_rw2(x, σ_obs^2) 
 end
  
-x, y, z, u, X, Y, Z = example_data("correlated_data")
+
+x, y, fsmax = example_data("maunaloa_co2")
+# x, y, fsmax = example_data( "timeseries_testdata" )
+# fsmax = sampling frequency; Nyquist frequency = (fs_max / 2)
+
   
 model = model_rw2_gp( y, x )  # note using actual x and not a quantized x ...
 chain = sample(model, NUTS(), 1000)
@@ -5255,8 +5180,11 @@ AR1 equivalent: Matern-1/2 kernel
     y ~ gp_rw2(x, σ_obs^2) 
 end
  
-  
-x, y, z, u, X, Y, Z = example_data("correlated_data")
+ 
+x, y, fsmax = example_data("maunaloa_co2")
+# x, y, fsmax = example_data( "timeseries_testdata" )
+# fsmax = sampling frequency; Nyquist frequency = (fs_max / 2)
+
  
 # Pre-sort the data by x for TemporalGPs.
 idx = sortperm(x)
@@ -5272,7 +5200,6 @@ showall( summarize(chain) )
 
 ### 2-D Models
 
- 
 The retrospective estimation of the state of a spatiotemporally varying system $y_{st}$ is a central focus in ecology. When the domain size in time and space of $y_{st}$ is large, it cannot be *directly* observed. *Indirect* observations at some small subset of locations and times $Y_{st}$ are measured in a coordinate space $\{(s,t)\in D\in\mathfrak{R}^{d}\mathfrak{\times R^{1}}\}$ in the domain $D$ of dimensionality $d+1$ with {$s=1,\dots,S$} spatial and $\{t=1,\dots,T\}$ temporal locations, are used to infer $y_{st}$. Here, we focus upon the simple case of $d=2$ spatial dimensions. In the case of aggregated areal and temporal units, these observations exist in a set of $u=1,...,U$ non-overlapping areal units and $v=1,...,V$ temporal units. To connect $Y_{st}$ to $y_{st}$, we assume that the observations $Y_{st}$ are derived from some spatiotemporal stochastic distributional *function* that (statistically) generates the observations (i.e., a spatiotemporal random field):
 
 $$y_{st}\overset{\text{spatiotemporal process}}{\rightarrow}Y_{st}$$
@@ -6423,6 +6350,8 @@ pl = plot!( vec(data.xvar), sin.(vec(data.xvar)) .+ mean(data.yvar) , label="Lat
 
 
 ```
+
+
 ##### Gaussian Process Aproximation (ApproximateGPs)
 
 - O(M^2 N)
@@ -6436,52 +6365,23 @@ Exact -> Sparse Variational GPs (approximate the infinite Gaussian Process using
 Sampling the exact latent vector f -> Sample (or optimize) the Variational Parameters (Mean
 and Covariance) of the inducing points.
 
-```{julia}
-using Turing
-using AbstractGPs
-using ApproximateGPs
-using KernelFunctions
-using LinearAlgebra
-using Distances
 
+```{julia}
+# using Turing, AbstractGPs, ApproximateGPs, KernelFunctions, LinearAlgebra, Distances
 
 y, X_space, X_time, X_st, inducing_locs_st = example_data("spatiotemporal_testdata")
 
-# Instantiate the model from previous turn
-# Ensure you have the 'svgp_spatial_model' function defined!
 model = svgp_spatial_model(y_obs, X_space, X_time, X_st, inducing_locs)
 
-# Sample using NUTS (Hamiltonian Monte Carlo)
-# We sample the Variational Parameters (Mean and Covariance of Inducing Points)
+
+# Sample the Variational Parameters (Mean and Covariance of Inducing Points)
 chain = sample(model, NUTS(0.65), 500)
 
-Check σ_a (Time Variance): Should be significant (signal present).
-Check σ_y (Noise): Should converge around 0.3 (the noise we added).
-
-
-
-# 1. Helper: Space-Time Input Construction
-# We need to treat Space and Time as continuous coordinates.
-# Inputs: 
-#   spatial_coords: Matrix (2 x N_nodes) -> [Lat, Lon]
-#   time_coords: Vector (T_steps)
-# Returns:
-#   ColVecs of 3D points (Time, Lat, Lon)
-
-function build_st_inputs(time_indices, space_indices, spatial_coords)
-    # Map indices to actual coordinates
-    # This assumes spatial_coords is 2xN
-  
-    # 1. Extract coords for every observation
-    coords = spatial_coords[:, space_indices] # 2 x N_obs
-    times = time_indices' # 1 x N_obs
-  
-    # 2. Stack to create 3D input: [Time; Lat; Lon]
-    return ColVecs(vcat(times, coords))
-end
-
-
+# Check σ_a (Time Variance): Should be significant (signal present).
+# Check σ_y (Noise): Should converge around 0.3 (the noise we added).
+ 
 ```
+
 ##### Gaussian Approximation: ApproximateGP SVGP
 
 ```{julia}
@@ -6492,7 +6392,7 @@ y, X_space, X_time, X_st, inducing_locs_st = example_data("spatiotemporal_testda
   
     # --- Hyperparameters ---
   
-    # 1. AR1 (Time) - Kept Exact (Low dim)
+    # AR1 (Time) - Kept Exact (Low dim)
     # Matern-1/2 is equivalent to AR1
     σ_a ~ truncated(Normal(0, 1), 0, Inf)
     l_a ~ LogNormal(0, 1)
@@ -6500,7 +6400,7 @@ y, X_space, X_time, X_st, inducing_locs_st = example_data("spatiotemporal_testda
     gp_a = GP(kernel_a)
     f_a ~ gp_a(X_time, 1e-6)
 
-    # 2. Spatial (Approximated)
+    # Spatial (Approximated)
     # We replace BYM2 with Matern3/2 on Centroids
     σ_u ~ truncated(Normal(0, 1), 0, Inf)
     l_u ~ LogNormal(0, 1)
@@ -6511,7 +6411,7 @@ y, X_space, X_time, X_st, inducing_locs_st = example_data("spatiotemporal_testda
     # Note: For 'u' (Space only), we just ignore the time dimension of the kernel
     # or define separate inducing points. Let's do Space-Time (v) as the example.
   
-    # 3. Spatio-Temporal (v)
+    # Spatio-Temporal (v)
     # Kernel: Time (Matern1/2) ⊗ Space (Matern3/2)
     σ_v ~ truncated(Normal(0, 1), 0, Inf)
     l_v_time ~ LogNormal(0, 1)
@@ -6586,142 +6486,7 @@ end
 
 
 ```
-##### Gaussian Process with Flux-Optimization (Mini-batch) 
 
-Before training, it is good practice to check the variance of your target.
-
-Stats: std(y_full) should be around 1.5 to 2.0.
-
-Signal-to-Noise: Since our signal amplitude is 2 and noise is 0.2, the Signal-to-Noise Ratio (SNR) is high (10:1). The model should easily fit this.
-
-Test by varing the noise multiplier in step 3 to: 1.5 * randn(N).
-
-```{julia}
-
-# using ApproximateGPs, Flux, KernelFunctions, LinearAlgebra, Zygote, Distributions, Random
-
-Batch_Size = 256
-N_total = Batch_Size * 4
-
-y_full, X_space, X_time, X_st, inducing_locs_st = example_data("spatiotemporal_testdata", N_obs=N_total)
-
-X_full = hcat(X_st...)
-
-
-# Create the Mini-Batch Loader shuffle=true ensures we get random samples every epoch (Stochasticity)
-train_loader = Flux.DataLoader((X_full, y_full), batchsize=Batch_Size, shuffle=true)
-
-
-# Model Definition (Variational Parameters)
-# We treat the model parameters as a Flux struct so we can optimize them
-struct SpatialSVGP
-    # Kernel Hyperparameters (in log domain for positivity)
-    log_σ::Array{Float64, 1} 
-    log_ℓ_time::Array{Float64, 1}
-    log_ℓ_space::Array{Float64, 1}
-  
-    # Inducing Points (Variational Parameters)
-    # Z: Locations of inducing points (Optimizable!)
-    Z::Array{Float64, 2} 
-  
-    # m: Variational Mean
-    m::Array{Float64, 1}
-  
-    # L: Variational Covariance (Lower Triangular Cholesky factor)
-    L_vec::Array{Float64, 1} 
-end
-
-# Initialize trainable parameters
-M_inducing = 100 # Number of inducing points (Sparse approximation)
-init_Z = randn(3, M_inducing) # Initialize inducing points randomly in input space
-
-model_params = SpatialSVGP(
-    [0.0], [0.0], [0.0],        # Log-Hyperparams
-    init_Z,                     # Inducing locations
-    zeros(M_inducing),          # Variational Mean (m)
-    zeros(M_inducing * (M_inducing + 1) ÷ 2) # Packed Cholesky (L)
-)
-
-# Helper to unpack parameters into a valid ApproximateGPs Object
-function build_vgp(p::SpatialSVGP)
-    # Construct Kernel (Time ⊗ Space)
-    σ = exp(p.log_σ[1])
-    ℓ_t = exp(p.log_ℓ_time[1])
-    ℓ_s = exp(p.log_ℓ_space[1])
-  
-    # Time Kernel (Dim 1)
-    k_time = Matern12Kernel() ∘ ScaleTransform(1/ℓ_t) ∘ SelectTransform([1])
-    # Space Kernel (Dim 2,3)
-    k_space = Matern32Kernel() ∘ ScaleTransform(1/ℓ_s) ∘ SelectTransform([2, 3])
-  
-    kernel = σ^2 * k_time * k_space
-  
-    # Unpack Variational Covariance (L)
-    # reconstruct the LowerTriangular matrix from the vector
-    L_mat = ApproximateGPs.vec_to_tril(p.L_vec, size(p.Z, 2))
-  
-    # Build VGP, the approximate posterior q(f)
-    apost = ApproximateGPs.VGP(
-        GP(kernel),          # The Prior
-        ColVecs(p.Z),        # Inducing inputs
-        p.m,                 # Variational Mean
-        L_mat * L_mat' + 1e-6*I # Variational Covariance S = LL' (ensure pos-def)
-    )
-
-    return apost
-end
-
-# Mini-Batch Loss Function (ELBO)
-
-# The Objective: Minimize Negative ELBO
-function loss(p::SpatialSVGP, x_batch, y_batch)
-    # Build the model with current params
-    vgp = build_vgp(p)
-  
-    # Project VGP onto the mini-batch locations
-    # f_approx is the distribution q(f(x_batch))
-    f_approx = vgp(ColVecs(x_batch))
-  
-    # Calculate Expected Log-Likelihood for this batch
-    # Assume Gaussian noise with std=0.1 for simplicity (or make it learnable)
-    noise_std = 0.1
-    log_like_batch = mean(logpdf(Normal(μ, noise_std), y) for (μ, y) in zip(mean(f_approx), y_batch))
-  
-    # Scale batch likelihood up to full dataset size
-    # Expected Log Like ≈ (N / BatchSize) * ∑ batch_log_like
-    scale_factor = N_total / length(y_batch)
-    total_log_like = scale_factor * sum(logpdf(Normal(μ, noise_std), y) for (μ, y) in zip(mean(f_approx), y_batch))
-  
-    # KL Divergence (Regularization)
-    # This penalizes the approximation for drifting too far from the prior
-    # ApproximateGPs calculates this automatically between VGP and Prior
-    kl = approximate_kl(vgp) 
-  
-    # Maximize ELBO = Minimize Negative ELBO
-    return -(total_log_like - kl)
-end
-
-# The Training Loop (Flux)
-
-optimizer = Flux.Adam(0.01) # Standard optimizer
-params_flux = Flux.params(model_params) 
-
-for epoch in 1:5
-    println("Starting Epoch $epoch...")
-  
-    for (x_b, y_b) in train_loader
-        # Compute Gradient of the Loss w.r.t Parameters
-        grads = Zygote.gradient(() -> loss(model_params, x_b, y_b), params_flux)
-
-        Flux.update!(optimizer, params_flux, grads)
-    end
-  
-    current_loss = loss(model_params, X_full[:, 1:100], y_full[1:100])
-    println("Epoch $epoch Loss: $current_loss")
-end
-
-
-```
 
 
 #### Spectral approximation (2-D FFT)
@@ -7179,7 +6944,302 @@ algorithm as follows (copied from stmv__fft.R)
   # lattice::levelplot( mean ~ plon + plat, data=pa, col.regions=heat.colors(100), scale=list(draw=TRUE) , aspect="iso" )
 ```
 
-### 3-D (time and space) -- Stationary spatiotemporal models
+Define Anisotropic Matern Spectral Density
+
+The Matern covariance function in the spatial domain has a known analytical form in the frequency domain (spectral density). For an anisotropic field, we transform the frequency coordinates. We will use `nu = 2.5` for this demonstration, which is a common choice for smooth spatial fields. The spectral density for a Matern covariance with smoothness `nu` in 2D is proportional to `(1 + (2π * r)^2)^(-(nu + 1))`, where `r` is the effective radial frequency. For anisotropy, `r^2` becomes a quadratic form involving length scales and a rotation angle.
+
+
+```{julia}
+using Turing, FFTW, Distributions, LinearAlgebra, Plots, Random
+
+function anisotropic_matern_spectral_density(Lx, Ly, var, ell1, ell2, theta, nu, freq_x, freq_y)
+    # Input:
+    # Lx, Ly: Grid dimensions (for normalization of frequencies)
+    # var: Spatial variance
+    # ell1, ell2: Anisotropic length scales
+    # theta: Rotation angle (radians)
+    # nu: Smoothness parameter of the Matern kernel
+    # freq_x, freq_y: 2D arrays of spatial frequencies
+
+    # Rotate frequencies
+    fx_rot = freq_x .* cos(theta) + freq_y .* sin(theta)
+    fy_rot = -freq_x .* sin(theta) + freq_y .* cos(theta)
+
+    # Squared effective radial frequency in the anisotropic space
+    # The factor (2π) is often absorbed into the length scales definition
+    # Here we define the length scales directly related to the frequency scaling.
+    # Using the definition where length scale 'rho' corresponds to (1/rho) in frequency domain.
+    kappa_sq = (1.0 / ell1)^2 .* fx_rot.^2 + (1.0 / ell2)^2 .* fy_rot.^2
+
+    # Spectral density formula (up to a constant factor)
+    # For Matern, the spectral density is (1 + kappa_sq)^(-(nu + D/2)), where D=2 for 2D
+    # We also need to scale by variance
+    S = var .* (1.0 .+ kappa_sq).^(-(nu + 1.0))
+
+    # Handle the zero frequency component if it exists, to avoid issues or make it finite.
+    # In practice, S[1,1] (DC component) needs careful handling for mean processes.
+    # For generating realizations, it's typically fine to let it be, but for inference
+    # a prior on the mean might be needed or the DC component handled separately.
+    S[1,1] = S[1,1] # This is just a placeholder, often S[1,1] is related to the mean/total power.
+
+    # The spectral density must be real and non-negative. It's also symmetric for real fields.
+    # We'll use this to generate a complex spectral field.
+    return S
+end
+
+# Helper function to generate frequency grids
+function generate_freq_grid(N, L)
+    fftfreq_vals = FFTW.fftfreq(N, N / L)
+    return repeat(fftfreq_vals, 1, N), repeat(fftfreq_vals', N, 1)
+end
+
+```
+
+
+Simulate a 2D spatial dataset. The data `y` will be a sum of two anisotropic Matern fields (one for the main effect, one for covariate K1) plus observation noise. We'll generate these fields by taking the inverse FFT of a complex spectral field, whose magnitude is determined by the spectral density and whose phase is random.
+
+```{julia}
+
+Random.seed!(1234);
+
+# Grid dimensions
+N = 32 # N x N grid
+L = 1.0 # Length of the spatial domain in each dimension (e.g., 1 unit)
+
+# Generate frequency grids
+freq_x_grid, freq_y_grid = generate_freq_grid(N, L)
+
+# --- Parameters for the true main spatial field (phi1) ---
+true_var1 = 1.0
+true_ell1_1 = 0.1 # Length scale along minor axis
+true_ell2_1 = 0.4 # Length scale along major axis
+true_theta1 = pi / 4 # Rotation angle (45 degrees)
+true_nu1 = 2.5 # Smoothness parameter
+
+# --- Parameters for the true covariate spatial field (phi_k1) ---
+true_varK1 = 0.5
+true_ell1_K1 = 0.05
+true_ell2_K1 = 0.2
+true_thetaK1 = -pi / 6 # -30 degrees
+true_nuK1 = 2.5 # Smoothness parameter
+
+# --- Observation noise ---
+true_noise_var = 0.1 # Variance of observation noise
+
+# --- Generate the main spatial field (phi1) ---
+S1 = anisotropic_matern_spectral_density(L, L, true_var1, true_ell1_1, true_ell2_1, true_theta1, true_nu1, freq_x_grid, freq_y_grid)
+
+# Generate random phases
+phases1 = 2pi .* rand(N, N)
+
+# Construct complex spectral field: sqrt(S) * exp(i * phase)
+Z1_complex = sqrt.(S1) .* exp.(im .* phases1)
+
+# Take inverse real FFT to get spatial field
+# Adjust for normalization (FFTW.irfft scales by N, so we may need to scale here)
+phi1_spatial = N * real(FFTW.ifft(Z1_complex))
+
+# Center the field (remove DC component)
+phi1_spatial .-= mean(phi1_spatial)
+
+# --- Generate the covariate spatial field (phi_k1) ---
+SK1 = anisotropic_matern_spectral_density(L, L, true_varK1, true_ell1_K1, true_ell2_K1, true_thetaK1, true_nuK1, freq_x_grid, freq_y_grid)
+phasesK1 = 2pi .* rand(N, N)
+ZK1_complex = sqrt.(SK1) .* exp.(im .* phasesK1)
+phiK1_spatial = N * real(FFTW.ifft(ZK1_complex))
+phiK1_spatial .-= mean(phiK1_spatial)
+
+# --- Generate covariate K1 (can be anything, here we use phiK1 as its spatial effect) ---
+# For simplicity, let's assume K1 itself has this spatial structure and scales the effect.
+# In a real scenario, K1 would be an observed covariate.
+# Here, we model K1's effect as phiK1_spatial directly, or K1_observed * phiK1_spatial
+# Let's simplify: the spatial effect *associated with* K1 is phiK1_spatial.
+# We can assume a fixed coefficient for K1's effect for now for simplicity in simulation.
+# Let's say, observed K1 is just an array, and its *effect* has a spatial component.
+
+# For demonstration, let's assume K1 is just a spatially varying observed quantity,
+# and its *coefficient* also has a spatial effect.
+# For simplicity, let's simulate a constant K1 value, and phiK1 is the spatially varying coefficient.
+# Or, let K1 itself be a smooth field.
+# Let's say `K1_effect_field` is our `phiK1_spatial` scaled by some factor.
+
+# Let's assume there is an observed covariate `K1_obs` which is just a random field.
+# And its spatial effect is modelled by `phiK1_spatial`.
+
+# Let's simplify and say the full spatial effect of K1 is `phiK1_spatial`.
+# We can later add a scalar coefficient `beta_K1` if K1 is a single observed value.
+
+# For simulation, let's just create a `K1_obs` field that interacts with `phiK1_spatial`
+K1_obs = randn(N, N) # A simple random covariate field for illustration
+
+# Total latent field (main effect + covariate effect)
+latent_field = phi1_spatial + K1_obs .* phiK1_spatial # K1_obs acts as a multiplier to the spatial effect
+
+# Add observation noise
+observation_noise = sqrt(true_noise_var) .* randn(N, N)
+y_observed = latent_field + observation_noise
+
+# Plot the simulated fields
+p1 = heatmap(phi1_spatial, title="Simulated Main Field (phi1)", c=:viridis)
+p2 = heatmap(phiK1_spatial, title="Simulated K1 Spatial Effect (phiK1)", c=:viridis)
+p3 = heatmap(K1_obs, title="Simulated Covariate K1_obs", c=:viridis)
+p4 = heatmap(y_observed, title="Simulated Observed Data (y)", c=:viridis)
+plot(p1, p2, p3, p4, layout=(2,2), size=(1000, 800))
+
+```
+
+
+
+We'll define priors for all parameters (variances, length scales, angles, observation noise variance). The core idea is to reverse the simulation process: we define a probabilistic generative process for `y_observed` based on latent spatial fields generated via FFT, and then use MCMC to infer the parameters.
+
+**Key challenges for a full inference model:**
+*   **Normalization of FFT**: The constant factor in the spectral density and the `ifft` normalization need careful handling to ensure the `var` parameter truly represents the spatial variance. For real fields, the power spectrum is usually symmetric, and `ifft` will produce a real output. For efficiency, `rfft` and `irfft` are used in practice, which handle this symmetry.
+*   **Zero Frequency Component**: The DC component (mean) of the spatial field is often handled separately or implicitly defined by centering the field.
+*   **Parameter constraints**: Length scales must be positive, angles typically within `[-pi/2, pi/2]` or `[0, pi]`, and variances positive. Turing.jl handles some of this with appropriate priors (e.g., `Gamma` for variance, `InverseGamma` for noise variance).
+*   **Computational Cost**: Generating the spatial field via FFT within each MCMC step can be computationally intensive, especially for large grids. The original likelihood calculation iterated over each frequency component, which can be very slow. The updated model below optimizes this by grouping components and using `MvNormal` for more efficient evaluation.
+
+For `nu=2.5`, we are assuming that `anisotropic_matern_spectral_density` is correctly formulated for this `nu` value. If you strictly mean `nu=2/3`, you would need to adjust the `nu` parameter in the `anisotropic_matern_spectral_density` function to `2/3`.
+
+```{julia}
+@model function AnisotropicMaternFFT(y_observed, N, L, K1_obs, freq_x_grid, freq_y_grid, nu1, nuK1)
+    # Priors for Main Spatial Field (phi1)
+    var1 ~ InverseGamma(2, 3)  # Variance of the main field
+    ell1_1 ~ InverseGamma(2, 0.2) # Length scale 1
+    ell2_1 ~ InverseGamma(2, 0.2) # Length scale 2
+    theta1 ~ Uniform(-pi/2, pi/2) # Anisotropy angle
+
+    # Priors for Covariate Spatial Field (phi_k1)
+    varK1 ~ InverseGamma(2, 3) # Variance of the K1 spatial effect
+    ell1_K1 ~ InverseGamma(2, 0.2)
+    ell2_K1 ~ InverseGamma(2, 0.2)
+    thetaK1 ~ Uniform(-pi/2, pi/2)
+
+    # Prior for Observation Noise Variance
+    noise_var ~ InverseGamma(2, 3) # Observation noise variance
+
+    # The frequency grids passed to the model are already rfft-compatible
+    # So, we use these directly.
+    S1_rfft_spec = anisotropic_matern_spectral_density(L, L, var1, ell1_1, ell2_1, theta1, nu1, freq_x_grid, freq_y_grid)
+    SK1_rfft_spec = anisotropic_matern_spectral_density(L, L, varK1, ell1_K1, ell2_K1, thetaK1, nuK1, freq_x_grid, freq_y_grid)
+
+    # Transform observed data to frequency domain
+    Y_obs_freq = rfft(y_observed)
+
+    # The K1_obs is used in simulation but its direct FFT is not used in this simplified likelihood.
+    # The spectral density SK1_rfft_spec already captures the spatial effect of K1.
+
+    # Total spectral density for the likelihood
+    # The noise variance in the frequency domain for rfft components.
+    # For a real field, noise `epsilon ~ N(0, noise_var)`. In the frequency domain, 
+    # the variance at each complex rfft component is N*N*noise_var, and N*N*noise_var 
+    # for the real DC and Nyquist components.
+    noise_var_spec_const = noise_var * (N*N)
+
+    # Combined spectral density (sum of variances at each frequency)
+    # This forms the diagonal of the covariance matrix in the frequency domain.
+    S_total_spec = S1_rfft_spec .+ SK1_rfft_spec .+ noise_var_spec_const
+
+    # Optimize likelihood calculation by grouping real and imaginary parts.
+    # We collect all observed values and their corresponding variances into vectors
+    # to use MvNormal for improved performance.
+
+    num_rfft_rows = size(Y_obs_freq, 1) # N÷2 + 1
+    num_rfft_cols = size(Y_obs_freq, 2) # N
+
+    obs_values_real = Vector{Float64}()
+    obs_values_imag = Vector{Float64}() # Only for non-real components
+
+    var_values_real = Vector{Float64}()
+    var_values_imag = Vector{Float64}() # Only for non-real components
+
+    for i in 1:num_rfft_rows
+        for j in 1:num_rfft_cols
+            current_freq_var = S_total_spec[i, j]
+
+            # DC component (real)
+            if i == 1 && j == 1
+                push!(obs_values_real, Y_obs_freq[i, j])
+                push!(var_values_real, current_freq_var)
+            # Nyquist component for x-dim, y=0 (real, if N is even)
+            elseif N % 2 == 0 && i == N÷2 + 1 && j == 1
+                push!(obs_values_real, Y_obs_freq[i, j])
+                push!(var_values_real, current_freq_var)
+            # All other components are complex
+            # For a complex normal Z ~ CN(0, sigma^2), then Re(Z), Im(Z) are independent N(0, sigma^2/2)
+            else
+                push!(obs_values_real, real(Y_obs_freq[i, j]))
+                push!(obs_values_imag, imag(Y_obs_freq[i, j]))
+                push!(var_values_real, current_freq_var / 2.0)
+                push!(var_values_imag, current_freq_var / 2.0)
+            end
+        end
+    end
+
+    # Use MvNormal for combined likelihood contributions
+    if !isempty(obs_values_real)
+        obs_values_real ~ MvNormal(zeros(length(obs_values_real)), Diagonal(var_values_real))
+    end
+    if !isempty(obs_values_imag)
+        obs_values_imag ~ MvNormal(zeros(length(obs_values_imag)), Diagonal(var_values_imag))
+    end
+end
+
+# Prepare data for the model
+# Convert y_observed and K1_obs to Float64 for `rfft` if they aren't already.
+# This is crucial for Turing's type stability.
+y_obs_float = Float64.(y_observed)
+K1_obs_float = Float64.(K1_obs)
+
+# Create frequency grids for `rfft`
+rfft_freq_x_vals = FFTW.rfftfreq(N, N / L)
+rfft_freq_y_vals = FFTW.fftfreq(N, N / L)
+rfft_freq_x_grid = repeat(rfft_freq_x_vals, 1, N)
+rfft_freq_y_grid = repeat(rfft_freq_y_vals', length(rfft_freq_x_vals), 1)
+
+# Instantiate the model
+matern_fft_model = AnisotropicMaternFFT(
+    y_obs_float,
+    N, L, K1_obs_float, 
+    rfft_freq_x_grid, rfft_freq_y_grid,
+    true_nu1, true_nuK1 # Pass nu values as fixed for now, or put priors on them
+)
+
+
+sample(matern_fft_model, NUTS(), 10) # Small number of samples for compilation
+
+# Define the sampler
+# NUTS is generally a good choice for continuous parameters
+iterations = 500   # Number of MCMC iterations
+chains = 1        # Number of chains
+adapt_steps = 100 # Number of adaptation steps
+
+
+sampler = NUTS(adapt_steps, 0.65)
+chain = sample(matern_fft_model, sampler, iterations; progress=true)
+
+display(chain)
+
+# plot(chain)
+
+
+```
+Now, we build the Bayesian model in Turing.jl. We'll define priors for all parameters (variances, length scales, angles, observation noise variance). The core idea is to reverse the simulation process: we define a probabilistic generative process for y_observed based on latent spatial fields generated via FFT, and then use MCMC to infer the parameters.
+
+Key challenges for a full inference model:
+
+Normalization of FFT: The constant factor in the spectral density and the ifft normalization need careful handling to ensure the var parameter truly represents the spatial variance. For real fields, the power spectrum is usually symmetric, and ifft will produce a real output. For efficiency, rfft and irfft are used in practice, which handle this symmetry.
+
+Zero Frequency Component: The DC component (mean) of the spatial field is often handled separately or implicitly defined by centering the field.
+
+Parameter constraints: Length scales must be positive, angles typically within [-pi/2, pi/2] or [0, pi], and variances positive. Turing.jl handles some of this with appropriate priors (e.g., Gamma for variance, InverseGamma for noise variance).
+Computational Cost: Generating the spatial field via FFT within each MCMC step can be computationally intensive, especially for large grids. The original likelihood calculation iterated over each frequency component, which can be very slow. The updated model below optimizes this by grouping components and using MvNormal for more efficient evaluation.
+For nu=2.5, we are assuming that anisotropic_matern_spectral_density is correctly formulated for this nu value. If you strictly mean nu=2/3, you would need to adjust the nu parameter in the anisotropic_matern_spectral_density function to 2/3.
+
+
+
+
+### 3-D (time and space): Stationary spatiotemporal models
+
 
 So far, the models have used only a representation of the spatial autocorrelation. Most biological features such as abundance are, however, variable not only in space but also in time. Just as space can be modelled as an autocorrelated process, so too can time. However, due to the brevity of most biological time-series, a full and reliable temporal autocorrelation function cannot normally be defined/estimated. Instead, an operational extraction of a few components, namely, an annual and possibly a seasonal component can provide some information and constraints upon the residual temporal errors. The simplest such model utilizes a single spatial autocorrelation function of the full domain and a single (separable, additive) temporal autocorrelation parameter or function (if there is sufficient time-series data).
 
@@ -7417,12 +7477,7 @@ k((x1, y1), (x2, y2)) = k1(x1, x2) * k2(y1, y2)
 $$
 
 ```{julia}
-using Turing
-using AbstractGPs
-using KernelFunctions
-using LinearAlgebra
-using SparseArrays
-using Graphs
+# using Turing, AbstractGPs, KernelFunctions, LinearAlgebra, SparseArrays, Graphs
 
 # 1. Custom Graph Kernel for AbstractGPs (The "Structure" of BYM2)
 # AbstractGPs works best with covariance functions. 
@@ -9412,7 +9467,7 @@ chain = sample(model, NUTS(), 500)
 ```
 
 
-### Non-stationary spatiotemporal models
+### 3-D Non-stationary spatiotemporal models
 
 #### stmv
 
@@ -9473,8 +9528,295 @@ $$
 
 This approach represents a practical balance between computational time and model complexity/realism. For additional speed, an FFT-based Matérn convolution implementation is used. This solution focuses upon prediction using a mosaic of solutions in space, overall likelihood or AIC evaluation is a challenge. At present, predictive success is the only means to evaluate utility and eventually some form of Expectation-Maximization approaches through iteration once computational speeds improve would provide less biased parameter estimates.
 
+
+#### FFT (PSD - power spectral density)
+
+Comparing Separable vs. Non-Separable Anisotropic Models
  
 
+A **non-separable anisotropic Matern PSD** typically defines the effective frequency squared as a sum of scaled spatial and temporal frequency components:
+
+`P(f_x, f_y, f_t) = A / (1 + (L_s^2 * (f_x^2 + f_y^2) + L_t^2 * f_t^2))^beta + Noise`
+
+where `beta` is a single spectral exponent governing the overall smoothness in this combined anisotropic frequency space.
+ 
+```julia
+
+@model function non_separable_anisotropic_matern_psd_model_3d(
+    f_x_data, f_y_data, f_t_data, observed_powers_data,
+    num_frequency_points
+)
+    # Priors for the PSD parameters
+    amplitude_param ~ truncated(Normal(1000, 1000), 0, Inf)
+
+    # Anisotropic Range parameters
+    range_param_s ~ truncated(Normal(0.5, 0.5), 0, Inf) # Spatial range parameter
+    range_param_t ~ truncated(Normal(0.2, 0.2), 0, Inf) # Temporal range parameter
+
+    # Single Spectral Exponent for the combined anisotropic effect
+    spectral_exponent ~ truncated(Normal(4.0, 1.0), 1.0, 6.0) # Related to nu + D/2 for D=3
+
+    spatial_noise_variance ~ truncated(Normal(0.1, 0.1), 0, Inf)
+
+    log_spectral_estimation_noise_std ~ truncated(Normal(0.1, 0.1), 0, Inf)
+    spectral_estimation_noise_std = exp(log_spectral_estimation_noise_std)
+
+    # Predicted total power spectral density for each frequency bin
+    predicted_total_powers = Vector{Float64}(undef, num_frequency_points)
+    for i in 1:num_frequency_points
+        # Anisotropic effective frequency squared
+        aniso_f_effective_sq = (range_param_s^2 * (f_x_data[i]^2 + f_y_data[i]^2)) + (range_param_t^2 * f_t_data[i]^2)
+        matern_component = amplitude_param / (1.0 + aniso_f_effective_sq)^spectral_exponent
+        predicted_total_powers[i] = matern_component + spatial_noise_variance
+    end
+
+    # Likelihood: Observed powers are normally distributed around predicted total powers (on log scale)
+    for i in 1:num_frequency_points
+        log(observed_powers_data[i]) ~ Normal(log(predicted_total_powers[i]), spectral_estimation_noise_std)
+    end
+end
+``` 
+
+model_non_separable_3d = non_separable_anisotropic_matern_psd_model_3d(
+    f_x_flat, f_y_flat, f_t_flat, observed_powers_flat, length(f_x_flat)
+);
+ 
+chain_non_separable_3d = sample(model_non_separable_3d, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
+
+display(chain_non_separable_3d)
+
+println("\nTrue Parameters (used for data generation, from Separable Model):")
+println("  Overall Amplitude Parameter (A): ", true_amplitude_param)
+println("  Spatial Range Parameter (L_s): ", true_range_param_s)
+println("  Temporal Range Parameter (L_t): ", true_range_param_t)
+println("  Spatial Spectral Exponent (beta_s): ", true_spectral_exponent_s)
+println("  Temporal Spectral Exponent (beta_t): ", true_spectral_exponent_t)
+println("  Spatio-Temporal Noise Variance: ", true_spatial_noise_variance_param)
+
+println("\nPosterior Means for Inferred Parameters (Non-Separable Model):")
+println("  Overall Amplitude Parameter (A): ", round(mean(chain_non_separable_3d[:amplitude_param]), digits=3))
+println("  Spatial Range Parameter (L_s): ", round(mean(chain_non_separable_3d[:range_param_s]), digits=3))
+println("  Temporal Range Parameter (L_t): ", round(mean(chain_non_separable_3d[:range_param_t]), digits=3))
+println("  Combined Spectral Exponent (beta): ", round(mean(chain_non_separable_3d[:spectral_exponent]), digits=3))
+println("  Spatio-Temporal Noise Variance: ", round(mean(chain_non_separable_3d[:spatial_noise_variance]), digits=3))
+println("  Log Spectral Estimation Noise Std: ", round(mean(chain_non_separable_3d[:log_spectral_estimation_noise_std]), digits=3))
+
+```
+
+
+Compute Log-Likelihoods for Model Comparison
+
+To compare models using LOO (Leave-One-Out cross-validation), we need the point-wise log-likelihood for each observed data point (frequency bin in this case) across all posterior samples. We'll define helper functions for this.
+
+We need to add `ArviZ` and `StatsBase` for `loglikelihood` functionalities.
+
+```{julia}
+
+using ArviZ # For LOO calculation
+using StatsBase # For `loglikelihood` functions
+
+# Function to calculate point-wise log-likelihood for the Separable Model
+
+function loglikelihood_separable_model(
+    chain, f_x_data, f_y_data, f_t_data, observed_powers_data, num_frequency_points
+)
+    num_samples = size(chain, 1)
+    num_chains = size(chain, 3)
+    
+    log_lik_matrix = zeros(num_frequency_points, num_samples * num_chains)
+
+    for c in 1:num_chains
+        for s in 1:num_samples
+            amplitude_param = chain["amplitude_param"][s, 1, c]
+            range_param_s = chain["range_param_s"][s, 1, c]
+            range_param_t = chain["range_param_t"][s, 1, c]
+            spectral_exponent_s = chain["spectral_exponent_s"][s, 1, c]
+            spectral_exponent_t = chain["spectral_exponent_t"][s, 1, c]
+            spatial_noise_variance = chain["spatial_noise_variance"][s, 1, c]
+            log_spectral_estimation_noise_std = chain["log_spectral_estimation_noise_std"][s, 1, c]
+            spectral_estimation_noise_std = exp(log_spectral_estimation_noise_std)
+
+            for i in 1:num_frequency_points
+                aniso_f_sq_spatial_term = (range_param_s^2 * (f_x_data[i]^2 + f_y_data[i]^2))
+                aniso_f_sq_temporal_term = (range_param_t^2 * f_t_data[i]^2)
+                matern_s_component = 1.0 / (1.0 + aniso_f_sq_spatial_term)^spectral_exponent_s
+                matern_t_component = 1.0 / (1.0 + aniso_f_sq_temporal_term)^spectral_exponent_t
+                predicted_total_power = amplitude_param * matern_s_component * matern_t_component + spatial_noise_variance
+                
+                log_lik_matrix[i, (c-1)*num_samples + s] = logpdf(Normal(log(predicted_total_power), spectral_estimation_noise_std), log(observed_powers_data[i]))
+            end
+        end
+    end
+    return log_lik_matrix
+end
+
+
+# Function to calculate point-wise log-likelihood for the Non-Separable Model
+
+function loglikelihood_non_separable_model(
+    chain, f_x_data, f_y_data, f_t_data, observed_powers_data, num_frequency_points
+)
+    num_samples = size(chain, 1)
+    num_chains = size(chain, 3)
+
+    log_lik_matrix = zeros(num_frequency_points, num_samples * num_chains)
+
+    for c in 1:num_chains
+        for s in 1:num_samples
+            amplitude_param = chain["amplitude_param"][s, 1, c]
+            range_param_s = chain["range_param_s"][s, 1, c]
+            range_param_t = chain["range_param_t"][s, 1, c]
+            spectral_exponent = chain["spectral_exponent"][s, 1, c]
+            spatial_noise_variance = chain["spatial_noise_variance"][s, 1, c]
+            log_spectral_estimation_noise_std = chain["log_spectral_estimation_noise_std"][s, 1, c]
+            spectral_estimation_noise_std = exp(log_spectral_estimation_noise_std)
+
+            for i in 1:num_frequency_points
+                aniso_f_effective_sq = (range_param_s^2 * (f_x_data[i]^2 + f_y_data[i]^2)) + (range_param_t^2 * f_t_data[i]^2)
+                predicted_total_power = amplitude_param / (1.0 + aniso_f_effective_sq)^spectral_exponent + spatial_noise_variance
+                
+                log_lik_matrix[i, (c-1)*num_samples + s] = logpdf(Normal(log(predicted_total_power), spectral_estimation_noise_std), log(observed_powers_data[i]))
+            end
+        end
+    end
+    return log_lik_matrix
+end
+
+# Helper function for logsumexp (for logmeanexp)
+function logsumexp(x; dims=:)
+    if dims == :
+        x_max = maximum(x)
+        return x_max + log(sum(exp.(x .- x_max)))
+    else
+        x_max = maximum(x, dims=dims)
+        return x_max .+ log.(sum(exp.(x .- x_max), dims=dims))
+    end
+end
+
+# Helper function for logmeanexp (mean of exponents of log-likelihoods)
+logmeanexp(x; dims=:) = logsumexp(x, dims=dims) .- log.(size(x, dims==: ? 1 : dims))
+
+
+println("Calculating point-wise log-likelihoods for Separable Model...")
+ll_separable = loglikelihood_separable_model(chain_psd_3d, f_x_flat, f_y_flat, f_t_flat, observed_powers_flat, length(f_x_flat))
+
+
+println("Calculating point-wise log-likelihoods for Non-Separable Model...")
+ll_non_separable = loglikelihood_non_separable_model(chain_non_separable_3d, f_x_flat, f_y_flat, f_t_flat, observed_powers_flat, length(f_x_flat))
+
+```
+
+Compare Models using PSIS-LOO (ArviZ.jl)
+
+PSIS-LOO (Pareto Smoothed Importance Sampling Leave-One-Out cross-validation) is a robust and widely used Bayesian model comparison metric. Lower values indicate better out-of-sample predictive performance.
+
+```{julia}
+
+# Function to calculate WAIC from a matrix of point-wise log-likelihoods
+function calculate_waic(log_lik_matrix)
+    # log predictive density (lpd)
+    lpd = sum(logmeanexp(log_lik_matrix, dims=2))
+
+    # penalty term (p_waic) based on variance of log-likelihoods
+    p_waic = sum(var(log_lik_matrix, dims=2))
+
+    waic = -2 * (lpd - p_waic)
+    return (waic=waic, lpd=lpd, p_waic=p_waic)
+end
+
+println("\n--- WAIC Results ---")
+waic_separable = calculate_waic(ll_separable)
+println("Separable Model WAIC: ", round(waic_separable.waic, digits=2))
+println("  lpd: ", round(waic_separable.lpd, digits=2))
+println("  p_waic: ", round(waic_separable.p_waic, digits=2))
+
+waic_non_separable = calculate_waic(ll_non_separable)
+println("Non-Separable Model WAIC: ", round(waic_non_separable.waic, digits=2))
+println("  lpd: ", round(waic_non_separable.lpd, digits=2))
+println("  p_waic: ", round(waic_non_separable.p_waic, digits=2))
+
+println("\nInterpretation: A lower WAIC value indicates a better-fitting model. The p_waic term estimates the effective number of parameters, penalizing models with greater complexity. In general, differences in WAIC of less than 4-10 are often considered negligible.")
+
+println("\n--- PSIS-LOO Results (using ArviZ.jl) ---")
+
+# Create InferenceData objects
+idata_separable = InferenceData(Dict(:log_likelihood => ll_separable))
+idata_non_separable = InferenceData(Dict(:log_likelihood => ll_non_separable))
+
+# Calculate LOO
+loo_separable = loo(idata_separable)
+loo_non_separable = loo(idata_non_separable)
+
+println("Separable Model LOO: ", loo_separable)
+println("Non-Separable Model LOO: ", loo_non_separable)
+
+println("\nInterpretation: Similar to WAIC, a lower LOO value indicates better out-of-sample predictive accuracy. The `loo` function also provides diagnostics like Pareto k values, which indicate the reliability of the LOO approximation. Values of k > 0.7 can suggest that the LOO approximation is unreliable for some data points.")
+
+# Calculate LOO difference (if desired, typically done by ArviZ's compare function)
+# For a quick manual difference:
+if loo_separable.loo < loo_non_separable.loo
+    println("\nSeparable Model has a lower LOO value, suggesting better predictive performance.")
+else
+    println("\nNon-Separable Model has a lower LOO value, suggesting better predictive performance.")
+end
+
+println("Difference (Separable - Non-Separable) = ", round(loo_separable.loo - loo_non_separable.loo, digits=2))
+
+
+# Visual Comparison of Fitted PSDs
+
+plot_comparison = plot(avg_r_obs_filtered_3d, avg_power_obs_filtered_3d, seriestype=:scatter,
+     xaxis=:log, yaxis=:log, xlabel="3D Isotropic Radial Frequency (f)", ylabel="Power (log)",
+     title="Model Comparison: Separable vs. Non-Separable Anisotropic PSD Fit", label="Observed Data", legend=:topright)
+
+# Overlay True Separable PSD
+plot!(plot_comparison, aniso_true_psd_total_radial_avg_r_filtered, aniso_true_psd_total_radial_avg_power_filtered,
+      linewidth=2, linestyle=:dash, color=:red, label="True Separable Total PSD (Isotropic Avg)")
+
+# Get posterior means for Separable Model
+post_mean_A_sep = mean(chain_psd_3d[:amplitude_param])
+post_mean_Ls_sep = mean(chain_psd_3d[:range_param_s])
+post_mean_Lt_sep = mean(chain_psd_3d[:range_param_t])
+post_mean_beta_s_sep = mean(chain_psd_3d[:spectral_exponent_s])
+post_mean_beta_t_sep = mean(chain_psd_3d[:spectral_exponent_t])
+post_mean_spatial_noise_variance_sep = mean(chain_psd_3d[:spatial_noise_variance])
+
+# Generate Separable fitted PSD (isotropically averaged)
+predicted_aniso_r_sq_spatial_sep = @. (post_mean_Ls_sep^2 * (f_x^2 + f_y^2))
+predicted_aniso_r_sq_temporal_sep = @. (post_mean_Lt_sep^2 * f_t^2)
+predicted_matern_s_component_fit_sep = @. 1.0 / (1.0 + predicted_aniso_r_sq_spatial_sep)^post_mean_beta_s_sep
+predicted_matern_t_component_fit_sep = @. 1.0 / (1.0 + predicted_aniso_r_sq_temporal_sep)^post_mean_beta_t_sep
+predicted_psd_matern_fit_sep = @. post_mean_A_sep * predicted_matern_s_component_fit_sep * predicted_matern_t_component_fit_sep
+predicted_psd_total_fit_sep = predicted_psd_matern_fit_sep .+ post_mean_spatial_noise_variance_sep
+avg_r_fit_sep, avg_power_fit_sep = radial_average_3d(predicted_psd_total_fit_sep, N_x, N_y, N_t, Δx, Δy, Δt)
+plot!(plot_comparison, avg_r_fit_sep[valid_indices_3d], avg_power_fit_sep[valid_indices_3d],
+      linewidth=2, color=:blue, label="Separable Model Fit (Isotropic Avg)")
+
+# Get posterior means for Non-Separable Model
+post_mean_A_nonsep = mean(chain_non_separable_3d[:amplitude_param])
+post_mean_Ls_nonsep = mean(chain_non_separable_3d[:range_param_s])
+post_mean_Lt_nonsep = mean(chain_non_separable_3d[:range_param_t])
+post_mean_beta_nonsep = mean(chain_non_separable_3d[:spectral_exponent])
+post_mean_spatial_noise_variance_nonsep = mean(chain_non_separable_3d[:spatial_noise_variance])
+
+# Generate Non-Separable fitted PSD (isotropically averaged)
+predicted_aniso_r_sq_grid_nonsep = @. (post_mean_Ls_nonsep^2 * (f_x^2 + f_y^2)) + (post_mean_Lt_nonsep^2 * f_t^2)
+predicted_psd_matern_fit_nonsep = @. post_mean_A_nonsep / (1.0 + predicted_aniso_r_sq_grid_nonsep)^post_mean_beta_nonsep
+predicted_psd_total_fit_nonsep = predicted_psd_matern_fit_nonsep .+ post_mean_spatial_noise_variance_nonsep
+avg_r_fit_nonsep, avg_power_fit_nonsep = radial_average_3d(predicted_psd_total_fit_nonsep, N_x, N_y, N_t, Δx, Δy, Δt)
+plot!(plot_comparison, avg_r_fit_nonsep[valid_indices_3d], avg_power_fit_nonsep[valid_indices_3d],
+      linewidth=2, linestyle=:dot, color=:darkgreen, label="Non-Separable Model Fit (Isotropic Avg)")
+
+display(plot_comparison)
+
+println("\n### Model Comparison Interpretation ###")
+println("The plot visually compares the observed radially averaged PSD, the true (separable) underlying PSD, and the fitted PSDs from both the separable and non-separable anisotropic models.")
+println("\n- **LOO Values**: Compare the `loo_separable` and `loo_non_separable` values. A lower LOO value indicates a model that is expected to generalize better to new, unseen data.")
+println("\n- **Visual Fit**: Observe how closely each model's fitted curve (isotropically averaged) matches the \"True Separable Total PSD\" and the \"Observed Data\". When data is generated from a separable process (as in this example), the separable model is generally expected to provide a better fit and better predictive performance.")
+println("\n- **Parameter Interpretation**: Even if the non-separable model can approximate the fit, its single `spectral_exponent` will represent a compromise between the true spatial and temporal smoothness. The separable model, by having `spectral_exponent_s` and `spectral_exponent_t` separately, can capture the distinct smoothness properties of each dimension.")
+
+```
+ 
 ## Multivariate methods
 
 ### Spectral (Eigen) decomposition
@@ -10581,18 +10923,18 @@ Attempts to achieve similar goals of maximally representing similarities and dif
 ```{julia} 
  
 using Distances, MultivariateStats
-
-# Example data (replace with your actual dissimilarity matrix)
+ 
 # This is a sample dissimilarity matrix, e.g., computed from some features.
 # For NMDS, you typically start with a dissimilarity matrix.
+
 data_points = rand(10, 5) # 10 observations, 5 features
 dissimilarities = pairwise(Euclidean(), data_points, dims=2) # Compute Euclidean distances as dissimilarities
 
 # Perform Nonmetric Multidimensional Scaling (NMDS)
 # The 'ndim' parameter specifies the number of dimensions for the embedding
-# The 'maxoutdim' parameter is typically used for PCA or similar, but for MDS,
-# we directly specify 'ndim' which becomes 'maxoutdim' in the context of `fit(MDS, ...)`
+# The 'maxoutdim' parameter is typically used for PCA or similar, but for MDS, 'maxoutdim' in the context of `fit(MDS, ...)`
 # The `distance` parameter takes the dissimilarity matrix.
+
 nmds_model = fit(MDS, dissimilarities, maxoutdim=2, metric=false) # metric=false for Nonmetric MDS
 
 # Get the embedded coordinates (the lower-dimensional representation)
@@ -11027,36 +11369,23 @@ end
 
 This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when your data is noisy or you need a probabilistic estimate of how well two shapes align.
 
-
-
-```{julia}
-
-using Turing
-using Distributions
-using LinearAlgebra
-using Plots
-using StatsPlots # For density plots of chains
-
-"""
-    procrustes_analysis(X_obs::AbstractMatrix{T}, Y_obs::AbstractMatrix{T}) where {T}
-
-A Turing.jl model for Bayesian Procrustes analysis in 2D.
-
-Given two sets of points, X_obs and Y_obs, this model infers the optimal
-transformation (scale, rotation, translation) and observation noise
-to superimpose X_obs onto Y_obs.
-
-# Arguments
+ 
+Given two sets of points, X_obs and Y_obs, this model infers the optimal transformation (scale, rotation, translation) and observation noise to superimpose X_obs onto Y_obs.
+ 
 - `X_obs`: The observed reference shape (N points x 2 dimensions).
 - `Y_obs`: The observed target shape (N points x 2 dimensions).
 
-# Latent Variables
+Latent Variables:
 - `s`: Scale factor.
 - `theta`: Rotation angle in radians.
 - `R`: 2x2 Rotation matrix derived from `theta`.
 - `T_vec`: 2-element translation vector.
 - `sigma`: Standard deviation of the observation noise.
-"""
+ 
+ 
+
+```{julia}
+ 
 
 @model function procrustes_analysis(X_obs::AbstractMatrix{T}, Y_obs::AbstractMatrix{T}) where {T}
     N, D = size(X_obs) # N points, D dimensions
@@ -11087,7 +11416,8 @@ to superimpose X_obs onto Y_obs.
     end
 end
 
-# 1. Generate synthetic data
+# Generate synthetic data
+
 # Original shape (e.g., a square)
 X_original = [
     0.0 0.0;
@@ -11109,10 +11439,10 @@ Y_true_transformed = true_s .* (X_original * true_R) .+ true_T'
 # Add Gaussian noise to simulate observed data
 Y_noisy = Y_true_transformed .+ true_sigma .* randn(size(X_original))
 
-# 2. Instantiate the Turing model
+# Instantiate the Turing model
 procrustes_model = procrustes_analysis(X_original, Y_noisy)
 
-# 3. Sample from the posterior distribution using NUTS (No-U-Turn Sampler)
+# Sample from the posterior distribution using NUTS (No-U-Turn Sampler)
 # NUTS is a gradient-based MCMC sampler, generally efficient for continuous parameters.
 num_samples = 2000 # Number of samples to draw
 num_chains = 4     # Number of parallel chains
@@ -11129,11 +11459,9 @@ chain = sample(
     progress=true
 )
 
-# 4. Summarize the results
-println("\n--- Posterior Summary ---")
 display(summary(chain))
 
-# 5. Extract posterior means for visualization and comparison
+# Extract posterior means for visualization and comparison
 posterior_s = mean(chain[:s])
 posterior_theta = mean(chain[:theta])
 posterior_R = [cos(posterior_theta) -sin(posterior_theta); sin(posterior_theta) cos(posterior_theta)]
@@ -11152,7 +11480,7 @@ println("  Rotation Angle (theta): ", posterior_theta, " radians (", rad2deg(pos
 println("  Translation (T): ", posterior_T)
 println("  Noise Std Dev (sigma): ", posterior_sigma)
 
-# 6. Visualize the results
+# Visualize the results
 plot(
     X_original[:, 1], X_original[:, 2],
     seriestype=:scatter, label="Original X", markersize=6, markercolor=:blue,
@@ -11176,7 +11504,6 @@ StatsPlots.plot(chain, seriestype=:density, layout=(4,1), legend=false,
     title=["Posterior of Scale" "Posterior of Angle" "Posterior of T_x" "Posterior of T_y" "Posterior of Sigma"],
     xlabel=["s" "theta" "T_x" "T_y" "sigma"]
 )
-
 
 
 ```
@@ -11244,61 +11571,13 @@ This model estimates the probability of an observation belonging to each of the 
 
 
 ```{julia}
+ 
 
-# Pkg.add("StatsAPI")
-# using LinearAlgebra # For I (identity matrix)
-# using StatsAPI # For softmax
+# Multinomial Logistic Regression (DFA-like scenario) 
 
-
-# 1. Generate Synthetic Data for Multinomial Logistic Regression (DFA-like scenario)
-num_samples = 300
-num_predictors = 2
-num_classes = 3 # Let's have 3 classes (0, 1, 2)
-
-# Predictor variables
-x1 = randn(num_samples) # Predictor 1
-x2 = randn(num_samples) # Predictor 2
-
-# Design matrix (including intercept)
-X_multinom = hcat(ones(num_samples), x1, x2)
-
-# True coefficients for each class. One class is typically used as a reference (e.g., class 1 is all zeros).
-# The coefficients represent the linear predictor for each class relative to the reference.
-# Size: (num_predictors + 1) x (num_classes - 1)
-
-# True coefficients for Class 2 vs Class 1 (reference)
-true_beta_class2 = [0.5, 1.0, -0.5] # Intercept, x1_coeff, x2_coeff
-
-# True coefficients for Class 3 vs Class 1 (reference)
-true_beta_class3 = [-0.8, -0.7, 1.2] # Intercept, x1_coeff, x2_coeff
-
-# Combine into a matrix of coefficients, where the first column is for the reference class (all zeros)
-true_betas_all = hcat(zeros(num_predictors + 1), true_beta_class2, true_beta_class3)
-
-# Calculate the linear predictors for each class for each observation
-linear_predictors = X_multinom * true_betas_all # num_samples x num_classes
-
-# Convert linear predictors to probabilities for each class using softmax
-# StatsAPI.softmax operates on columns by default, so we'll transpose
-probabilities_per_class = permutedims(StatsAPI.softmax(permutedims(linear_predictors)))
-
-# Generate class labels (y) based on these probabilities
-y_multinom = Vector{Int}(undef, num_samples)
-for i in 1:num_samples
-    # Categorical(p) expects probabilities for each category
-    y_multinom[i] = rand(Categorical(probabilities_per_class[i, :]))
-end
-
-println("Synthetic Multinomial Data Generated. First 10 observations:")
-display(hcat(round.(x1[1:10], digits=2), round.(x2[1:10], digits=2), round.(probabilities_per_class[1:10,:], digits=2), y_multinom[1:10]))
-
-println("\nCounts per class: ", StatsBase.countmap(y_multinom))
-
-  
-# Pkg.add("StatsBase") # For countmap in data generation
-using StatsBase # For countmap
-
-# 2. Define the Bayesian Multinomial Logistic Regression Model
+X, y, num_classes, probabilities_per_class, true_beta_class2, true_beta_class3 = example_data("classification_testdata")
+ 
+ 
 @model function bayesian_multinomial_logistic_regression(X, y, num_classes)
     num_samples = length(y)
     num_predictors_with_intercept = size(X, 2)
@@ -11333,15 +11612,11 @@ using StatsBase # For countmap
     end
 end
 
-# 3. Instantiate and Sample from the Model
-# Create an instance of the model with our data
-model_multinom = bayesian_multinomial_logistic_regression(X_multinom, y_multinom, num_classes);
 
-println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
-# Sample from the posterior distribution using NUTS
+model_multinom = bayesian_multinomial_logistic_regression(X, y, num_classes);
+
 chain_multinom = sample(model_multinom, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
 
-# 4. Display and Interpret Results
 display(chain_multinom)
 
 println("\nTrue Coefficients (Class 2 vs Class 1):")
@@ -11364,8 +11639,8 @@ println("Intercept (beta_class3[1]): ", round(mean(chain_multinom[:beta_class3__
 println("X1 Coeff (beta_class3[2]): ", round(mean(chain_multinom[:beta_class3___2]), digits=3))
 println("X2 Coeff (beta_class3[3]): ", round(mean(chain_multinom[:beta_class3___3]), digits=3))
 
-# These posterior mean coefficients define your 'discriminant functions' for each class.
-# You can use them to predict class probabilities for new data points.
+# These posterior mean coefficients define  'discriminant functions' for each class.
+# Use them to predict class probabilities for new data points.
 
 ```
 #### Softmax 
@@ -11375,52 +11650,9 @@ Same as Bayesian multinomial regression (i.e. DFA)
 ```{julia}
 # using Turing, Distributions, LinearAlgebra  Random, StatsAPI, StatsBase 
  
-# 1. Generate Synthetic Data for Multinomial Logistic Regression (Softmax Regression)
-num_samples = 300
-num_predictors = 2
-num_classes = 3 # Let's have 3 classes (1, 2, 3)
-
-# Predictor variables
-x1 = randn(num_samples) # Predictor 1
-x2 = randn(num_samples) # Predictor 2
-
-# Design matrix (including intercept)
-X_softmax = hcat(ones(num_samples), x1, x2)
-
-# True coefficients for each class. One class is typically used as a reference (e.g., class 1 is all zeros).
-# The coefficients represent the linear predictor for each class relative to the reference.
-# Size: (num_predictors + 1) x (num_classes - 1)
-
-# True coefficients for Class 2 vs Class 1 (reference)
-true_beta_class2 = [0.5, 1.0, -0.5] # Intercept, x1_coeff, x2_coeff
-
-# True coefficients for Class 3 vs Class 1 (reference)
-true_beta_class3 = [-0.8, -0.7, 1.2] # Intercept, x1_coeff, x2_coeff
-
-# Combine into a matrix of coefficients, where the first column is for the reference class (all zeros)
-true_betas_all = hcat(zeros(num_predictors + 1), true_beta_class2, true_beta_class3)
-
-# Calculate the linear predictors for each class for each observation
-linear_predictors = X_softmax * true_betas_all # num_samples x num_classes
-
-# Convert linear predictors to probabilities for each class using softmax
-# StatsAPI.softmax operates on columns by default, so we'll transpose for row-wise operation
-probabilities_per_class = permutedims(StatsAPI.softmax(permutedims(linear_predictors)))
-
-# Generate class labels (y) based on these probabilities
-y_softmax = Vector{Int}(undef, num_samples)
-for i in 1:num_samples
-    # Categorical(p) expects probabilities for each category
-    y_softmax[i] = rand(Categorical(probabilities_per_class[i, :]))
-end
-
-println("Synthetic Softmax Regression Data Generated. First 10 observations (X1, X2, Probabilities for classes 1,2,3, Assigned Class):")
-display(hcat(round.(x1[1:10], digits=2), round.(x2[1:10], digits=2), round.(probabilities_per_class[1:10,:], digits=2), y_softmax[1:10]))
-
-println("\nCounts per class: ", StatsBase.countmap(y_softmax))
+X, y, num_classes, probabilities_per_class, true_beta_class2, true_beta_class3 = example_data("classification_testdata")
 
 
-# 2. Define the Bayesian Softmax Regression Model
 @model function bayesian_softmax_regression(X, y, num_classes)
     num_samples = length(y)
     num_predictors_with_intercept = size(X, 2)
@@ -11453,18 +11685,12 @@ println("\nCounts per class: ", StatsBase.countmap(y_softmax))
         y[i] ~ Categorical(probabilities_per_class_model[i, :])
     end
 end
+ 
 
-# Instantiate the model with our data
-model_softmax = bayesian_softmax_regression(X_softmax, y_softmax, num_classes);
-
-println("Bayesian Softmax Regression model defined.")
-
-
-# 3. Sample from the Posterior Distribution
-println("\nSampling from posterior (this may take a moment)... Using NUTS sampler.")
+model_softmax = bayesian_softmax_regression(X, y, num_classes);
+ 
 chain_softmax = sample(model_softmax, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
-
-# 4. Display and Interpret Results
+ 
 display(chain_softmax)
 
 println("\nTrue Coefficients (Class 2 vs Class 1):")
@@ -11586,16 +11812,10 @@ scatter(X_gmm[1,:], X_gmm[2,:],
     end
 end
 
-# 3. Instantiate and Sample from the Model
-# Create an instance of the model with our data and desired number of clusters
 model_gmm = bayesian_gmm(X_gmm, num_dims, num_clusters);
-
-println("\nSampling from posterior (this may take a moment, especially for GMMs)... Using NUTS sampler.")
-# Sample from the posterior distribution using NUTS
-# Adjust number of samples and chains as needed for convergence
+ 
 chain_gmm = sample(model_gmm, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
 
-# 4. Display and Interpret Results
 display(chain_gmm)
 
 println("\nTrue Cluster Means:")
@@ -11657,66 +11877,10 @@ Using metrics of difference, distance or similarity, classify into groups ... nu
 
 ```{julia}
  
-# 1. Generate Synthetic Mixed Data
-num_samples = 200
-num_clusters = 2
-
-# Parameters for data types:
-# Continuous: 1 dimension
-# Binomial: 1 dimension (e.g., number of successes out of 10 trials)
-# Multinomial: 1 dimension (e.g., counts in 3 categories)
-
-# True cluster parameters
-# Cluster 1
-μ_true_1 = [2.0]     # Continuous mean
-p_true_1 = 0.2      # Binomial success probability
-θ_true_1 = [0.6, 0.3, 0.1] # Multinomial probabilities for 3 categories
-
-# Cluster 2
-μ_true_2 = [7.0]
-p_true_2 = 0.8
-θ_true_2 = [0.1, 0.2, 0.7]
-
-# Combine into arrays for the model
-true_μ = [μ_true_1, μ_true_2]
-true_p = [p_true_1, p_true_2]
-true_θ = [θ_true_1, θ_true_2]
-
-true_π = [0.4, 0.6] # Mixing proportions
-
-# Binomial trials (fixed for all points)
-binomial_trials = 10
-# Multinomial categories (fixed)
-multinomial_categories = 3
-# Total count for multinomial (fixed for all points)
-multinomial_total_count = 20
-
-# Store generated data
-data_continuous = Vector{Float64}(undef, num_samples)
-data_binomial = Vector{Int}(undef, num_samples)
-data_multinomial = Matrix{Int}(undef, num_samples, multinomial_categories)
-cluster_assignments_true = Vector{Int}(undef, num_samples)
-
-for i in 1:num_samples
-    # Assign cluster
-    k = rand(Categorical(true_π))
-    cluster_assignments_true[i] = k
-
-    # Generate continuous data
-    data_continuous[i] = rand(Normal(true_μ[k][1], 1.0)) # Assuming fixed std dev for simplicity
-
-    # Generate binomial data
-    data_binomial[i] = rand(Binomial(binomial_trials, true_p[k]))
-
-    # Generate multinomial data
-    data_multinomial[i, :] = rand(Multinomial(multinomial_total_count, true_θ[k]))
-end
-
-println("Synthetic Mixed Data Generated. First 5 observations:")
-display(hcat(data_continuous[1:5], data_binomial[1:5], data_multinomial[1:5, :], cluster_assignments_true[1:5]))
-
-# For Turing, we'll pass these as separate arrays
-
+  
+data_continuous, data_binomial, data_multinomial,
+num_clusters, num_cont_dims, binomial_trials, multinomial_total_count, multinomial_categories = example_data("cluster_testdata")
+ 
 
 @model function bayesian_mixed_data_gmm(
     data_cont, data_binom, data_mult, 
@@ -11768,17 +11932,15 @@ display(hcat(data_continuous[1:5], data_binomial[1:5], data_multinomial[1:5, :],
     end
 end
 
-# Instantiate and Sample from the Model
+
 num_cont_dims = 1 # We generated 1 continuous dimension
 
 model_mixed = bayesian_mixed_data_gmm(
     data_continuous, data_binomial, data_multinomial,
     num_clusters, num_cont_dims, binomial_trials, multinomial_total_count, multinomial_categories);
 
-println("\nSampling from posterior for mixed-data GMM (this will take longer!)...")
 chain_mixed = sample(model_mixed, NUTS(0.65), 1000, 4); # 1000 samples per chain, 4 chains
 
-# Display and Interpret Results
 display(chain_mixed)
 
 println("\nTrue Mixing Proportions (π): $(true_π)")
@@ -11864,14 +12026,14 @@ model = build_forest(
 
 println("Random Forest model trained.\n")
 
-# 2. Make predictions on the test set
+# Make predictions on the test set
 y_pred = apply_forest(model, X_test)
 
-# 3. Evaluate the model (e.g., Mean Squared Error)
+# Evaluate the model (e.g., Mean Squared Error)
 mse = sum((y_pred .- y_test).^2) / length(y_test)
 println("Mean Squared Error on test set: $(round(mse, digits=4))")
 
-# 4. Visualize actual vs. predicted values (simple scatter plot)
+# Visualize actual vs. predicted values (simple scatter plot)
 plot(
     y_test, y_pred, seriestype=:scatter, 
     xlabel="Actual Values", ylabel="Predicted Values", 
@@ -11904,7 +12066,7 @@ using Flux
 using Flux: train!, mse
 
 
-# 1. Generate Synthetic Data
+# Generate Synthetic Data
 num_samples = 100
 
 # Input features (1D for simplicity)
@@ -11927,7 +12089,7 @@ scatter_plot = scatter(vec(X_data), vec(y_data),
 display(scatter_plot);
 
 
-# 2. Define the Neural Network Architecture
+# Define the Neural Network Architecture
 # A simple feedforward network with one hidden layer and tanh activation
 model = Chain(
     Dense(1, 10, tanh), # Input layer (1 feature) to hidden layer (10 neurons), tanh activation
@@ -11946,7 +12108,7 @@ optimizer = ADAM(0.01) # Adam optimizer with a learning rate of 0.01
 println("\nLoss function and optimizer defined.")
 
 
-# 3. Train the Network
+# Train the Network
 num_epochs = 200
 
 println("\nTraining the neural network for $(num_epochs) epochs...")
@@ -11977,7 +12139,7 @@ plot_loss = plot(training_losses,
 display(plot_loss);
 
 
-# 4. Make Predictions and Visualize Results
+# Make Predictions and Visualize Results
 
 # Create a range of new X values for prediction
 X_test = collect(range(-5.0, stop=5.0, length=200))
@@ -12007,7 +12169,7 @@ println("\nInterpretation: The blue line shows the neural network's learned rela
 ##### Bayesian Neural Net (BNN)
  
 ```{julia}
-# 1. Generate Synthetic Data
+#  Generate Synthetic Data
 num_samples = 100
 num_features = 1 # Simple 1D input
 
@@ -12031,7 +12193,7 @@ scatter_plot = scatter(X_data[:,1], y_data,
 display(scatter_plot);
 
 
-# 2. Define the Bayesian Neural Network Model
+#  Define the Bayesian Neural Network Model
 @model function bnn_regression(X, y, num_hidden_nodes, num_output_nodes)
     num_samples, num_features = size(X)
 
@@ -12071,7 +12233,7 @@ model = bnn_regression(X_data, y_data, num_hidden_nodes, num_output_nodes);
 println("Bayesian Neural Network model defined with $(num_features) input features, $(num_hidden_nodes) hidden nodes, and $(num_output_nodes) output node.")
 
 
-# 3. Sample from the Posterior Distribution
+# Sample from the Posterior Distribution
 println("\nSampling from posterior (this may take a while for BNNs!)... Using NUTS sampler.")
 chain = sample(model, NUTS(0.65), 1000, 2); # 1000 samples per chain, 2 chains
 
@@ -12079,7 +12241,7 @@ chain = sample(model, NUTS(0.65), 1000, 2); # 1000 samples per chain, 2 chains
 display(chain)
 
 
-# 4. Make Predictions and Visualize Uncertainty
+#   Make Predictions and Visualize Uncertainty
 
 # Create a range of new X values for prediction
 X_test = collect(range(-5.0, stop=5.0, length=200)) # 200 points for smooth prediction line
@@ -13070,6 +13232,1731 @@ end
 
 ```
 
+
+## SOA Application: the snow crab assessment
+
+Here, we bringing together a lot of the above topics with a real-world application: the snow crab stock assessment. We will progress through various approaches to arrive upon the state of the art (SOA) in what is currently possible/useful. 
+
+
+### Introduction to the problem
+
+The core challenge in most (all?) stock assessments is tuning the limited resources and time required to sample a very large spatiotemporal domain, often with poorly defined spatial bounds and imperfect tools prone to wear and tear, in order to obtain a representation of an unobservable but real (*latent*) process(es) which are able to inform upon the status of a
+species! In the snow crab survey, there is a high station density relative most other directed surveys, with about 400 stations being visited annually, and taking up to four months to complete. The spatial domain of the snow crab assessment is approximately 109,120 $km^{2}$ which means that each station, on average, is representing 273 $km^{2}$! The problem is that each station samples only 0.0039 $km^{2}$; a ratio of 1:70,000. Similarly, in terms of time, a station is sampled for on
+average about 5 minutes but it is supposed to represent a whole year (525,600 minutes); a ratio of 1:105,120. In terms of space-time units, this is a ratio of $1:7.36\times10^{9}$, or 1 part in 10 billion! If the ocean bottom environment were "well mixed" (homogenous chemostat) then just a few samples would suffice. Unfortunately it is not, and so this rather sparse sampling of the ocean forces us to make assumptions, and
+the estimation of any feature of interest becomes a balance between the information gained by sampling intensity, that is, precise (low variability) and accurate (unbiased) estimates *vs.* the costs in resources and time associated with obtaining the information.
+
+
+### Factorial model
+
+Ignore everything as much as possible by having a great survey design and hope for the best. 
+
+In fisheries assessments, a survey's *experimental design* encodes these assumptions and as such are used *religiously* as a basis for aggregation of samples across space. Advice on stock status is usually demanded on an annual basis for some arbitrarily determined administrative spatial areas (herein, *areal units* or *AUs*). These AUs are usually associated with historical precedents relating to access and allocation and/or attempts to rationalize sampling based upon some additional information. Sampling strategies of such AUs can range from completely random sampling in the absence of additional information, to some form of stratified random design (see also, Appendix 1). In the latter, samples are chosen randomly from AUs that are characterized, *a priori*, by *informative factors*. Often, depth is the main consideration. Analysis of (co)variance (AN(C)OVA) is a common application of such stratification, numerically *blocking* variability of such *informative factors* that are are not the focus of the study (in an attempt to be more cost-effective). The lower the variability within AUs (relative to between-AU variability) of the focal variable, the more "successfully" stratification has controlled for these "nuisance" effects.
+
+The *hope* is that a sample within an AU is representative of the AU (*i.e*., "well mixed" inside AUs). If such nuisance factors were slow changing (e.g., depth changes due to tectonic processes) or very fast changing (e.g., biochemical nutrient levels due to bacterial re-mineralization) relative to the time scale of the biological feature of interest (abundance change due to population dynamics), then this may be a useful assumption and approximation. The problem of course is that these nuisance factors change at space-time scales that are similar to the feature of interest which makes samples not always representative of the area that they are supposed to represent. This can cause poor precision (elevated variability) and poor accuracy (bias). As the number of nuisance factors increase, the number of AUs required to adequately block out such factors, statistically in the sense of classical ANOVA, increases to non-viable levels (in terms of required time and resources). This increase is exponential in terms of covariates, as more than one sample is required in each covariate block and in the case of two spatial dimensions, the number of units increases by a factor of two relative to any linear reduction of scale and with the addition of time, by an additional factor or more depending upon if seasonal and or diurnal discrimination is required.
+
+For example, when the informative features are dynamic, their relevance in static AUs can cause a mismatch with the presumed factors of importance. That is, there can be spatial and/or temporal *aliasing* (sometimes heuristically referred to as upscaling and downscaling issues) in that a sample is taken at a very different temperature (for example) or time of year than the overall average temperature of the areal unit that it is supposed to represent. In the snow crab survey, the sampling period spans over four months during which environmental conditions on the surface range from summer conditions to winter conditions. This blocking or *factorial* approach, only crudely blocks out the influence of a handful of these extraneous factors (in the example, only depth) and otherwise ignores them as *nuisance* factors, as they are usually not even measured. Herein, we will refer to this approach of applying a *static* experimental design as a *Cartesian* perspective. This *Cartesian perspective* dominates in stock assessments and fisheries-related literature in general, and troubling for reasons we will see below.
+
+
+
+Bottom line: bias in observations exist due to numerous factors. An assumption of random sampling is not justified. A model-based solution is necessary to begin to separate out the various forms of bias and randomness and obtain a more coherent view of processes and states.
+
+
+### Mixed effects model
+
+Assume time is fixed (year) and the rest is random unstructured IID.
+
+In reality, these nuisance factors are, actually highly informative and facilitate understanding the focal process(es) of interest. If carefully measured and treated, they can support more precise and accurate predictions. Recall, that in the case of snow crab, sampling is 1 part in 10 billion. Additional information helps to improve the scale of this sampling. Further, when they operate on spatiotemporal scales similar to those of the focal process(es) they can become highly influential such that ignoring them can cause poor precision and accuracy. As such, in the snow crab assessment, we embrace these factors rather than try to ignore all the variability in the processes that influence biota; herein we will refer to this as *ecosystem variability*. Examples of *ecosystem variability* in the marine context include the interactions of organisms with variations in ambient temperatures, light levels, pH, redox potential, salinity, food/nutrient availability, shelter space, predator abundance, disease prevalence, etc. Characterizing *ecosystem variability* is indeed difficult and time-consuming due to their numerous and interacting nature; however, as they, by definition, directly and indirectly influence a population's status, they cannot and should not be ignored. This is especially the case if this information pre-exists or is cheaper to sample extensively than the population density.
+
+Indeed, this *ecosystem variability* induces something very important: complex spatiotemporal autocorrelations in the abundance of the organism of interest. As stated by *Tobler's First law of geography*: *everything is related to everything else, but near things are more related than distant things* (Tobler 1970). If it were not the case, then everywhere we look would be completely chaotic and discontinuous, without localized areas of homogeneity. Similar arguments can be made for time. As such, experimental design must pay careful attention to *ecosystem variability* and the spatiotemporal autocorrelation that they induce. If the strategy is to "block out" nuisance factors, then each such AU must also be independent of each other, that is, without spatial (and temporal) autocorrelation. If a survey's experimental design is inadequate to guarantee such independence between AUs, then an appropriate spatiotemporal model can be used to attempt to rectify these biases and begin the process of (1) iteratively improving the experimental design and/or (2) improving the data collection required to analytically correct any biases induced by *ecosystem variability.* This point of view, we will herein refer to as a *Lagrangian* perspective, one that perceives AUs as being more fluid in definition than the static *Cartesian* view identified previously.
+
+In hydrodynamically complex areas such as NAFO Statistical Division 4VWX (Maritimes Region of Atlantic Canada) where a number of oceanic currents converge and there has also been ongoing rapid climate change and historically significant and rapid ecological change, the influence of *ecosystem variability* can not be safely ignored. Snow crab surveys, initially in the mid-1990s were exploratory and occurred in near-shore areas of known fishing activity. Surveys rapidly expanded to shelf-wide scales when it became evident that their spatial distribution was much larger and more heterogeneous than previously understood. This expansion of the survey only stabilized in the early 2000s. As such, spatial bias exists, precluding any simple analysis or naive aggregation scheme. Additional bias is also possible with the use of a new fishing vessel in 2004 and again in 2014. Further, in the southern-most area of snow crab distribution (Crab fishing area 4X), trawl survey coverage has been historically sporadic but have stabilized since 2004 (with the exception of 2014).
+
+
+### GP simple (aks, Kriging with/without external drift)
+
+Assume time is fixed (year) and the rest is random structured covariance.
+
+Historically, the statistical approach used to aggregate/integrate sampled observations was kriging (Biron et al. 1997), a method of data interpolation that borrows from the information found in the manner in which variability changes with distance from a given location (spatial covariance/autocorrelation; Cressie 1993). The optimal survey design for this approach is generally considered to be a uniform grid. To this end, the snow crab survey locations were randomly chosen locations in a 10  10 minute areal grid (Biron et al. 1997). The rationale for the choice grid size is not clear as 10 minutes in longitude is not the same distance as 10 minutes in latitude, and also the distance of 10 minutes in longitude varies with latitude. This renders each sampling grid unequal in surface area and therefore an unequal influence upon the integration in space. Sampling within each such grid is/was also pseudo-random at best. This is because many locations are not directly accessible to trawls. The substrate in Maritimes Region is notoriously rugged, ragged, rocky with deep trenches in many areas; features that do not permit fishing nets to pass unharmed or force the nets to become part of the substrate. There was, therefore, bias introduced in bottom type selection, one that preferred trawlable locations, these locations also tend to be uniform depths, softer, gravel or mud substrates that coincide with preferred snow habitats. This resulted in preferential sampling of deeper locations, colder temperatures, and very different species associations.
+
+Survey locations are clustered in complex ways due to the historicity of fisheries management designations of fishing areas, number of licenses and quotas, and the industry funded nature of the survey with varying levels of contributions. Ultimately, this resulted in aggregations of survey stations in core fishing areas, no sampling in non-core areas, again introducing bias towards areas of snow crab habitat (Figure). Indeed, sampling of locations known to be ephemeral or unlikely to carry snow crab were considered by many in industry to be a waste of their funding. Even to this day, we still do not know the full limits of their spatial distribution and movement due to operational and logistical constraints (survey trawls cannot reasonably go beyond 350 m depth), and instead focus upon the locations that are accessible to the fishery that have their own depth, distance and operational constraints.
+
+Currently, sampling is as extensive and intensive as possible, limited by trawl-accessible depths (350 m), to permit an objective determination of the spatial bounds of the snow crab population; information that must be known if reliable estimates of biomass and population structure (e.g., size, sex, maturity) are to be made. The spatial distribution of snow crab is quite dynamic and so can rapidly shift to areas where they are not "traditionally" found. In addition, the distributional patterns of immature, soft-shelled, very old and female crabs do not correspond completely to those of legal size males. The former are considered to be less competitive and more susceptible to predation (Hooper 1986) and usually observed in environments or substrates with greater cover (gravel, rocks; Comeau et al. 1998). Sampling that focused upon only those areas where large hard-shelled males occur in high frequency would preclude the reliable estimation of the relative abundance of these other important segments of the crab population.
+
+
+### GPs with structure
+
+Many kinds of structure exist and can be approximated. The more one tries to be realistic, the problem size becomes larger. From the above, we can now focus upon the most performant approaches: namely sparse GPs with inducing points.  
+
+Developing a general framework to explore various models of increasing complexity to handle measurement error, periodic dynamics, and spatial dependencies.
+
+Gaussian Processes (GPs) are useful non-parametric models that can address these features, but their computational cost scales cubically with the number of data points ($O(N^3)$) for inference, making them impractical for large datasets. **Sparse Gaussian Processes** address this limitation by approximating the full GP, typically reducing the complexity to $O(N M^2)$ or $O(M^3)$ (where M is the number of inducing points or features, and $M \ll N$).
+
+Both Random Fourier Features (RFF) and Fully Independent Training Conditional (FITC) are methods used to make Gaussian Processes (GPs) computationally tractable for large datasets, but they achieve this sparsification through fundamentally different approaches.
+
+
+Key Differences Summarized:
+
+Feature
+
+- Random Fourier Features (RFF)
+- Fully Independent Training Conditional (FITC)
+
+
+Approach:
+- Approximates the kernel function via feature map.
+- Approximates the posterior distribution via inducing points.
+
+Sparsity Source:
+
+-	Finite set of random basis functions.
+- Small set of judiciously chosen inducing points.
+
+Computational Cost
+- $O(N M^2)$$O(N M^2)$ (often simpler constants).
+- $O(N M^2 + M^3)$$O(N M^2 + M^3)$ (with $M$$M$ inducing points).
+
+Interpretation:
+- GP as a linear model in a random feature space.
+- GP conditioned on a smaller set of latent variables.
+
+Implementation:
+- Relatively direct, defines a feature mapping $\phi(x)$$\phi(x)$.
+- Requires managing inducing points and their optimization.
+
+
+In essence, RFF creates a fixed, low-dimensional representation of the input space that approximates the kernel, turning GP inference into a linear problem.
+
+FITC, on the other hand, selects a few representative data points (inducing points) to capture the essence of the GP's behavior, simplifying the covariance structure directly. Both are powerful tools for scaling GPs to larger datasets, each with its own strengths and weaknesses depending on the specific application and data characteristics.
+
+
+
+#### V0: Base model - Dense Kernel Matrix Spatiotemporal GP
+
+A dense kernel matrix-based Gaussian Process approach to spatiotemporal modelling with a dependent variable Y, spatial covariate Z, spatiotemporal covariates U1, U2, U3 and locations Xlon, Xlat and time T, where T has an annual process and a seasonal harmonic process and observation error E. Space and Time follows a separable covariance structure (Matern). Use a non-centered parameterization for Y and all latent covariates. A 'non-centered parameterization' (e.g., `U1_offset ~ Normal(0, 1)` followed by `U1_true = mean + offset * std`) helps hierarchical Bayesian models as it decouples the geometry of the prior from the likelihood, significantly reducing 'funnel' geometries that often cause the NUTS sampler to diverge or exhibit low effective sample sizes.
+
+ 
+Problem: expressive but very slow, really slow
+
+
+```{julia}
+
+@model function model_v0_dense_gp(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+
+    # --- Priors ---
+    sigma_y ~ Exponential(1.0)
+    sigma_u ~ filldist(Exponential(0.5), 3)
+
+    u1_off ~ filldist(Normal(0, 1), N)
+    u2_off ~ filldist(Normal(0, 1), N)
+    u3_off ~ filldist(Normal(0, 1), N)
+
+    u1_true = mean(u1_obs) .+ u1_off .* std(u1_obs)
+    u2_true = mean(u2_obs) .+ u2_off .* std(u2_obs)
+    u3_true = mean(u3_obs) .+ u3_off .* std(u3_obs)
+
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    sigma_alpha ~ Exponential(0.1)
+    alpha_raw ~ filldist(Normal(0, 1), T_unique)
+    alpha_t = cumsum(alpha_raw .* sigma_alpha)
+    trend = alpha_t[Int.(coords_time[:,1])]
+
+    # Spatiotemporal GP (Separable)
+    ls_s ~ filldist(Gamma(2, 2), D_s)
+    ls_t ~ Gamma(2, 2)
+    sigma_f ~ Exponential(1.0)
+
+    # Correcting Kernel Transformations for ARD
+    # Spatial kernel (ARD): use ARDTransform with the inverse lengthscales
+    k_s = SqExponentialKernel() ∘ ARDTransform(inv.(ls_s))
+
+    # Temporal kernel: ensure coords_time is a vector for 1D kernel
+    k_t = SqExponentialKernel() ∘ ScaleTransform(inv(ls_t))
+
+    # Compute individual kernel matrices
+    K_s = kernelmatrix(k_s, RowVecs(coords_space))
+    K_t = kernelmatrix(k_t, vec(coords_time))
+
+    # Separable covariance structure
+    K = (sigma_f^2) .* K_s .* K_t
+
+    # Latent process realization
+    f ~ MvNormal(zeros(N), K + 1e-6*I)
+
+    beta_covs ~ filldist(Normal(0, 1), 4)
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_base .+ f, sigma_y^2 * I)
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+data = example_data( "complex_testdata", 50)
+
+model_v0 = model_v0_dense_gp(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time)
+chain_v0 = sample(model_v0, MH(), 100)
+display(describe(chain_v0))
+waic_v0 = compute_y_waic(model_v0, chain_v0)  # not reliable without convergence
+println("WAIC for V0: ", waic_v0)
+```
+
+#### V1: Nonseparable spatial covariance
+
+Using the base model V0 as the basis, extend it by having a non-separable anisotropic spatial process.
+
+This model extends V0 by using a non-separable anisotropic kernel for the spatiotemporal Gaussian Process. Instead of multiplying separate spatial and temporal kernels, a single kernel is applied to the combined spatiotemporal coordinates, allowing for complex interactions between space and time. Anisotropy is handled by using an ARD (Automatic Relevance Determination) kernel, assigning a unique lengthscale to each dimension (longitude, latitude, and time).
+
+```{julia}
+
+@model function model_v1_anisotropic_gp(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2) # Total dimensions for spatiotemporal coords
+
+    # --- Priors ---
+    sigma_y ~ Exponential(1.0)
+    sigma_u ~ filldist(Exponential(0.5), 3)
+
+    u1_off ~ filldist(Normal(0, 1), N)
+    u2_off ~ filldist(Normal(0, 1), N)
+    u3_off ~ filldist(Normal(0, 1), N)
+
+    u1_true = mean(u1_obs) .+ u1_off .* std(u1_obs)
+    u2_true = mean(u2_obs) .+ u2_off .* std(u2_obs)
+    u3_true = mean(u3_obs) .+ u3_off .* std(u3_obs)
+
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    sigma_alpha ~ Exponential(0.1)
+    alpha_raw ~ filldist(Normal(0, 1), T_unique)
+    alpha_t = cumsum(alpha_raw .* sigma_alpha)
+    trend = alpha_t[Int.(coords_time[:,1])]
+
+    # Spatiotemporal GP (Non-separable Anisotropic)
+    # Combine spatial and temporal coordinates
+    coords_st = hcat(coords_space, coords_time)
+
+    # Lengthscales for each dimension (2 for space, 1 for time)
+    ls_st ~ filldist(Gamma(2, 2), D_st)
+    sigma_f ~ Exponential(1.0)
+
+    # Anisotropic Spatiotemporal kernel
+    k_st = SqExponentialKernel() ∘ ARDTransform(inv.(ls_st))
+
+    # Compute the full spatiotemporal kernel matrix
+    K = (sigma_f^2) .* kernelmatrix(k_st, RowVecs(coords_st))
+
+    # Latent process realization
+    f ~ MvNormal(zeros(N), K + 1e-6*I)
+
+    beta_covs ~ filldist(Normal(0, 1), 4)
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_base .+ f, sigma_y^2 * I)
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+
+data = example_data( "complex_testdata", 50)
+
+model_v1 = model_v1_anisotropic_gp(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time)
+chain_v1 = sample(model_v1, MH(), 100) # Using MH sampler for demonstration, consider NUTS for better sampling
+display(describe(chain_v1))
+waic_v1 = compute_y_waic(model_v1, chain_v1)
+println("WAIC for V1: ", waic_v1)
+```
+
+#### V2: Fully Adaptive Random Fourier Features  (RFF)
+
+
+**Random Fourier Features (RFF)**, introduced by Rahimi and Recht (2007), provide a popular method for sparse GP approximation. The core idea is to approximate a shift-invariant kernel (like the Squared Exponential or Matérn kernel) using a finite-dimensional feature map.
+
+1.  **Bochner's Theorem**: This theorem states that any shift-invariant kernel can be expressed as the Fourier transform of a non-negative measure (spectral density).
+
+2.  **Monte Carlo Approximation**: Instead of integrating over the spectral density, RFF approximates it using Monte Carlo sampling. We sample random frequencies (or spectral weights) $W$ from the Fourier transform of the kernel's spectral density and random phases $b$ from a uniform distribution.
+
+3.  **Feature Map**: The original input data $x$ is then transformed into a higher-dimensional feature space using these random projections:
+    
+$$\phi(x) = \sqrt{\frac{2}{M}} \cos(x W + b)$$
+    
+where $M$ is the number of random features, $W$ is a $D \times M$ matrix of sampled frequencies (for $D$-dimensional input $x$), and $b$ is an $M$-dimensional vector of sampled phases.
+
+4.  **Linear Model**: Once transformed, the GP regression problem becomes equivalent to a Bayesian linear regression problem in this new feature space, where the original kernel $k(x, x')$ is approximated by $\phi(x)^T \phi(x')$. This transformation converts the non-linear GP into a computationally efficient linear model with $M$ features.
+
+**Advantages of RFF**:
+
+*   **Computational Efficiency**: Reduces complexity from $O(N^3)$ to $O(N M^2)$ (or $O(N D M)$ for feature map calculation and $O(M^3)$ for inversion), enabling GPs for larger datasets.
+
+*   **Simplicity**: Relatively straightforward to implement.
+
+*   **Direct Integration**: Easily integrated into probabilistic programming frameworks like Turing.jl by defining the feature map $\phi(x)$ and treating $\beta_{GP}$ as regression coefficients.
+
+An "adaptive" form of RFF where the spectral weights $W$ (or their scaling via lengthscales) and phases $b$ are treated as parameters to be learned by the model, allows the kernel's shape to adapt to the data rather than fixing it beforehand.
+
+
+Using the base model V1 as the basis:
+
+- Core Idea: RFF transforms the input data into a finite-dimensional feature space using random projections. This transformation allows the kernel function of the GP to be approximated as an inner product in this new feature space.
+
+- Theoretical Basis: It's rooted in Bochner's Theorem, which states that any shift-invariant kernel (like the squared exponential or Matérn) can be expressed as the Fourier transform of a non-negative measure (spectral density). RFF approximates this integral using Monte Carlo sampling of frequencies and phases.
+
+- Mechanism: It generates a fixed number of random basis functions (Fourier features) and then models the GP as a linear regression problem in the space spanned by these features. The hyperparameters of the GP (like lengthscales) often implicitly define the distribution from which these random features are drawn.
+
+- Computational Advantage: Reduces the computational complexity from $O(N^3)$$O(N^3)$ (for exact GPs) to $O(N M^2)$$O(N M^2)$ for training and $O(N D M)$$O(N D M)$ for feature mapping (where $N$$N$ is data points, $M$$M$ is features, $D$$D$ is input dimensions, and $M \ll N$$M \ll N$).
+
+- Adaptivity: In the models discussed (V1-V4), we use an "adaptive" RFF where the parameters defining these random features (like weights and phases or their scaling via lengthscales) are learned during inference, allowing the model to adapt the kernel's shape to the data.
+
+
+
+This model builds upon V1 by replacing the direct computation of the dense kernel matrix with an approximation using Random Fourier Features (RFF). The 'adaptive' aspect comes from treating the RFF projection weights `W` and offsets `b` as parameters within the Bayesian model, allowing the model to learn the spectral density of the kernel directly from the data. The latent GP `f` is then constructed as a linear combination of these learned features.
+
+
+```{julia}
+
+@model function model_v2_adaptive_rff(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff=50)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2) # Total dimensions for spatiotemporal coords
+
+    # --- Priors (similar to V1) ---
+    sigma_y ~ Exponential(1.0)
+    sigma_u ~ filldist(Exponential(0.5), 3)
+
+    u1_off ~ filldist(Normal(0, 1), N)
+    u2_off ~ filldist(Normal(0, 1), N)
+    u3_off ~ filldist(Normal(0, 1), N)
+
+    u1_true = mean(u1_obs) .+ u1_off .* std(u1_obs)
+    u2_true = mean(u2_obs) .+ u2_off .* std(u2_obs)
+    u3_true = mean(u3_obs) .+ u3_off .* std(u3_obs)
+
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    sigma_alpha ~ Exponential(0.1)
+    alpha_raw ~ filldist(Normal(0, 1), T_unique)
+    alpha_t = cumsum(alpha_raw .* sigma_alpha)
+    trend = alpha_t[Int.(coords_time[:,1])]
+
+    # Spatiotemporal GP using Adaptive RFF
+    coords_st = hcat(coords_space, coords_time)
+
+    # Adaptive RFF parameters
+    # W: projection weights (D_st x M_rff)
+    # Normal priors for W, reflecting the spectral density of SqExponential kernel
+    W_matrix ~ filldist(Normal(0, 1), D_st, M_rff)
+
+    # b: offsets (M_rff) - Uniform distribution for phases
+    b ~ filldist(Uniform(0, 2pi), M_rff)
+
+    # Scale of the RFF features, analogous to sigma_f in the exact GP
+    sigma_f ~ Exponential(1.0)
+
+    # RFF coefficients
+    beta_rff ~ filldist(Normal(0, sigma_f^2), M_rff)
+
+    # Compute RFF features
+    Phi = rff_map(coords_st, W_matrix, b)
+
+    # Latent process realization as a linear model of RFF features
+    f = Phi * beta_rff
+
+    beta_covs ~ filldist(Normal(0, 1), 4)
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_base .+ f, sigma_y^2 * I)
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+M_rff_val = 50 # Number of RFF features
+model_v2 = model_v2_adaptive_rff(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff=M_rff_val)
+chain_v2 = sample(model_v2, MH(), 100) # Using MH sampler for demonstration
+display(describe(chain_v2))
+waic_v2 = compute_y_waic(model_v2, chain_v2)
+println("WAIC for V2: ", waic_v2)
+```
+
+#### V3: Nested Covariates
+Using the base model V2 as the basis, extend it by assuming that the covariates are nested functions such that: U1 = f1(Z1, Z2) and U2 = f2(Z1, Z2, U1) and  U3 = f3(Z1, Z2, U1).
+
+This model builds upon V2 by assuming that the covariates `U1`, `U2`, and `U3` are nested functions such that:
+*   `U1 = f1(Z_time, Z_space)`
+*   `U2 = f2(Z_time, Z_space, U1)`
+*   `U3 = f3(Z_time, Z_space, U1)`
+
+Here, `Z_time` is represented by `coords_time[:,1]` and `Z_space` by `z`. We model these functions as linear relationships with learned coefficients.
+
+```{julia}
+
+@model function model_v3_nested_covs(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff=50)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors --- General model parameters
+    sigma_y ~ Exponential(1.0)
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Covariate Parameters --- Coefficients for the functional relationships
+    # U1 = f1(Z_time, Z_space)
+    beta_u1_ztime ~ Normal(0, 1)
+    beta_u1_zspace ~ Normal(0, 1)
+
+    # U2 = f2(Z_time, Z_space, U1)
+    beta_u2_ztime ~ Normal(0, 1)
+    beta_u2_zspace ~ Normal(0, 1)
+    beta_u2_u1 ~ Normal(0, 1)
+
+    # U3 = f3(Z_time, Z_space, U1)
+    beta_u3_ztime ~ Normal(0, 1)
+    beta_u3_zspace ~ Normal(0, 1)
+    beta_u3_u1 ~ Normal(0, 1)
+
+    # --- Define Nested Latent Covariates --- Deterministic transformations
+    u1_true = beta_u1_ztime .* coords_time[:,1] .+ beta_u1_zspace .* z
+    u2_true = beta_u2_ztime .* coords_time[:,1] .+ beta_u2_zspace .* z .+ beta_u2_u1 .* u1_true
+    u3_true = beta_u3_ztime .* coords_time[:,1] .+ beta_u3_zspace .* z .+ beta_u3_u1 .* u1_true
+
+    # --- Trend and Seasonal Components (from V2) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    sigma_alpha ~ Exponential(0.1)
+    alpha_raw ~ filldist(Normal(0, 1), T_unique)
+    alpha_t = cumsum(alpha_raw .* sigma_alpha)
+    trend = alpha_t[Int.(coords_time[:,1])]
+
+    # --- Spatiotemporal GP using Adaptive RFF (from V2) ---
+    coords_st = hcat(coords_space, coords_time)
+    W_matrix ~ filldist(Normal(0, 1), D_st, M_rff)
+    b ~ filldist(Uniform(0, 2pi), M_rff)
+    sigma_f ~ Exponential(1.0)
+    beta_rff ~ filldist(Normal(0, sigma_f^2), M_rff)
+    Phi = rff_map(coords_st, W_matrix, b)
+    f = Phi * beta_rff
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4) # These betas are for u1_true, u2_true, u3_true, z
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_base .+ f, sigma_y^2 * I)
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I) # u1_obs informs u1_true
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I) # u2_obs informs u2_true
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I) # u3_obs informs u3_true
+end
+
+M_rff_val = 50 # Number of RFF features
+model_v3 = model_v3_nested_covs(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff=M_rff_val)
+chain_v3 = sample(model_v3, MH(), 100) # Using MH sampler for demonstration; consider NUTS for better sampling
+display(describe(chain_v3))
+waic_v3 = compute_y_waic(model_v3, chain_v3)
+println("WAIC for V3: ", waic_v3)
+```
+
+#### V4: Time varying intercept
+
+This model builds upon V3 by adding a latent temporal process (Random Walk Intercept), allowing the model to evolve over the temporal dimension. This is implemented by explicitly defining the `trend` component as a random walk.
+
+
+```{julia}
+
+@model function model_v4_time_varying_intercept(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff=50)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time)) # Number of unique time points for the random walk
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors --- General model parameters
+    sigma_y ~ Exponential(1.0)
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Covariate Parameters (from V3) ---
+    beta_u1_ztime ~ Normal(0, 1)
+    beta_u1_zspace ~ Normal(0, 1)
+
+    beta_u2_ztime ~ Normal(0, 1)
+    beta_u2_zspace ~ Normal(0, 1)
+    beta_u2_u1 ~ Normal(0, 1)
+
+    beta_u3_ztime ~ Normal(0, 1)
+    beta_u3_zspace ~ Normal(0, 1)
+    beta_u3_u1 ~ Normal(0, 1)
+
+    # --- Define Nested Latent Covariates (from V3) ---
+    u1_true = beta_u1_ztime .* coords_time[:,1] .+ beta_u1_zspace .* z
+    u2_true = beta_u2_ztime .* coords_time[:,1] .+ beta_u2_zspace .* z .+ beta_u2_u1 .* u1_true
+    u3_true = beta_u3_ztime .* coords_time[:,1] .+ beta_u3_zspace .* z .+ beta_u3_u1 .* u1_true
+
+    # --- Seasonal Component (from V3) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- Time-varying Intercept (Random Walk) ---
+    sigma_alpha ~ Exponential(0.1)
+    alpha = Vector{Real}(undef, T_unique)
+    alpha[1] ~ Normal(0, sigma_alpha)
+    for t in 2:T_unique
+        alpha[t] ~ Normal(alpha[t-1], sigma_alpha)
+    end
+    trend = alpha[Int.(coords_time[:,1])] # Map unique time points back to original time coordinates
+
+    # --- Spatiotemporal GP using Adaptive RFF (from V3) ---
+    coords_st = hcat(coords_space, coords_time)
+    W_matrix ~ filldist(Normal(0, 1), D_st, M_rff)
+    b ~ filldist(Uniform(0, 2pi), M_rff)
+    sigma_f ~ Exponential(1.0)
+    beta_rff ~ filldist(Normal(0, sigma_f^2), M_rff)
+    Phi = rff_map(coords_st, W_matrix, b)
+    f = Phi * beta_rff
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4) # These betas are for u1_true, u2_true, u3_true, z
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_base .+ f, sigma_y^2 * I)
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+M_rff_val = 50 # Number of RFF features
+model_v4 = model_v4_time_varying_intercept(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff=M_rff_val)
+chain_v4 = sample(model_v4, MH(), 100) # Using MH sampler for demonstration; consider NUTS for better sampling
+display(describe(chain_v4))
+waic_v4 = compute_y_waic(model_v4, chain_v4)
+println("WAIC for V4: ", waic_v4)
+```
+
+#### V5: Spatiotemporal Stochastic Volatility
+Using the base model V4 as the basis, extend it by treati5ng the observation noise not as a constant, but as a time-varying and space-varying process. Use a secondary RFF mapping to model the log-variance, allowing the model to account for heteroscedasticity.
+
+```{julia}
+
+This model builds upon V4 by treating the observation noise not as a constant, but as a time-varying and space-varying process. It uses a secondary RFF mapping to model the log-variance, allowing the model to account for heteroscedasticity.
+
+@model function model_v5_stochastic_volatility(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff=50, M_rff_sigma=20)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors --- General model parameters
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Covariate Parameters (from V4) ---
+    beta_u1_ztime ~ Normal(0, 1)
+    beta_u1_zspace ~ Normal(0, 1)
+
+    beta_u2_ztime ~ Normal(0, 1)
+    beta_u2_zspace ~ Normal(0, 1)
+    beta_u2_u1 ~ Normal(0, 1)
+
+    beta_u3_ztime ~ Normal(0, 1)
+    beta_u3_zspace ~ Normal(0, 1)
+    beta_u3_u1 ~ Normal(0, 1)
+
+    # --- Define Nested Latent Covariates (from V4) ---
+    u1_true = beta_u1_ztime .* coords_time[:,1] .+ beta_u1_zspace .* z
+    u2_true = beta_u2_ztime .* coords_time[:,1] .+ beta_u2_zspace .* z .+ beta_u2_u1 .* u1_true
+    u3_true = beta_u3_ztime .* coords_time[:,1] .+ beta_u3_zspace .* z .+ beta_u3_u1 .* u1_true
+
+    # --- Seasonal Component (from V4) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- Time-varying Intercept (Random Walk, from V4) ---
+    sigma_alpha ~ Exponential(0.1)
+    alpha = Vector{Real}(undef, T_unique)
+    alpha[1] ~ Normal(0, sigma_alpha)
+    for t in 2:T_unique
+        alpha[t] ~ Normal(alpha[t-1], sigma_alpha)
+    end
+    trend = alpha[Int.(coords_time[:,1])] # Map unique time points back to original time coordinates
+
+    # --- Spatiotemporal GP using Adaptive RFF (from V4) ---
+    coords_st = hcat(coords_space, coords_time)
+    W_matrix ~ filldist(Normal(0, 1), D_st, M_rff)
+    b ~ filldist(Uniform(0, 2pi), M_rff)
+    sigma_f ~ Exponential(1.0)
+    beta_rff ~ filldist(Normal(0, sigma_f^2), M_rff)
+    Phi = rff_map(coords_st, W_matrix, b)
+    f = Phi * beta_rff
+
+    # --- Spatiotemporal Stochastic Volatility (New in V5) ---
+    # Secondary RFF mapping for log-variance
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0) # Scale for the log-variance GP
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+
+    Phi_sigma = rff_map(coords_st, W_sigma, b_sigma)
+    log_sigma_y = Phi_sigma * beta_rff_sigma # Latent log-variance process
+    sigma_y_process = exp.(log_sigma_y ./ 2) # Convert log-variance to standard deviation
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4) # These betas are for u1_true, u2_true, u3_true, z
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    # Use spatiotemporal sigma_y_process in the likelihood
+    y_obs ~ MvNormal(mu_base .+ f, Diagonal(sigma_y_process.^2))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+M_rff_val = 50 # Number of RFF features for mean GP
+M_rff_sigma_val = 20 # Number of RFF features for log-variance GP
+model_v5 = model_v5_stochastic_volatility(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff=M_rff_val, M_rff_sigma=M_rff_sigma_val)
+chain_v5 = sample(model_v5, MH(), 100) # Using MH sampler for demonstration; consider NUTS for better sampling
+display(describe(chain_v5))
+waic_v5 = compute_y_waic(model_v5, chain_v5)
+println("WAIC for V5: ", waic_v5)
+
+
+```
+
+#### V6:  Fully Independent Training Conditional (FITC)
+
+Using the base model V5 as the basis
+
+
+**Fully Independent Training Conditional (FITC)**, also known as the "sparse pseudo-input GP" or "Deterministic Training Conditional (DTC)", is another popular sparse GP approximation method. Instead of approximating the kernel function directly via feature maps, FITC introduces a set of **inducing points** $Z = \{z_1, \dots, z_M\}$ (where $M \ll N$). The key idea is to approximate the covariance between observed data points by conditioning on the values of the latent GP at these $M$ inducing points.
+
+The core approximation in FITC is that, given the inducing points, the observed data points are conditionally independent:
+$$p(f | X, Z) \approx p(f | f_Z, Z) = \prod_{i=1}^N p(f_i | f_Z, Z)$$
+This simplifies the covariance structure, making the inversion much faster.
+
+**FITC with AbstractGPs.jl**:
+
+`AbstractGPs.jl` and `KernelFunctions.jl` provide a powerful framework for defining kernels and exact Gaussian Processes. While `AbstractGPs.jl` itself primarily focuses on exact GP computations and composable kernel definitions, implementing sparse approximations like FITC or Sparse Variational GPs (SVGP) on top of it often involves:
+
+*   **Custom `FiniteGP` Types**: One might need to define custom `FiniteGP` types that incorporate inducing point logic.
+
+*   **Specialized Libraries**: More advanced sparse GP implementations, including FITC or SVGP, are often found in specialized libraries built upon `AbstractGPs.jl` (e.g., `GPs.jl` or other research-oriented packages) that handle the inducing point optimization and the approximate inference.
+
+*   **Manual Construction**: For a direct implementation, one would manually construct the approximate covariance matrix based on the inducing points and integrate this into the likelihood within a probabilistic programming framework.
+
+In the context of our RFF-based models, while we are not directly implementing FITC, the conceptual link lies in both methods aiming to reduce the computational burden of exact GPs by introducing approximations (either through a finite feature map in RFF or through a smaller set of inducing points in FITC). `AbstractGPs.jl` offers the expressive power to define the *exact kernel* that RFF aims to approximate or that FITC conditions upon, providing a solid theoretical foundation for both approaches.
+
+- Core Idea: FITC introduces a small set of inducing points ($M \ll N$$M \ll N$) that are not necessarily part of the training data. The key assumption is that, conditional on the values of the latent GP at these inducing points, the observed data points are conditionally independent.
+
+- Theoretical Basis: It's an approximation to the true GP posterior. Instead of approximating the kernel itself, it approximates the posterior distribution of the GP. The GP is effectively 'compressed' through these inducing points.
+
+- Mechanism: The covariance matrix calculations are simplified by only performing inversions involving the smaller $M \times M$$M \times M$ covariance matrix of the inducing points and their cross-covariances with the data. The inducing points act as a bottleneck for information flow.
+
+- Computational Advantage: Reduces computational complexity to $O(N M^2 + M^3)$$O(N M^2 + M^3)$.
+Inducing Point Optimization: A crucial aspect of FITC (and other inducing-point methods like Sparse Variational GPs) is the choice and optimization of the inducing point locations and possibly their values. These are often treated as hyperparameters to be learned or optimized.
+
+
+This model builds upon V5. However, instead of using Random Fourier Features for the main GP, it implements a **Fully Independent Training Conditional (FITC)** approximation. FITC uses a smaller set of *inducing points* to approximate the full GP, significantly reducing computational cost while aiming to preserve accuracy. The model retains the nested covariates, time-varying intercept, and spatiotemporal stochastic volatility from V5.
+ 
+
+```{julia}
+Fully Independent Training Conditional (FITC)
+
+# Helper function to generate inducing points (simple random sampling for now)
+function generate_inducing_points(coords_st, M_inducing, seed=42)
+    Random.seed!(seed)
+    N_data = size(coords_st, 1)
+    if M_inducing >= N_data
+        return coords_st # If M >= N, just use all data points (becomes exact GP)
+    end
+    indices = sample(1:N_data, M_inducing, replace=false)
+    return coords_st[indices, :]
+end
+
+
+@model function model_v6_fitc(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time, Z_inducing; period=12.0, M_rff_sigma=20)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+    M_inducing_val = size(Z_inducing, 1) # Number of inducing points
+
+    # --- Priors --- General model parameters
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Covariate Parameters (from V5) ---
+    beta_u1_ztime ~ Normal(0, 1)
+    beta_u1_zspace ~ Normal(0, 1)
+
+    beta_u2_ztime ~ Normal(0, 1)
+    beta_u2_zspace ~ Normal(0, 1)
+    beta_u2_u1 ~ Normal(0, 1)
+
+    beta_u3_ztime ~ Normal(0, 1)
+    beta_u3_zspace ~ Normal(0, 1)
+    beta_u3_u1 ~ Normal(0, 1)
+
+    # --- Define Nested Latent Covariates (from V5) ---
+    u1_true = beta_u1_ztime .* coords_time[:,1] .+ beta_u1_zspace .* z
+    u2_true = beta_u2_ztime .* coords_time[:,1] .+ beta_u2_zspace .* z .+ beta_u2_u1 .* u1_true
+    u3_true = beta_u3_ztime .* coords_time[:,1] .+ beta_u3_zspace .* z .+ beta_u3_u1 .* u1_true
+
+    # --- Seasonal Component (from V5) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- Time-varying Intercept (Random Walk, from V5) ---
+    sigma_alpha ~ Exponential(0.1)
+    alpha = Vector{Real}(undef, T_unique)
+    alpha[1] ~ Normal(0, sigma_alpha)
+    for t in 2:T_unique
+        alpha[t] ~ Normal(alpha[t-1], sigma_alpha)
+    end
+    trend = alpha[Int.(coords_time[:,1])]
+
+    # --- Spatiotemporal GP using FITC (New in V6) ---
+    coords_st = hcat(coords_space, coords_time)
+
+    # Lengthscales for each dimension (2 for space, 1 for time)
+    ls_st ~ filldist(Gamma(2, 2), D_st)
+    sigma_f ~ Exponential(1.0)
+
+    # Anisotropic Spatiotemporal kernel
+    k_st = SqExponentialKernel() ∘ ARDTransform(inv.(ls_st))
+
+    # Compute kernel matrices for FITC approximation
+    # Add jitter for numerical stability to K_ZZ
+    K_ZZ = kernelmatrix(k_st, RowVecs(Z_inducing)) + 1e-6*I
+    K_XZ = kernelmatrix(k_st, RowVecs(coords_st), RowVecs(Z_inducing))
+    K_XX_diag = diag(kernelmatrix(k_st, RowVecs(coords_st)))
+
+    # Latent values at inducing points
+    u_latent ~ MvNormal(zeros(M_inducing_val), K_ZZ)
+
+    # Mean function of GP at observed points, conditioned on u_latent
+    mean_f = K_XZ * (K_ZZ \ u_latent)
+
+    # Diagonal covariance for FITC
+    cov_f_diag = K_XX_diag - diag(K_XZ * (K_ZZ \ K_XZ'))
+
+    # Ensure positive definite covariance (add small jitter if necessary)
+    f ~ MvNormal(mean_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N)))
+
+    # --- Spatiotemporal Stochastic Volatility (from V5) ---
+    # Secondary RFF mapping for log-variance
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0) # Scale for the log-variance GP
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+
+    Phi_sigma = rff_map(coords_st, W_sigma, b_sigma)
+    log_sigma_y = Phi_sigma * beta_rff_sigma # Latent log-variance process
+    sigma_y_process = exp.(log_sigma_y ./ 2) # Convert log-variance to standard deviation
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4) # These betas are for u1_true, u2_true, u3_true, z
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    # Use spatiotemporal sigma_y_process in the likelihood
+    y_obs ~ MvNormal(mu_base .+ f, Diagonal(sigma_y_process.^2))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+# Generate inducing points for V6
+D_s_v6 = size(data.coords_space, 2)
+D_st_v6 = D_s_v6 + size(data.coords_time, 2)
+coords_st_v6 = hcat(data.coords_space, data.coords_time)
+M_inducing_val_v6 = 10 # Number of inducing points (e.g., 10-20% of N)
+Z_inducing_v6 = generate_inducing_points(coords_st_v6, M_inducing_val_v6)
+
+# Sample Model V6 with NUTS
+M_rff_sigma_val_v6 = 20 # Number of RFF features for log-variance GP
+model_v6 = model_v6_fitc(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time, Z_inducing_v6; M_rff_sigma=M_rff_sigma_val_v6)
+
+# Using NUTS sampler for better convergence; consider increasing iterations for production runs
+chain_v6 = sample(model_v6, NUTS(), 500) # Increased samples from 100 to 500
+display(describe(chain_v6))
+waic_v6 = compute_y_waic(model_v6, chain_v6)
+println("WAIC for V6: ", waic_v6)
+
+println("\nNote: For robust results, consider increasing the number of samples (e.g., 1000-2000 or more) and tuning the NUTS parameters (e.g., `adapts=num_adapts_steps`) if convergence issues persist.")
+
+
+```
+
+#### V7: AbstractGPs sparse functional form based on V6.  
+ 
+This model builds upon V6 by leveraging `AbstractGPs.jl`'s functional form to define the sparse Gaussian Process. While the underlying mathematical approximation remains that of FITC (using inducing points and a diagonal approximation for the conditional variance), this version uses `AbstractGPs.jl`'s `GP` object and conditioning syntax to represent the GP, making the code more abstract and potentially more extensible within the `AbstractGPs.jl` ecosystem. We continue to use the NUTS sampler from V6 to handle model complexity and improve convergence.
+
+```{julia}
+@model function model_v7_fitc_abstractgps(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_inducing_val=10, M_rff_u=30)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors --- General model parameters
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Latent Covariates (using RFF for non-linearity) ---
+    coords_tz = hcat(coords_time, z)
+
+    # U1 = f1(coords_time, Z)
+    D_u1_input = size(coords_tz, 2)
+    W_u1 ~ filldist(Normal(0, 1), D_u1_input, M_rff_u)
+    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u1 ~ Exponential(1.0)
+    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
+    Phi_u1 = rff_map(coords_tz, W_u1, b_u1)
+    u1_true = Phi_u1 * beta_rff_u1
+
+    # U2 = f2(coords_time, Z, U1)
+    coords_tz_u1 = hcat(coords_time, z, u1_true)
+    D_u2_input = size(coords_tz_u1, 2)
+    W_u2 ~ filldist(Normal(0, 1), D_u2_input, M_rff_u)
+    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u2 ~ Exponential(1.0)
+    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
+    Phi_u2 = rff_map(coords_tz_u1, W_u2, b_u2)
+    u2_true = Phi_u2 * beta_rff_u2
+
+    # U3 = f3(coords_time, Z, U1)
+    # (Note: inputs are the same as U2, but U3 is a separate function)
+    D_u3_input = size(coords_tz_u1, 2)
+    W_u3 ~ filldist(Normal(0, 1), D_u3_input, M_rff_u)
+    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u3 ~ Exponential(1.0)
+    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
+    Phi_u3 = rff_map(coords_tz_u1, W_u3, b_u3)
+    u3_true = Phi_u3 * beta_rff_u3
+
+    # --- Seasonal Component (from V6) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- Time-varying Intercept (Random Walk, from V6) ---
+    sigma_alpha ~ Exponential(0.1)
+    alpha = Vector{Real}(undef, T_unique)
+    alpha[1] ~ Normal(0, sigma_alpha)
+    for t in 2:T_unique
+        alpha[t] ~ Normal(alpha[t-1], sigma_alpha)
+    end
+    trend = alpha[Int.(coords_time[:,1])]
+
+    # --- Spatiotemporal GP using AbstractGPs for FITC (from V7) ---
+    coords_st_orig = hcat(coords_space, coords_time) # N x D_st
+
+    # Optimized Inducing Points: Z_inducing are now parameters with a prior
+    # Initialize Z_inducing as an array of unknown values
+    Z_inducing = Matrix{Float64}(undef, M_inducing_val, D_st)
+
+    # Prior based on the observed data's mean and a scaled standard deviation for exploration.
+    mu_coords_st = mean(coords_st_orig, dims=1) # This is a 1xDst matrix
+    std_coords_st = std(coords_st_orig, dims=1) # This is a 1xDst matrix
+
+    # Assign priors column-wise to Z_inducing
+    for j in 1:D_st
+        # Each column of Z_inducing consists of M_inducing_val i.i.d. samples
+        # from a Normal distribution specific to that j-th dimension.
+        # Use mu_coords_st[j] and std_coords_st[j] which are scalars after indexing into 1xDst matrices
+        Z_inducing[:, j] ~ filldist(Normal(mu_coords_st[j], 2.0 * std_coords_st[j]), M_inducing_val)
+    end
+
+    # Lengthscales for each dimension (2 for space, 1 for time)
+    ls_st ~ filldist(Gamma(2, 2), D_st)
+    sigma_f ~ Exponential(1.0)
+
+    # Anisotropic Spatiotemporal kernel
+    k_st = SqExponentialKernel() ∘ ARDTransform(inv.(ls_st))
+
+    # Define the base GP using AbstractGPs.jl
+    g_base = GP(sigma_f^2 * k_st)
+
+    # Use RowVecs for coordinates
+    Z_inducing_vecs = RowVecs(Z_inducing) 
+    coords_st_vecs = RowVecs(coords_st_orig)
+
+    # Extract kernel matrices using AbstractGPs.jl
+    K_ZZ = cov(g_base(Z_inducing_vecs)) + 1e-6*I
+    K_XZ = cov(g_base(coords_st_vecs), g_base(Z_inducing_vecs))
+    K_XX_diag = diag(cov(g_base(coords_st_vecs)))
+
+    # Latent values at inducing points
+    u_latent ~ MvNormal(zeros(M_inducing_val), K_ZZ)
+
+    # Compute conditional mean and diagonal covariance using FITC formulas
+    m_f = K_XZ * (K_ZZ \ u_latent)
+    cov_f_diag = K_XX_diag - diag(K_XZ * (K_ZZ \ K_XZ'))
+
+    # Ensure positive definite covariance (add small jitter if necessary)
+    f ~ MvNormal(m_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N)))
+
+    # --- Spatiotemporal Stochastic Volatility (from V6) ---
+    # Secondary RFF mapping for log-variance
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0) # Scale for the log-variance GP
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+
+    Phi_sigma = rff_map(coords_st_orig, W_sigma, b_sigma)
+    log_sigma_y = Phi_sigma * beta_rff_sigma # Latent log-variance process
+    sigma_y_process = exp.(log_sigma_y ./ 2) # Convert log-variance to standard deviation
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4) # These betas are for u1_true, u2_true, u3_true, z
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    # Use spatiotemporal sigma_y_process in the likelihood
+    y_obs ~ MvNormal(mu_base .+ f, Diagonal(sigma_y_process.^2))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+# The Z_inducing_v7 variable is no longer passed as an argument as it is now learned within the model.
+D_s_v7 = size(data.coords_space, 2)
+D_st_v7 = D_s_v7 + size(data.coords_time, 2)
+coords_st_v7 = hcat(data.coords_space, data.coords_time)
+M_inducing_val_v7 = 10 # Number of inducing points (e.g., 10-20% of N)
+
+# Sample Model V7 with NUTS
+M_rff_sigma_val_v7 = 20 # Number of RFF features for log-variance GP
+model_v7 = model_v7_fitc_abstractgps(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v7, M_inducing_val=M_inducing_val_v7)
+
+# Using NUTS sampler for better convergence; consider increasing iterations for production runs
+chain_v7 = sample(model_v7, NUTS(), 500) 
+display(describe(chain_v7))
+waic_v7 = compute_y_waic(model_v7, chain_v7)
+println("WAIC for V7: ", waic_v7)
+
+
+```
+
+#### V8: Sparse form (FITC) with nonlinearity
+
+For each u_true (e.g., u1_true), define a new set of RFF parameters (W_u1, b_u1, beta_rff_u1) and use rff_map on its inputs (e.g., hcat(coords_time, z)) to generate a non-linear u1_base. Then, u1_true would be this RFF output, possibly combined with a linear component if desired.
+This will add more parameters but can capture much richer functional forms.
+
+
+```{julia}
+
+@model function model_v8_fitc_abstractgps_nonlinear(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_inducing_val=10, M_rff_u=30)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors --- General model parameters
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Latent Covariates (using RFF for non-linearity) ---
+    coords_tz = hcat(coords_time, z)
+
+    # U1 = f1(coords_time, Z)
+    D_u1_input = size(coords_tz, 2)
+    W_u1 ~ filldist(Normal(0, 1), D_u1_input, M_rff_u)
+    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u1 ~ Exponential(1.0)
+    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
+    Phi_u1 = rff_map(coords_tz, W_u1, b_u1)
+    u1_true = Phi_u1 * beta_rff_u1
+
+    # U2 = f2(coords_time, Z, U1)
+    coords_tz_u1 = hcat(coords_time, z, u1_true)
+    D_u2_input = size(coords_tz_u1, 2)
+    W_u2 ~ filldist(Normal(0, 1), D_u2_input, M_rff_u)
+    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u2 ~ Exponential(1.0)
+    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
+    Phi_u2 = rff_map(coords_tz_u1, W_u2, b_u2)
+    u2_true = Phi_u2 * beta_rff_u2
+
+    # U3 = f3(coords_time, Z, U1)
+    # (Note: inputs are the same as U2, but U3 is a separate function)
+    D_u3_input = size(coords_tz_u1, 2)
+    W_u3 ~ filldist(Normal(0, 1), D_u3_input, M_rff_u)
+    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u3 ~ Exponential(1.0)
+    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
+    Phi_u3 = rff_map(coords_tz_u1, W_u3, b_u3)
+    u3_true = Phi_u3 * beta_rff_u3
+
+    # --- Seasonal Component (from V6) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- Time-varying Intercept (Random Walk, from V6) ---
+    sigma_alpha ~ Exponential(0.1)
+    alpha = Vector{Real}(undef, T_unique)
+    alpha[1] ~ Normal(0, sigma_alpha)
+    for t in 2:T_unique
+        alpha[t] ~ Normal(alpha[t-1], sigma_alpha)
+    end
+    trend = alpha[Int.(coords_time[:,1])]
+
+    # --- Spatiotemporal GP using AbstractGPs for FITC (from V7) ---
+    coords_st_orig = hcat(coords_space, coords_time) # N x D_st
+
+    # Optimized Inducing Points: Z_inducing are now parameters with a prior
+    # Initialize Z_inducing as an array of unknown values
+    Z_inducing = Matrix{Float64}(undef, M_inducing_val, D_st)
+
+    # Prior based on the observed data's mean and a scaled standard deviation for exploration.
+    mu_coords_st = mean(coords_st_orig, dims=1) # This is a 1xDst matrix
+    std_coords_st = std(coords_st_orig, dims=1) # This is a 1xDst matrix
+
+    # Assign priors column-wise to Z_inducing
+    for j in 1:D_st
+        # Each column of Z_inducing consists of M_inducing_val i.i.d. samples
+        # from a Normal distribution specific to that j-th dimension.
+        # Use mu_coords_st[j] and std_coords_st[j] which are scalars after indexing into 1xDst matrices
+        Z_inducing[:, j] ~ filldist(Normal(mu_coords_st[j], 2.0 * std_coords_st[j]), M_inducing_val)
+    end
+
+    # Lengthscales for each dimension (2 for space, 1 for time)
+    ls_st ~ filldist(Gamma(2, 2), D_st)
+    sigma_f ~ Exponential(1.0)
+
+    # Anisotropic Spatiotemporal kernel
+    k_st = SqExponentialKernel() ∘ ARDTransform(inv.(ls_st))
+
+    # Define the base GP using AbstractGPs.jl
+    g_base = GP(sigma_f^2 * k_st)
+
+    # Use RowVecs for coordinates
+    Z_inducing_vecs = RowVecs(Z_inducing) 
+    coords_st_vecs = RowVecs(coords_st_orig)
+
+    # Extract kernel matrices using AbstractGPs.jl
+    K_ZZ = cov(g_base(Z_inducing_vecs)) + 1e-6*I
+    K_XZ = cov(g_base(coords_st_vecs), g_base(Z_inducing_vecs))
+    K_XX_diag = diag(cov(g_base(coords_st_vecs)))
+
+    # Latent values at inducing points
+    u_latent ~ MvNormal(zeros(M_inducing_val), K_ZZ)
+
+    # Compute conditional mean and diagonal covariance using FITC formulas
+    m_f = K_XZ * (K_ZZ \ u_latent)
+    cov_f_diag = K_XX_diag - diag(K_XZ * (K_ZZ \ K_XZ'))
+
+    # Ensure positive definite covariance (add small jitter if necessary)
+    f ~ MvNormal(m_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N)))
+
+    # --- Spatiotemporal Stochastic Volatility (from V6) ---
+    # Secondary RFF mapping for log-variance
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0) # Scale for the log-variance GP
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+
+    Phi_sigma = rff_map(coords_st_orig, W_sigma, b_sigma)
+    log_sigma_y = Phi_sigma * beta_rff_sigma # Latent log-variance process
+    sigma_y_process = exp.(log_sigma_y ./ 2) # Convert log-variance to standard deviation
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4) # These betas are for u1_true, u2_true, u3_true, z
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    # Use spatiotemporal sigma_y_process in the likelihood
+    y_obs ~ MvNormal(mu_base .+ f, Diagonal(sigma_y_process.^2))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+# The Z_inducing_v8 variable is no longer passed as an argument as it is now learned within the model.
+D_s_v8 = size(data.coords_space, 2)
+D_st_v8 = D_s_v8 + size(data.coords_time, 2)
+coords_st_v8 = hcat(data.coords_space, data.coords_time)
+M_inducing_val_v8 = 10 # Number of inducing points (e.g., 10-20% of N)
+M_rff_u_val = 30 # Number of RFF features for nested covariates
+
+M_rff_sigma_val_v8 = 20 # Number of RFF features for log-variance GP
+model_v8 = model_v8_fitc_abstractgps_nonlinear(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v8, M_inducing_val=M_inducing_val_v8, M_rff_u=M_rff_u_val)
+
+# Using NUTS sampler for better convergence; consider increasing iterations for production runs
+chain_v8 = sample(model_v8, NUTS(), 500) 
+display(describe(chain_v8))
+waic_v8 = compute_y_waic(model_v8, chain_v8)
+println("WAIC for V8: ", waic_v8)
+
+
+```
+
+
+
+#### V9: A Gaussian Process Time Trend 
+
+A simple Random Walk can sometimes be too rigid. Model the latent alpha_t (the trend values at unique time points) using a 1D Gaussian Process with a suitable kernel (e.g., SqExponentialKernel or Matern32Kernel) over the unique time points. This offers more flexibility in capturing complex, smooth temporal trends than a simple random walk.
+ 
+Define a 1D GP g_trend = GP(sigma_alpha_gp^2 * k_trend) where k_trend is a kernel operating on 1:T_unique.
+Then, alpha ~ g_trend(1:T_unique).
+This replaces the alpha[t] ~ Normal(alpha[t-1], sigma_alpha) loop with a single GP prior. You would need to define hyperparameters for k_trend (e.g., ls_trend).
+These changes would increase the model's complexity but would likely lead to a more accurate representation of the underlying spatiotemporal dynamics, especially when combined with the robust NUTS sampler.
+
+
+```{julia}
+
+    @model function model_v9_gp_trend(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_inducing_val=10, M_rff_u=30)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors --- General model parameters
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Latent Covariates (using RFF for non-linearity) ---
+    coords_tz = hcat(coords_time, z)
+
+    # U1 = f1(coords_time, Z)
+    D_u1_input = size(coords_tz, 2)
+    W_u1 ~ filldist(Normal(0, 1), D_u1_input, M_rff_u)
+    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u1 ~ Exponential(1.0)
+    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
+    Phi_u1 = rff_map(coords_tz, W_u1, b_u1)
+    u1_true = Phi_u1 * beta_rff_u1
+
+    # U2 = f2(coords_time, Z, U1)
+    coords_tz_u1 = hcat(coords_time, z, u1_true)
+    D_u2_input = size(coords_tz_u1, 2)
+    W_u2 ~ filldist(Normal(0, 1), D_u2_input, M_rff_u)
+    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u2 ~ Exponential(1.0)
+    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
+    Phi_u2 = rff_map(coords_tz_u1, W_u2, b_u2)
+    u2_true = Phi_u2 * beta_rff_u2
+
+    # U3 = f3(coords_time, Z, U1)
+    # (Note: inputs are the same as U2, but U3 is a separate function)
+    D_u3_input = size(coords_tz_u1, 2)
+    W_u3 ~ filldist(Normal(0, 1), D_u3_input, M_rff_u)
+    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u3 ~ Exponential(1.0)
+    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
+    Phi_u3 = rff_map(coords_tz_u1, W_u3, b_u3)
+    u3_true = Phi_u3 * beta_rff_u3
+
+    # --- Seasonal Component (from V7) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- GP Trend (New in V9) ---
+    ls_trend ~ Gamma(2, 2)
+    sigma_trend ~ Exponential(0.5)
+
+    # Define a 1D GP for the trend
+    k_trend = SqExponentialKernel() ∘ ScaleTransform(inv(ls_trend))
+    g_trend = GP(sigma_trend^2 * k_trend)
+
+    # Get unique time points for the GP
+    unique_times = sort(unique(coords_time[:,1]))
+
+    # Sample alpha from the GP with jitter for numerical stability
+    alpha ~ g_trend(unique_times, 1e-1) # Increased jitter to 1e-1
+
+    # Map alpha back to original time coordinates
+    trend = alpha[indexin(coords_time[:,1], unique_times)]
+
+    # --- Spatiotemporal GP using AbstractGPs for FITC (from V7) ---
+    coords_st_orig = hcat(coords_space, coords_time) # N x D_st
+
+    # Optimized Inducing Points: Z_inducing are now parameters with a prior
+    # Initialize Z_inducing as an array of unknown values
+    Z_inducing = Matrix{Float64}(undef, M_inducing_val, D_st)
+
+    # Prior based on the observed data's mean and a scaled standard deviation for exploration.
+    mu_coords_st = mean(coords_st_orig, dims=1) # This is a 1xDst matrix
+    std_coords_st = std(coords_st_orig, dims=1) # This is a 1xDst matrix
+
+    # Assign priors column-wise to Z_inducing
+    for j in 1:D_st
+        # Each column of Z_inducing consists of M_inducing_val i.i.d. samples
+        # from a Normal distribution specific to that j-th dimension.
+        # Use mu_coords_st[j] and std_coords_st[j] which are scalars after indexing into 1xDst matrices
+        Z_inducing[:, j] ~ filldist(Normal(mu_coords_st[j], 2.0 * std_coords_st[j]), M_inducing_val)
+    end
+
+    # Lengthscales for each dimension (2 for space, 1 for time)
+    ls_st ~ filldist(Gamma(2, 2), D_st)
+    sigma_f ~ Exponential(1.0)
+
+    # Anisotropic Spatiotemporal kernel
+    k_st = SqExponentialKernel() ∘ ARDTransform(inv.(ls_st))
+
+    # Define the base GP using AbstractGPs.jl
+    g_base = GP(sigma_f^2 * k_st)
+
+    # Use RowVecs for coordinates
+    Z_inducing_vecs = RowVecs(Z_inducing)
+    coords_st_vecs = RowVecs(coords_st_orig)
+
+    # Extract kernel matrices using AbstractGPs.jl
+    K_ZZ = cov(g_base(Z_inducing_vecs)) + 1e-6*I
+    K_XZ = cov(g_base(coords_st_vecs), g_base(Z_inducing_vecs))
+    K_XX_diag = diag(cov(g_base(coords_st_vecs)))
+
+    # Latent values at inducing points
+    u_latent ~ MvNormal(zeros(M_inducing_val), K_ZZ)
+
+    # Compute conditional mean and diagonal covariance using FITC formulas
+    m_f = K_XZ * (K_ZZ \ u_latent)
+    cov_f_diag = K_XX_diag - diag(K_XZ * (K_ZZ \ K_XZ'))
+
+    # Ensure positive definite covariance (add small jitter if necessary)
+    f ~ MvNormal(m_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N)))
+
+    # --- Spatiotemporal Stochastic Volatility (from V7) ---
+    # Secondary RFF mapping for log-variance
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0) # Scale for the log-variance GP
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+
+    Phi_sigma = rff_map(coords_st_orig, W_sigma, b_sigma)
+    log_sigma_y = Phi_sigma * beta_rff_sigma # Latent log-variance process
+    sigma_y_process = exp.(log_sigma_y ./ 2) # Convert log-variance to standard deviation
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4) # These betas are for u1_true, u2_true, u3_true, z
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    # Use spatiotemporal sigma_y_process in the likelihood
+    y_obs ~ MvNormal(mu_base .+ f, Diagonal(sigma_y_process.^2))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+# The Z_inducing variable is learned within the model.
+D_s_v9 = size(data.coords_space, 2)
+D_st_v9 = D_s_v9 + size(data.coords_time, 2)
+coords_st_v9 = hcat(data.coords_space, data.coords_time)
+M_inducing_val_v9 = 10 # Number of inducing points
+M_rff_u_val_v9 = 30 # Number of RFF features for nested covariates
+M_rff_sigma_val_v9 = 20 # Number of RFF features for log-variance GP
+
+# Instantiate and sample Model V9 with NUTS
+model_v9 = model_v9_gp_trend(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v9, M_inducing_val=M_inducing_val_v9, M_rff_u=M_rff_u_val_v9)
+
+# Using NUTS sampler for better convergence; consider increasing iterations for production runs
+chain_v9 = sample(model_v9, NUTS(), 500) 
+display(describe(chain_v9))
+waic_v9 = compute_y_waic(model_v9, chain_v9)
+println("WAIC for V9: ", waic_v9)
+
+
+```
+
+#### V10 K-Means inducing points
+
+K-Means initialization for inducing points. The Z_inducing points will be pre-computed using K-Means clustering on your spatiotemporal data and then passed as fixed inputs to the model. This approach streamlines the sampling process by removing the inducing point locations as parameters to be learned, implicitly leveraging the data structure for their placement.
+
+
+```{julia}
+
+# using Clustering
+
+@model function model_v10_fixed_kmeans_fitc(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time, Z_inducing; period=12.0, M_rff_sigma=20, M_rff_u=30)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+    M_inducing_val = size(Z_inducing, 1)
+
+    # --- Priors --- General model parameters
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Latent Covariates (using RFF for non-linearity) ---
+    coords_tz = hcat(coords_time, z)
+
+    # U1 = f1(coords_time, Z)
+    D_u1_input = size(coords_tz, 2)
+    W_u1 ~ filldist(Normal(0, 1), D_u1_input, M_rff_u)
+    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u1 ~ Exponential(1.0)
+    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
+    Phi_u1 = rff_map(coords_tz, W_u1, b_u1)
+    u1_true = Phi_u1 * beta_rff_u1
+
+    # U2 = f2(coords_time, Z, U1)
+    coords_tz_u1 = hcat(coords_time, z, u1_true)
+    D_u2_input = size(coords_tz_u1, 2)
+    W_u2 ~ filldist(Normal(0, 1), D_u2_input, M_rff_u)
+    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u2 ~ Exponential(1.0)
+    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
+    Phi_u2 = rff_map(coords_tz_u1, W_u2, b_u2)
+    u2_true = Phi_u2 * beta_rff_u2
+
+    # U3 = f3(coords_time, Z, U1)
+    # (Note: inputs are the same as U2, but U3 is a separate function)
+    D_u3_input = size(coords_tz_u1, 2)
+    W_u3 ~ filldist(Normal(0, 1), D_u3_input, M_rff_u)
+    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u3 ~ Exponential(1.0)
+    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
+    Phi_u3 = rff_map(coords_tz_u1, W_u3, b_u3)
+    u3_true = Phi_u3 * beta_rff_u3
+
+    # --- Seasonal Component (from V9) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- GP Trend (from V9) ---
+    ls_trend ~ Gamma(2, 2)
+    sigma_trend ~ Exponential(0.5)
+
+    # Define a 1D GP for the trend
+    k_trend = SqExponentialKernel() ∘ ScaleTransform(inv(ls_trend))
+    g_trend = GP(sigma_trend^2 * k_trend)
+
+    # Get unique time points for the GP
+    unique_times = sort(unique(coords_time[:,1]))
+
+    # Sample alpha from the GP with jitter for numerical stability
+    alpha ~ g_trend(unique_times, 1e-1)
+
+    # Map alpha back to original time coordinates
+    trend = alpha[indexin(coords_time[:,1], unique_times)]
+
+    # --- Spatiotemporal GP using AbstractGPs for FITC (from V9, with fixed Z_inducing) ---
+    coords_st_orig = hcat(coords_space, coords_time) # N x D_st
+
+    # Lengthscales for each dimension (2 for space, 1 for time)
+    ls_st ~ filldist(Gamma(2, 2), D_st)
+    sigma_f ~ Exponential(1.0)
+
+    # Anisotropic Spatiotemporal kernel
+    k_st = SqExponentialKernel() ∘ ARDTransform(inv.(ls_st))
+
+    # Define the base GP using AbstractGPs.jl
+    g_base = GP(sigma_f^2 * k_st)
+
+    # Use RowVecs for coordinates
+    Z_inducing_vecs = RowVecs(Z_inducing)
+    coords_st_vecs = RowVecs(coords_st_orig)
+
+    # Extract kernel matrices using AbstractGPs.jl
+    K_ZZ = cov(g_base(Z_inducing_vecs)) + 1e-6*I
+    K_XZ = cov(g_base(coords_st_vecs), g_base(Z_inducing_vecs))
+    K_XX_diag = diag(cov(g_base(coords_st_vecs)))
+
+    # Latent values at inducing points
+    u_latent ~ MvNormal(zeros(M_inducing_val), K_ZZ)
+
+    # Compute conditional mean and diagonal covariance using FITC formulas
+    m_f = K_XZ * (K_ZZ \ u_latent)
+    cov_f_diag = K_XX_diag - diag(K_XZ * (K_ZZ \ K_XZ'))
+
+    # Ensure positive definite covariance (add small jitter if necessary)
+    f ~ MvNormal(m_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N)))
+
+    # --- Spatiotemporal Stochastic Volatility (from V9) ---
+    # Secondary RFF mapping for log-variance
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0) # Scale for the log-variance GP
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+
+    Phi_sigma = rff_map(coords_st_orig, W_sigma, b_sigma)
+    log_sigma_y = Phi_sigma * beta_rff_sigma # Latent log-variance process
+    sigma_y_process = exp.(log_sigma_y ./ 2) # Convert log-variance to standard deviation
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4) # These betas are for u1_true, u2_true, u3_true, z
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    # Use spatiotemporal sigma_y_process in the likelihood
+    y_obs ~ MvNormal(mu_base .+ f, Diagonal(sigma_y_process.^2))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+ 
+# Helper function to generate inducing points using K-Means
+function kmeans_inducing_points(coords_st, M_inducing, seed=42)
+    Random.seed!(seed)
+    N_data = size(coords_st, 1)
+    if M_inducing >= N_data
+        return coords_st # If M >= N, just use all data points
+    end
+
+    # Perform K-Means clustering
+    R = kmeans(Matrix(coords_st'), M_inducing; maxiter=200, init=:kmpp, display=:none)
+    
+    # Centroids of the clusters are the inducing points
+    return R.centers'
+end
+
+
+# Parameters for V10
+D_s_v10 = size(data.coords_space, 2)
+D_st_v10 = D_s_v10 + size(data.coords_time, 2)
+coords_st_v10 = hcat(data.coords_space, data.coords_time)
+M_inducing_val_v10 = 10 # Number of inducing points
+M_rff_u_val_v10 = 30 # Number of RFF features for nested covariates
+M_rff_sigma_val_v10 = 20 # Number of RFF features for log-variance GP
+
+# Generate inducing points using K-Means
+Z_inducing_v10 = kmeans_inducing_points(coords_st_v10, M_inducing_val_v10)
+
+# Instantiate and sample Model V10 with NUTS
+model_v10 = model_v10_fixed_kmeans_fitc(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time, Z_inducing_v10; M_rff_sigma=M_rff_sigma_val_v10, M_rff_u=M_rff_u_val_v10)
+
+# Using NUTS sampler; consider increasing iterations for production runs
+chain_v10 = sample(model_v10, NUTS(), 500)
+display(describe(chain_v10))
+waic_v10 = compute_y_waic(model_v10, chain_v10)
+println("WAIC for V10: ", waic_v10)
+
+
+```
+
+
+#### V11: Sparse Variational Gaussian Process (SVGP)
+
+This model builds upon V10 by revisiting the concept of learned inducing points, aligning with an SVGP-like approach within the NUTS sampling framework. While a full Sparse Variational Gaussian Process typically employs variational inference to optimize a lower bound to the marginal likelihood, a key component of SVGP is the optimization of inducing point locations. In this V11, similar to V7 and V9, the Z_inducing locations are treated as parameters to be learned directly by the NUTS sampler, informed by a prior based on the data's mean and standard deviation.
+
+This approach differs from V10 (which fixed inducing points using K-Means) by allowing the model to adaptively find the optimal inducing point locations during sampling. The rest of the model structure (Nested RFF covariates, GP Trend, Seasonal component, Spatiotemporal Stochastic Volatility) remains consistent with V9 and V10. We continue to use the NUTS sampler to handle the model's complexity.
+
+```{julia}
+@model function model_v11_svgp(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_inducing_val=10, M_rff_u=30)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors --- General model parameters
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Latent Covariates (using RFF for non-linearity) ---
+    coords_tz = hcat(coords_time, z)
+
+    # U1 = f1(coords_time, Z)
+    D_u1_input = size(coords_tz, 2)
+    W_u1 ~ filldist(Normal(0, 1), D_u1_input, M_rff_u)
+    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u1 ~ Exponential(1.0)
+    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
+    Phi_u1 = rff_map(coords_tz, W_u1, b_u1)
+    u1_true = Phi_u1 * beta_rff_u1
+
+    # U2 = f2(coords_time, Z, U1)
+    coords_tz_u1 = hcat(coords_time, z, u1_true)
+    D_u2_input = size(coords_tz_u1, 2)
+    W_u2 ~ filldist(Normal(0, 1), D_u2_input, M_rff_u)
+    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u2 ~ Exponential(1.0)
+    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
+    Phi_u2 = rff_map(coords_tz_u1, W_u2, b_u2)
+    u2_true = Phi_u2 * beta_rff_u2
+
+    # U3 = f3(coords_time, Z, U1)
+    # (Note: inputs are the same as U2, but U3 is a separate function)
+    D_u3_input = size(coords_tz_u1, 2)
+    W_u3 ~ filldist(Normal(0, 1), D_u3_input, M_rff_u)
+    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u3 ~ Exponential(1.0)
+    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
+    Phi_u3 = rff_map(coords_tz_u1, W_u3, b_u3)
+    u3_true = Phi_u3 * beta_rff_u3
+
+    # --- Seasonal Component (from V9/V10) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- GP Trend (from V9/V10) ---
+    ls_trend ~ Gamma(2, 2)
+    sigma_trend ~ Exponential(0.5)
+
+    # Define a 1D GP for the trend
+    k_trend = SqExponentialKernel() ∘ ScaleTransform(inv(ls_trend))
+    g_trend = GP(sigma_trend^2 * k_trend)
+
+    # Get unique time points for the GP
+    unique_times = sort(unique(coords_time[:,1]))
+
+    # Sample alpha from the GP with jitter for numerical stability
+    alpha ~ g_trend(unique_times, 1e-1)
+
+    # Map alpha back to original time coordinates
+    trend = alpha[indexin(coords_time[:,1], unique_times)]
+
+    # --- Spatiotemporal GP using AbstractGPs for FITC (SVGP-like, with learned Z_inducing) ---
+    coords_st_orig = hcat(coords_space, coords_time) # N x D_st
+
+    # Optimized Inducing Points: Z_inducing are now parameters with a prior (as in V7/V9)
+    # Initialize Z_inducing as an array of unknown values
+    Z_inducing = Matrix{Float64}(undef, M_inducing_val, D_st)
+
+    # Prior based on the observed data's mean and a scaled standard deviation for exploration.
+    # This explicit learning of Z_inducing locations is a common element in SVGP.
+    mu_coords_st = mean(coords_st_orig, dims=1) # This is a 1xDst matrix
+    std_coords_st = std(coords_st_orig, dims=1) # This is a 1xDst matrix
+
+    # Assign priors column-wise to Z_inducing
+    for j in 1:D_st
+        # Each column of Z_inducing consists of M_inducing_val i.i.d. samples
+        # from a Normal distribution specific to that j-th dimension.
+        # Use mu_coords_st[j] and std_coords_st[j] which are scalars after indexing into 1xDst matrices
+        Z_inducing[:, j] ~ filldist(Normal(mu_coords_st[j], 2.0 * std_coords_st[j]), M_inducing_val)
+    end
+
+    # Lengthscales for each dimension (2 for space, 1 for time)
+    ls_st ~ filldist(Gamma(2, 2), D_st)
+    sigma_f ~ Exponential(1.0)
+
+    # Anisotropic Spatiotemporal kernel
+    k_st = SqExponentialKernel() ∘ ARDTransform(inv.(ls_st))
+
+    # Define the base GP using AbstractGPs.jl
+    g_base = GP(sigma_f^2 * k_st)
+
+    # Use RowVecs for coordinates
+    Z_inducing_vecs = RowVecs(Z_inducing)
+    coords_st_vecs = RowVecs(coords_st_orig)
+
+    # Extract kernel matrices using AbstractGPs.jl
+    K_ZZ = cov(g_base(Z_inducing_vecs)) + 1e-6*I
+    K_XZ = cov(g_base(coords_st_vecs), g_base(Z_inducing_vecs))
+    K_XX_diag = diag(cov(g_base(coords_st_vecs)))
+
+    # Latent values at inducing points
+    # In full SVGP, u_latent would have a variational posterior N(m_u, S_u)
+    # Here, we sample from a prior based on K_ZZ, effectively using DTC/FITC approximation
+    u_latent ~ MvNormal(zeros(M_inducing_val), K_ZZ)
+
+    # Compute conditional mean and diagonal covariance using FITC formulas
+    m_f = K_XZ * (K_ZZ \ u_latent)
+    cov_f_diag = K_XX_diag - diag(K_XZ * (K_ZZ \ K_XZ'))
+
+    # Ensure positive definite covariance (add small jitter if necessary)
+    f ~ MvNormal(m_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N)))
+
+    # --- Spatiotemporal Stochastic Volatility (from V9/V10) ---
+    # Secondary RFF mapping for log-variance
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0) # Scale for the log-variance GP
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+
+    Phi_sigma = rff_map(coords_st_orig, W_sigma, b_sigma)
+    log_sigma_y = Phi_sigma * beta_rff_sigma # Latent log-variance process
+    sigma_y_process = exp.(log_sigma_y ./ 2) # Convert log-variance to standard deviation
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4) # These betas are for u1_true, u2_true, u3_true, z
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    # Use spatiotemporal sigma_y_process in the likelihood
+    y_obs ~ MvNormal(mu_base .+ f, Diagonal(sigma_y_process.^2))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+# The Z_inducing variable is learned within the model.
+D_s_v11 = size(data.coords_space, 2)
+D_st_v11 = D_s_v11 + size(data.coords_time, 2)
+coords_st_v11 = hcat(data.coords_space, data.coords_time)
+M_inducing_val_v11 = 10 # Number of inducing points
+M_rff_u_val_v11 = 30 # Number of RFF features for nested covariates
+M_rff_sigma_val_v11 = 20 # Number of RFF features for log-variance GP
+
+# Instantiate and sample Model V11 with NUTS
+model_v11 = model_v11_svgp(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v11, M_inducing_val=M_inducing_val_v11, M_rff_u=M_rff_u_val_v11)
+
+# Using NUTS sampler; consider increasing iterations for production runs
+chain_v11 = sample(model_v11, NUTS(), 500)
+display(describe(chain_v11))
+waic_v11 = compute_y_waic(model_v11, chain_v11)
+println("WAIC for V11: ", waic_v11)
+
+println("\nNote: For robust results, consider increasing the number of samples (e.g., 1000-2000 or more) and tuning the NUTS parameters (e.g., `adapts=num_adapts_steps`) if convergence issues persist.")
+
+
+```
+
+
+
+Additional examples of extracting and plotting
+
+
+```{julia}
+
+
+# code snippets .. example only (do not run)
+# using StatsPlots
+
+# Visualize Seasonal Cycle Reconstruction
+t_fine = range(0, 12, length=100)
+b_cos_mu = mean(chain_v2[:beta_cos])
+b_sin_mu = mean(chain_v2[:beta_sin])
+
+# Reconstruct cycle: A*cos(...) + B*sin(...)
+seasonal_cycle = b_cos_mu .* cos.(2 * pi .* t_fine ./ 12.0) .+ b_sin_mu .* sin.(2 * pi .* t_fine ./ 12.0)
+
+p_season = plot(t_fine, seasonal_cycle,
+    title="Reconstructed Seasonal Cycle",
+    xlabel="Month", ylabel="Effect",
+    lw=3, color=:darkblue, fill=(0, 0.2, :blue), label="Mean Seasonal Effect")
+
+display(p_season)
+
+
+using Plots.PlotMeasures
+
+# Visualize Spatial Basis Functions (RFF Projection)
+grid_x = range(0, 1, length=50)
+grid_y = range(0, 1, length=50)
+grid_coords = hcat([x for x in grid_x, y in grid_y][:], [y for x in grid_x, y in grid_y][:])
+
+# Extract mean spatial weights (W_s) from the anisotropic model
+M_basis = 10
+W_s_mu = zeros(2, M_basis)
+for i in 1:2
+    for j in 1:M_basis
+        sym = Symbol("W_s[$i,$j]")
+        if sym in names(chain_v2, :parameters)
+            W_s_mu[i, j] = mean(chain_v2[sym])
+        end
+    end
+end
+
+# Visualize the first 4 basis functions
+plots = []
+for i in 1:4
+    # Project one specific frequency component
+    basis_val = cos.(grid_coords * W_s_mu[:, i])
+    p = heatmap(grid_x, grid_y, reshape(basis_val, 50, 50),
+                title="Basis Function $i", c=:ice, colorbar=false,
+                xticks=none, yticks=none)
+    push!(plots, p)
+end
+
+plot(plots..., layout=(2,2), size=(700, 600), title="Learned Spatial RFF Basis Functions")
+ 
+# 2. Extract latent volatility components using robust indexing
+log_vol_base_mu = mean(chain_v4[:log_vol_base])
+
+# Safely extract vector parameters
+beta_vol_mu = [mean(chain_v4[Symbol("beta_vol[$i]")]) for i in 1:5]
+b_vol_mu = [mean(chain_v4[Symbol("b_vol[$i]")]) for i in 1:5]
+
+# Safely extract matrix parameters W_vol (3x5)
+W_vol_mu = zeros(3, 5)
+for i in 1:3
+    for j in 1:5
+        # Try multiple common naming conventions if necessary
+        sym = Symbol("W_vol[$i,$j]")
+        W_vol_mu[i, j] = mean(chain_v4[sym])
+    end
+end
+
+# 3. Reconstruct the volatility path
+coords = hcat(coords_s, coords_t)
+phi_vol_fit = sqrt(2/5) .* cos.(coords * W_vol_mu .+ b_vol_mu')
+sigma_y_fit = exp.(log_vol_base_mu .+ (phi_vol_fit * beta_vol_mu))
+
+
+p_vol = plot(coords_t, sigma_y_fit,
+             title="Estimated Local Volatility (σ_y) Over Time",
+             xlabel="Time", ylabel="Volatility",
+             lw=3, color=:viridis, legend=false)
+
+p_heat = heatmap(coords_t[:,1], [1], sigma_y_fit',
+                 c=:viridis, title="Volatility Heatmap (Temporal)",
+                 xlabel="Time", yticks=none)
+
+plot(p_vol, p_heat, layout=(2,1), size=(800, 500))
+ 
+
+# Visualize the Time-Varying Intercept (alpha_t)
+# We extract parameters starting with 'alpha_raw' to reconstruct alpha_t
+using StatsPlots
+
+# Extract sigma_alpha and alpha_raw to reconstruct the path
+sig_a = mean(chain_v5[:sigma_alpha])
+T_steps = length(unique(coords_t))
+a_raw_means = [mean(chain_v5[Symbol("alpha_raw[$i]")]) for i in 1:T_steps]
+a_t_fit = cumsum(a_raw_means .* sig_a)
+
+plot(unique(coords_t), a_t_fit,
+     title="Estimated Time-Varying Intercept (alpha_t)",
+     xlabel="Time Index", ylabel="Intercept Value",
+     lw=3, color=:blue, legend=false)
+
+ 
+# Extract means for the latent offsets
+st1_offset_mu = get_posterior_means(chain, "st1_offset", N_samples)
+st2_offset_mu = get_posterior_means(chain, "st2_offset", N_samples)
+s3_offset_mu  = get_posterior_means(chain, "s3_offset", N_samples)
+
+# 2. Reconstruct latent 'true' values from the non-centered parameterization
+st1_t_fit = mean(st1_o) .+ st1_offset_mu .* std(st1_o)
+st2_t_fit = mean(st2_o) .+ st2_offset_mu .* std(st2_o)
+s3_t_fit  = mean(s3_o)  .+ s3_offset_mu  .* std(s3_o)
+
+# 3. Create comparison plots
+p1 = plot(coords_t, st1_o, label="Observed st1", color=:gray, alpha=0.5, title="st1: Latent vs Observed")
+plot!(p1, coords_t, st1_t_fit, label="Posterior Mean st1", color=:blue, linewidth=2)
+
+p2 = plot(coords_t, st2_o, label="Observed st2", color=:gray, alpha=0.5, title="st2: Latent vs Observed")
+plot!(p2, coords_t, st2_t_fit, label="Posterior Mean st2", color=:red, linewidth=2)
+
+p3 = scatter(coords_s[:,1], s3_o, label="Observed s3", color=:gray, alpha=0.5, title="s3: Latent vs Observed")
+scatter!(p3, coords_s[:,1], s3_t_fit, label="Posterior Mean s3", color=:green, markersize=3)
+
+plot(p1, p2, p3, layout=(3,1), size=(800, 900))
+
+using StatsPlots
+
+# Plotting the posterior distributions for the lengthscale parameters
+p_ls_s = density(chain[[:"ls_s[1]", :"ls_s[2]"]], title="Spatial Lengthscales (ls_s)", legend=:topright)
+p_ls_t = density(chain[:ls_t], title="Temporal Lengthscale (ls_t)", color=:red)
+
+plot(p_ls_s, p_ls_t, layout=(2,1), size=(800, 600))
+
+
+waic_nested = compute_y_waic(model_v3, chain_nested)
+waic_vol = compute_y_waic(model_v4, chain_v4)
+
+
+println("--- Model Comparison: Structural vs Adaptive ---")
+println("Fixed RFF WAIC:        ", waic_fixed)
+println("Adaptive RFF WAIC:     ", waic_v1)
+println("Nested Covariate WAIC: ", waic_nested)
+println("Volatility RFF WAIC:   ", waic_vol)
+
+
+```
+
+
+
+
+
 ## Appendices
 
 ### Matrix manipulations
@@ -13528,49 +15415,6 @@ post_mean = mean(q)
 post_std  = std(q)
 
 ```
-### The snow crab experience
 
-The core challenge in stock assessments is tuning the limited resources
-and time required to sample a very large spatiotemporal domain, often
-with poorly defined spatial bounds and imperfect tools prone to wear and
-tear, in order to obtain a representation of an unobservable but real
-(*latent*) process(es) which are able to inform upon the status of a
-species! In the snow crab survey, there is a high station density
-relative most other directed surveys, with about 400 stations being
-visited annually, and taking up to four months to complete. The spatial
-domain of the snow crab assessment is approximately 109,120 $km^{2}$
-which means that each station, on average, is representing 273 $km^{2}$!
-The problem is that each station samples only 0.0039 $km^{2}$; a ratio
-of 1:70,000. Similarly, in terms of time, a station is sampled for on
-average about 5 minutes but it is supposed to represent a whole year
-(525,600 minutes); a ratio of 1:105,120. In terms of space-time units,
-this is a ratio of $1:7.36\times10^{9}$, or 1 part in 10 billion! If the
-ocean bottom environment were "well mixed" (homogenous chemostat) then
-just a few samples would suffice. Unfortunately it is not, and so this
-rather sparse sampling of the ocean forces us to make assumptions, and
-the estimation of any feature of interest becomes a balance between the
-information gained by sampling intensity, that is, precise (low
-variability) and accurate (unbiased) estimates *vs.* the costs in
-resources and time associated with obtaining the information.
-
-In fisheries assessments, a survey's *experimental design* encodes these assumptions and as such are used *religiously* as a basis for aggregation of samples across space. Advice on stock status is usually demanded on an annual basis for some arbitrarily determined administrative spatial areas (herein, *areal units* or *AUs*). These AUs are usually associated with historical precedents relating to access and allocation and/or attempts to rationalize sampling based upon some additional information. Sampling strategies of such AUs can range from completely random sampling in the absence of additional information, to some form of stratified random design (see also, Appendix 1). In the latter, samples are chosen randomly from AUs that are characterized, *a priori*, by *informative factors*. Often, depth is the main consideration. Analysis of (co)variance (AN(C)OVA) is a common application of such stratification, numerically *blocking* variability of such *informative factors* that are are not the focus of the study (in an attempt to be more cost-effective). The lower the variability within AUs (relative to between-AU variability) of the focal variable, the more "successfully" stratification has controlled for these "nuisance" effects.
-
-The *hope* is that a sample within an AU is representative of the AU (*i.e*., "well mixed" inside AUs). If such nuisance factors were slow changing (e.g., depth changes due to tectonic processes) or very fast changing (e.g., biochemical nutrient levels due to bacterial re-mineralization) relative to the time scale of the biological feature of interest (abundance change due to population dynamics), then this may be a useful assumption and approximation. The problem of course is that these nuisance factors change at space-time scales that are similar to the feature of interest which makes samples not always representative of the area that they are supposed to represent. This can cause poor precision (elevated variability) and poor accuracy (bias). As the number of nuisance factors increase, the number of AUs required to adequately block out such factors, statistically in the sense of classical ANOVA, increases to non-viable levels (in terms of required time and resources). This increase is exponential in terms of covariates, as more than one sample is required in each covariate block and in the case of two spatial dimensions, the number of units increases by a factor of two relative to any linear reduction of scale and with the addition of time, by an additional factor or more depending upon if seasonal and or diurnal discrimination is required.
-
-For example, when the informative features are dynamic, their relevance in static AUs can cause a mismatch with the presumed factors of importance. That is, there can be spatial and/or temporal *aliasing* (sometimes heuristically referred to as upscaling and downscaling issues) in that a sample is taken at a very different temperature (for example) or time of year than the overall average temperature of the areal unit that it is supposed to represent. In the snow crab survey, the sampling period spans over four months during which environmental conditions on the surface range from summer conditions to winter conditions. This blocking or *factorial* approach, only crudely blocks out the influence of a handful of these extraneous factors (in the example, only depth) and otherwise ignores them as *nuisance* factors, as they are usually not even measured. Herein, we will refer to this approach of applying a *static* experimental design as a *Cartesian* perspective. This *Cartesian perspective* dominates in stock assessments and fisheries-related literature in general, and troubling for reasons we will see below.
-
-In reality, these nuisance factors are, actually highly informative and facilitate understanding the focal process(es) of interest. If carefully measured and treated, they can support more precise and accurate predictions. Recall, that in the case of snow crab, sampling is 1 part in 10 billion. Additional information helps to improve the scale of this sampling. Further, when they operate on spatiotemporal scales similar to those of the focal process(es) they can become highly influential such that ignoring them can cause poor precision and accuracy. As such, in the snow crab assessment, we embrace these factors rather than try to ignore all the variability in the processes that influence biota; herein we will refer to this as *ecosystem variability*. Examples of *ecosystem variability* in the marine context include the interactions of organisms with variations in ambient temperatures, light levels, pH, redox potential, salinity, food/nutrient availability, shelter space, predator abundance, disease prevalence, etc. Characterizing *ecosystem variability* is indeed difficult and time-consuming due to their numerous and interacting nature; however, as they, by definition, directly and indirectly influence a population's status, they cannot and should not be ignored. This is especially the case if this information pre-exists or is cheaper to sample extensively than the population density.
-
-Indeed, this *ecosystem variability* induces something very important: complex spatiotemporal autocorrelations in the abundance of the organism of interest. As stated by *Tobler's First law of geography*: *everything is related to everything else, but near things are more related than distant things* (Tobler 1970). If it were not the case, then everywhere we look would be completely chaotic and discontinuous, without localized areas of homogeneity. Similar arguments can be made for time. As such, experimental design must pay careful attention to *ecosystem variability* and the spatiotemporal autocorrelation that they induce. If the strategy is to "block out" nuisance factors, then each such AU must also be independent of each other, that is, without spatial (and temporal) autocorrelation. If a survey's experimental design is inadequate to guarantee such independence between AUs, then an appropriate spatiotemporal model can be used to attempt to rectify these biases and begin the process of (1) iteratively improving the experimental design and/or (2) improving the data collection required to analytically correct any biases induced by *ecosystem variability.* This point of view, we will herein refer to as a *Lagrangian* perspective, one that perceives AUs as being more fluid in definition than the static *Cartesian* view identified previously.
-
-In hydrodynamically complex areas such as NAFO Statistical Division 4VWX (Maritimes Region of Atlantic Canada) where a number of oceanic currents converge and there has also been ongoing rapid climate change and historically significant and rapid ecological change, the influence of *ecosystem variability* can not be safely ignored. Snow crab surveys, initially in the mid-1990s were exploratory and occurred in near-shore areas of known fishing activity. Surveys rapidly expanded to shelf-wide scales when it became evident that their spatial distribution was much larger and more heterogeneous than previously understood. This expansion of the survey only stabilized in the early 2000s. As such, spatial bias exists, precluding any simple analysis or naive aggregation scheme. Additional bias is also possible with the use of a new fishing vessel in 2004 and again in 2014. Further, in the southern-most area of snow crab distribution (Crab fishing area 4X), trawl survey coverage has been historically sporadic but have stabilized since 2004 (with the exception of 2014).
-
-Historically, the statistical approach used to aggregate/integrate sampled observations was kriging (Biron et al. 1997), a method of data interpolation that borrows from the information found in the manner in which variability changes with distance from a given location (spatial covariance/autocorrelation; Cressie 1993). The optimal survey design for this approach is generally considered to be a uniform grid. To this end, the snow crab survey locations were randomly chosen locations in a 10  10 minute areal grid (Biron et al. 1997). The rationale for the choice grid size is not clear as 10 minutes in longitude is not the same distance as 10 minutes in latitude, and also the distance of 10 minutes in longitude varies with latitude. This renders each sampling grid unequal in surface area and therefore an unequal influence upon the integration in space. Sampling within each such grid is/was also pseudo-random at best. This is because many locations are not directly accessible to trawls. The substrate in Maritimes Region is notoriously rugged, ragged, rocky with deep trenches in many areas; features that do not permit fishing nets to pass unharmed or force the nets to become part of the substrate. There was, therefore, bias introduced in bottom type selection, one that preferred trawlable locations, these locations also tend to be uniform depths, softer, gravel or mud substrates that coincide with preferred snow habitats. This resulted in preferential sampling of deeper locations, colder temperatures, and very different species associations.
-
-Survey locations are clustered in complex ways due to the historicity of fisheries management designations of fishing areas, number of licenses and quotas, and the industry funded nature of the survey with varying levels of contributions. Ultimately, this resulted in aggregations of survey stations in core fishing areas, no sampling in non-core areas, again introducing bias towards areas of snow crab habitat (Figure). Indeed, sampling of locations known to be ephemeral or unlikely to carry snow crab were considered by many in industry to be a waste of their funding. Even to this day, we still do not know the full limits of their spatial distribution and movement due to operational and logistical constraints (survey trawls cannot reasonably go beyond 350 m depth), and instead focus upon the locations that are accessible to the fishery that have their own depth, distance and operational constraints.
-
-Currently, sampling is as extensive and intensive as possible, limited by trawl-accessible depths (350 m), to permit an objective determination of the spatial bounds of the snow crab population; information that must be known if reliable estimates of biomass and population structure (e.g., size, sex, maturity) are to be made. The spatial distribution of snow crab is quite dynamic and so can rapidly shift to areas where they are not "traditionally" found. In addition, the distributional patterns of immature, soft-shelled, very old and female crabs do not correspond completely to those of legal size males. The former are considered to be less competitive and more susceptible to predation (Hooper 1986) and usually observed in environments or substrates with greater cover (gravel, rocks; Comeau et al. 1998). Sampling that focused upon only those areas where large hard-shelled males occur in high frequency would preclude the reliable estimation of the relative abundance of these other important segments of the crab population.
-
-Bottom line: bias in observations exist due to numerous factors. An assumption of random sampling is not justified. A model-based solution is necessary to begin to separate out the various forms of bias and randomness and obtain a more coherent view of processes and states.
 
 # End

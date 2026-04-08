@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
 julia_version = "1.12.5"
-manifest_format = "2.0"
-project_hash = "5ba36afa1fdbdac7182552453b21e1bbbf61c996"
+manifest_format = "2.1"
+project_hash = "08bd216fbd41881e4df7544b145728337814a860"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "f7304359109c768cf32dc5fa2d371565bb63b68a"
@@ -676,6 +676,12 @@ git-tree-sha1 = "249fe38abf76d48563e2f4556bebd215aa317e15"
 uuid = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
 version = "4.1.1"
 
+[[deps.CurlHTTP]]
+deps = ["LibCURL", "NetworkOptions", "Reexport", "UUIDs"]
+git-tree-sha1 = "02322a0bed956debf0f90de3fd68da525be9ca8b"
+uuid = "d54d1f39-fb68-436b-8c41-ced000dfba13"
+version = "0.1.4"
+
 [[deps.DSP]]
 deps = ["Bessels", "FFTW", "IterTools", "LinearAlgebra", "Polynomials", "Random", "Reexport", "SpecialFunctions", "Statistics"]
 git-tree-sha1 = "5989debfc3b38f736e69724818210c67ffee4352"
@@ -839,6 +845,12 @@ version = "0.6.7"
 deps = ["ArgTools", "FileWatching", "LibCURL", "NetworkOptions"]
 uuid = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 version = "1.7.0"
+
+[[deps.DrWatson]]
+deps = ["Dates", "FileIO", "JLD2", "LibGit2", "MacroTools", "Pkg", "Random", "Requires", "Scratch", "UnPack"]
+git-tree-sha1 = "5b6632df14cf24fc2cdb805aab24147001463336"
+uuid = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
+version = "2.19.1"
 
 [[deps.DynamicPPL]]
 deps = ["AbstractMCMC", "AbstractPPL", "BangBang", "Bijectors", "ChainRulesCore", "ConstructionBase", "Distributions", "DocStringExtensions", "LinearAlgebra", "LogDensityProblems", "MacroTools", "OrderedCollections", "Random", "Setfield", "Test", "ZygoteRules"]
@@ -1256,6 +1268,11 @@ deps = ["Artifacts", "GettextRuntime_jll", "JLLWrappers", "Libdl", "Libffi_jll",
 git-tree-sha1 = "24f6def62397474a297bfcec22384101609142ed"
 uuid = "7746bdde-850d-59dc-9ae8-88ece973131d"
 version = "2.86.3+0"
+
+[[deps.Glob]]
+git-tree-sha1 = "83cb0092e2792b9e3a865b6655e88f5b862607e2"
+uuid = "c27321d9-0574-5035-807b-f59d2c89b15c"
+version = "1.4.0"
 
 [[deps.Graphics]]
 deps = ["Colors", "LinearAlgebra", "NaNMath"]
@@ -2348,6 +2365,12 @@ git-tree-sha1 = "af57004c3b686097d563f9c394d7886431a38c75"
 uuid = "58948b4f-47e0-5654-a9ad-f609743f8632"
 version = "902.700.100+0"
 
+[[deps.PackageCompiler]]
+deps = ["Artifacts", "Glob", "LazyArtifacts", "Libdl", "Pkg", "Printf", "RelocatableFolders", "TOML", "UUIDs", "p7zip_jll"]
+git-tree-sha1 = "7b2dbae3d0eda41dad445b5f36f40588c208a942"
+uuid = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
+version = "2.2.5"
+
 [[deps.Packing]]
 deps = ["GeometryBasics"]
 git-tree-sha1 = "bc5bf2ea3d5351edf285a06b0016788a121ce92c"
@@ -2604,12 +2627,6 @@ deps = ["CategoricalArrays", "CodecZlib", "DataAPI", "DataFrames", "Dates", "Fil
 git-tree-sha1 = "7d71a86313a7e2c6e4e21836c51c846a061e3735"
 uuid = "df47a6cb-8c03-5eed-afd8-b6050d6c41da"
 version = "1.1.0"
-
-[[deps.RDatasets]]
-deps = ["CSV", "CodecZlib", "DataFrames", "FileIO", "Printf", "RData", "Reexport"]
-git-tree-sha1 = "959a35b071feb3cb08760c7b0ad5d63e56e2b1ff"
-uuid = "ce6b1742-4840-55fa-b093-852dadbb1d8b"
-version = "0.8.1"
 
 [[deps.REPL]]
 deps = ["InteractiveUtils", "JuliaSyntaxHighlighting", "Markdown", "Sockets", "StyledStrings", "Unicode"]
@@ -3729,3 +3746,7 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Xorg_libxcb_jll", "Xorg_xkeyboard_
 git-tree-sha1 = "a1fc6507a40bf504527d0d4067d718f8e179b2b8"
 uuid = "d8fb68d0-12a3-5cfd-a85a-d49703b185fd"
 version = "1.13.0+0"
+
+[registries.General]
+url = "https://github.com/JuliaRegistries/General.git"
+uuid = "23338594-aafe-5451-b93e-139f81909106"

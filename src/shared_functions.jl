@@ -189,3 +189,26 @@ function random_correlation_matrix(d=3, eta=1)
     end
     return S
 end
+
+
+
+
+function build_st_inputs(time_indices, space_indices, spatial_coords)
+  # Space-Time Input Construction
+  # Space and Time as continuous coordinates.
+  # Inputs: 
+  #   spatial_coords: Matrix (2 x N_nodes) -> [Lat, Lon]
+  #   time_coords: Vector (T_steps)
+  # Returns:
+  #   ColVecs of 3D points (Time, Lat, Lon)
+
+  # Map indices to actual coordinates
+  # This assumes spatial_coords is 2xN
+
+  # Extract coords for every observation
+  coords = spatial_coords[:, space_indices] # 2 x N_obs
+  times = time_indices' # 1 x N_obs
+
+  # Stack to create 3D input: [Time; Lat; Lon]
+  return ColVecs(vcat(times, coords))
+end

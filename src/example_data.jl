@@ -1,6 +1,8 @@
 
-function example_data( datatype, N_obs=200, N_inducing=10 )
-  
+function example_data( datatype, N=200, N_inducing=10; period=12.0, seed=42 )
+ 
+  Random.seed!(seed)
+
 
   if datatype == "scottish_lip_cancer_data"
   
@@ -197,14 +199,14 @@ function example_data( datatype, N_obs=200, N_inducing=10 )
     # Time: Continuous (0.0 to 10.0)
     # Space: Continuous Lat/Lon (-5.0 to 5.0)
     
-    raw_time = rand(Uniform(0, 10), N_obs)
-    raw_space = rand(Uniform(-5, 5), 2, N_obs) # 2 rows (Lat, Lon)
+    raw_time = rand(Uniform(0, 10), N)
+    raw_space = rand(Uniform(-5, 5), 2, N) # 2 rows (Lat, Lon)
     
     # Signal = Sinusoidal Time + Gaussian Spatial Blob
 
     # Calculate true Y without noise
     y_true = Float64[]
-    for i in 1:N_obs
+    for i in 1:N
 
       t = raw_time[i]
       lat = raw_space[1,i]
@@ -222,7 +224,7 @@ function example_data( datatype, N_obs=200, N_inducing=10 )
 
 
     # Add observational noise (Sigma = 0.3)
-    y = y_true .+ 0.3 .* randn(N_obs)
+    y = y_true .+ 0.3 .* randn(N)
     
     # Format Inputs for ApproximateGPs
     # The model expects ColVecs (Column Vectors) wrapper for the kernel computations.
@@ -236,7 +238,7 @@ function example_data( datatype, N_obs=200, N_inducing=10 )
     X_st = ColVecs(raw_st)
     
     # inducing points, consider using K-Means for real work
-    idx_inducing = randperm(N_obs)[1:N_inducing]
+    idx_inducing = randperm(N)[1:N_inducing]
     inducing_matrix = raw_st[:, idx_inducing] # 3xM Matrix
     inducing_locs_st = ColVecs(inducing_matrix)
       
@@ -258,14 +260,13 @@ function example_data( datatype, N_obs=200, N_inducing=10 )
     N_r = 5  # n rows of spatial grid
     N_c = 5  # n cols of spatial grid
     N_areas = N_c * N_r
-    N_obs = N_areas * N_times
+    N = N_areas * N_times
      
     # Function to create a 5x5 grid of polygons and return adjacency matrix
     
     W = lattice_adjacency_matrix(N_r, N_c)
-      
-    
-    # --- 1. Simulate AR(1) Term (a) ---
+ 
+    # Simulate AR(1) Term (a) ---
     ρ_a = 0.8
     σ_a = 0.5
     
@@ -275,7 +276,7 @@ function example_data( datatype, N_obs=200, N_inducing=10 )
         a[t] = ρ_a * a[t-1] + rand(Normal(0, σ_a * sqrt(1 - ρ_a^2)))
     end
     
-    # --- 2. Simulate BYM2 Spatial Term (u) ---
+    # Simulate BYM2 Spatial Term (u) ---
     # We use a simple ICAR simulation: u ~ MVN(0, inv(Q))
     D = Diagonal(sum(W, dims=2)[:])
     Q_spatial = D - W + 1e-6I # Add jitter for invertibility
@@ -286,14 +287,13 @@ function example_data( datatype, N_obs=200, N_inducing=10 )
     σ_u = 0.3
     u_combined = σ_u .* (sqrt(ϕ_u) .* u_struc .+ sqrt(1 - ϕ_u) .* u_iid)
     
-    # --- 3. Simulate Spatio-Temporal Interaction (v) ---
+    # Simulate Spatio-Temporal Interaction (v) ---
     ρ_v = 0.5
     v = [rand(Normal(0, 0.2), N_areas) for _ in 1:N_times]
     for t in 2:N_times
         v[t] = ρ_v .* v[t-1] .+ rand(Normal(0, 0.1), N_areas)
     end
     
-    # --- 4. Assemble Final Data ---
     # Map observations to indices
         
     # y: Vector of length 250 containing the noisy observations.
@@ -305,14 +305,14 @@ function example_data( datatype, N_obs=200, N_inducing=10 )
     group_idx = a_idx # Same as time index
     
     y = Float64[]
-    for i in 1:N_obs
+    for i in 1:N
         η = a[a_idx[i]] + u_combined[u_idx[i]] + v[group_idx[i]][u_idx[i]]
         push!(y, η + rand(Normal(0, 0.1))) # Add observation noise
     end
     
     # println("Generated $(length(y)) observations for $N_areas areas over $N_times time steps.")
 
-    return y, a_idx, u_idx, group_idx, W, N_times, N_areas, N_obs
+    return y, a_idx, u_idx, group_idx, W, N_times, N_areas, N
 
   end
 
@@ -418,6 +418,223 @@ function example_data( datatype, N_obs=200, N_inducing=10 )
     
     return id, sps, X, G, vn 
   end
+
+
+  if datatype =="classification_testdata"
+        
+    num_samples = 300
+    num_predictors = 2
+    num_classes = 3 
+    
+    # Predictor variables
+    x1 = randn(num_samples) # Predictor 1
+    x2 = randn(num_samples) # Predictor 2
+
+    # Design matrix (including intercept)
+    X = hcat(ones(num_samples), x1, x2)
+
+    # True coefficients for each class. One class is typically used as a reference (e.g., class 1 is all zeros).
+    # The coefficients represent the linear predictor for each class relative to the reference.
+    # Size: (num_predictors + 1) x (num_classes - 1)
+
+    # True coefficients for Class 2 vs Class 1 (reference)
+    true_beta_class2 = [0.5, 1.0, -0.5] # Intercept, x1_coeff, x2_coeff
+
+    # True coefficients for Class 3 vs Class 1 (reference)
+    true_beta_class3 = [-0.8, -0.7, 1.2] # Intercept, x1_coeff, x2_coeff
+
+    # Combine into a matrix of coefficients, where the first column is for the reference class (all zeros)
+    true_betas_all = hcat(zeros(num_predictors + 1), true_beta_class2, true_beta_class3)
+
+    # Calculate the linear predictors for each class for each observation
+    linear_predictors = X * true_betas_all # num_samples x num_classes
+
+    # Convert linear predictors to probabilities for each class using softmax
+    # StatsAPI.softmax operates on columns by default, so we'll transpose for row-wise operation
+    probabilities_per_class = permutedims(StatsAPI.softmax(permutedims(linear_predictors)))
+
+    # Generate class labels (y) based on these probabilities
+    y = Vector{Int}(undef, num_samples)
+    for i in 1:num_samples
+        # Categorical(p) expects probabilities for each category
+        y[i] = rand(Categorical(probabilities_per_class[i, :]))
+    end
+
+    println("Synthetic Softmax Regression Data Generated. First 10 observations (X1, X2, Probabilities for classes 1,2,3, Assigned Class):")
+    display(hcat(round.(x1[1:10], digits=2), round.(x2[1:10], digits=2), round.(probabilities_per_class[1:10,:], digits=2), y[1:10]))
+
+    println("\nCounts per class: ", StatsBase.countmap(y))
+
+    return X, y, num_classes, probabilities_per_class, true_beta_class2, true_beta_class3
+
+  end
+
+
+  if datatype =="cluster_testdata"
+
+    num_samples = 200
+    num_clusters = 2
+
+    # Parameters for data types:
+    # Continuous: 1 dimension
+    # Binomial: 1 dimension (e.g., number of successes out of 10 trials)
+    # Multinomial: 1 dimension (e.g., counts in 3 categories)
+
+    # True cluster parameters
+    # Cluster 1
+    μ_true_1 = [2.0]     # Continuous mean
+    p_true_1 = 0.2      # Binomial success probability
+    θ_true_1 = [0.6, 0.3, 0.1] # Multinomial probabilities for 3 categories
+
+    # Cluster 2
+    μ_true_2 = [7.0]
+    p_true_2 = 0.8
+    θ_true_2 = [0.1, 0.2, 0.7]
+
+    # Combine into arrays for the model
+    true_μ = [μ_true_1, μ_true_2]
+    true_p = [p_true_1, p_true_2]
+    true_θ = [θ_true_1, θ_true_2]
+
+    true_π = [0.4, 0.6] # Mixing proportions
+
+    # Binomial trials (fixed for all points)
+    binomial_trials = 10
+    # Multinomial categories (fixed)
+    multinomial_categories = 3
+    # Total count for multinomial (fixed for all points)
+    multinomial_total_count = 20
+
+    # Store generated data
+    data_continuous = Vector{Float64}(undef, num_samples)
+    data_binomial = Vector{Int}(undef, num_samples)
+    data_multinomial = Matrix{Int}(undef, num_samples, multinomial_categories)
+    cluster_assignments_true = Vector{Int}(undef, num_samples)
+
+    for i in 1:num_samples
+        # Assign cluster
+        k = rand(Categorical(true_π))
+        cluster_assignments_true[i] = k
+
+        # Generate continuous data
+        data_continuous[i] = rand(Normal(true_μ[k][1], 1.0)) # Assuming fixed std dev for simplicity
+
+        # Generate binomial data
+        data_binomial[i] = rand(Binomial(binomial_trials, true_p[k]))
+
+        # Generate multinomial data
+        data_multinomial[i, :] = rand(Multinomial(multinomial_total_count, true_θ[k]))
+    end
+
+    println("Synthetic Mixed Data Generated. First 5 observations:")
+    display(hcat(data_continuous[1:5], data_binomial[1:5], data_multinomial[1:5, :], cluster_assignments_true[1:5]))
+
+    return data_continuous, data_binomial, data_multinomial,
+      num_clusters, num_cont_dims, binomial_trials, multinomial_total_count, multinomial_categories
+
+  end
+
+  if datatype=="timeseries_testdata"
+
+    # Generate a Synthetic Time Series
+    # Define parameters
+    fs = 100        # Sampling frequency (samples per second)
+    T = 2           # Duration of the signal (seconds)
+    n = fs * T      # Number of samples
+    x = range(0, T, length=n) # Time vector
+
+    # Create a signal with multiple sine waves (harmonics) and some noise
+    f1 = 5          # Frequency 1 (Hz)
+    f2 = 12         # Frequency 2 (Hz)
+    f3 = 20         # Frequency 3 (Hz)
+
+    y = 1.0 * sin.(2π * f1 * x) .+ \
+            0.5 * sin.(2π * f2 * x) .+ \
+            0.2 * sin.(2π * f3 * x) .+ \
+            0.1 * randn(n) # Add some random noise
+    
+    return x, y, fs
+
+  end
+
+
+  if datatype == "maunaloa_co2"
+
+    # downloaded and saved from: https://scrippsco2.ucsd.edu/data/atmospheric_co2/primary_mlo_co2_record.html
+    
+    # timestamp of last save: May  1  2025
+    fn = joinpath( project_directory, "data", "monthly_in_situ_co2_mlo.csv" ) 
+
+    maunaloa = CSV.read(fn, DataFrame, skipto=65)
+
+    maunaloa = maunaloa[!, [ 4,5]]
+    rename!(maunaloa, [ :datestamp, :co2ppm])
+    maunaloa.co2ppm = map(x -> x == -99.99 ? missing : x, maunaloa.co2ppm)
+    maunaloa.co2 = (maunaloa.co2ppm .- mean(skipmissing(maunaloa.co2ppm))) ./ std(skipmissing(maunaloa.co2ppm))
+    maunaloa.float_date = Float64.(maunaloa.datestamp)
+
+    maunaloa = filter(:co2 => !ismissing, maunaloa)
+
+    ### <<<<<<<<<<<<< IMPORTANT .. 
+    ### presence of Missing Type confuses logpdf function, 
+    ### this does an element-wise copy, droping the Missing Type (yes Types can be a pain)
+    # x = map(v->v, maunaloa.float_date)
+    # y = map(v->v, maunaloa.co2)  
+    x = identity.(maunaloa.float_date)
+    y = identity.(maunaloa.co2)
+    ### <<<<<<<<<<<<< IMPORTANT .. 
+    
+    sampling_freq = 12 / 1 # 12 per year
+    return x, y, sampling_freq
+
+  end
+
+  
+
+  if datatype == "complex_testdata"
+
+    # 1. Coordinates: Space (Xlon, Xlat) and Time (T)
+    coords_space = rand(N, 2)
+    coords_time = reshape(collect(1.0:N), :, 1)
+
+    # 2. Covariates
+    # Z: Purely spatial covariate
+    Z = randn(N)
+
+    # Latent (True) Spatiotemporal Covariates
+    U1_true = sin.(coords_time[:,1] ./ 5.0) .+ 0.5 .* Z
+    U2_true = cos.(coords_time[:,1] ./ 5.0) .- 0.3 .* Z
+    U3_true = 0.2 .* (coords_time[:,1] ./ N) .+ 0.1 .* Z
+
+    # 3. Add measurement error to covariates (observed version)
+    sigma_u = 0.1
+    U1_obs = U1_true .+ randn(N) .* sigma_u
+    U2_obs = U2_true .+ randn(N) .* sigma_u
+    U3_obs = U3_true .+ randn(N) .* sigma_u
+
+    # 4. Generate Dependent Variable Y
+    # Components: Linear Trend + Seasonal Harmonic + Latent Process + Noise
+    trend = 0.05 .* coords_time[:,1]
+    seasonal = 1.0 .* cos.(2 * pi .* coords_time[:,1] ./ period)
+
+    # Simulate a spatial effect manually for the ground truth
+    spatial_effect = sin.(coords_space[:,1] .* 2π) .* cos.(coords_space[:,2] .* 2π)
+
+    sigma_y = 0.2
+    # Y is a function of trend, season, GP effect, and U1
+    y_obs = 1.0 .+ trend .+ seasonal .+ spatial_effect .+ (0.5 .* U1_true) .+ randn(N) .* sigma_y
+
+    return (
+        y_obs = y_obs,
+        U1_obs = U1_obs,
+        U2_obs = U2_obs,
+        U3_obs = U3_obs,
+        Z = Z,
+        coords_space = coords_space,
+        coords_time = coords_time
+    ) 
+  end
+
 
 end
  
