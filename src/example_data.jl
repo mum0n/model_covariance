@@ -632,7 +632,45 @@ function example_data( datatype, N=200, N_inducing=10; period=12.0, seed=42 )
         Z = Z,
         coords_space = coords_space,
         coords_time = coords_time
-    ) 
+    )
+
+  end
+
+ 
+  if example_data=="multi-fidelity" 
+
+    # 1. Define sample sizes for resolutions
+    Ny, Nu, Nz = 40, 80, 120
+    Nt_y, Nt_u = 4, 8
+    Ns_y, Ns_u = 10, 10
+
+    # 2. Mock coordinates for different resolutions
+    coords_z = rand(Nz, 2)
+    coords_u_s = rand(Ns_u, 2)
+    coords_u_t = reshape(repeat(collect(1.0:Nt_u), inner=Ns_u), :, 1)
+    coords_y_s = rand(Ns_y, 2)
+    coords_y_t = reshape(repeat(collect(1.0:Nt_y), inner=Ns_y), :, 1)
+
+    # 3. Mock observations
+    y = randn(Ny)
+
+    # Latent (True) Spatiotemporal Covariates
+
+    z = randn(Nz)
+    U1_true = sin.(coords_time[:,1] ./ 5.0) .+ 0.5 .* z
+    U2_true = cos.(coords_time[:,1] ./ 5.0) .- 0.3 .* z
+    U3_true = 0.2 .* (coords_time[:,1] ./ N) .+ 0.1 .* z
+
+    # 3. Add measurement error to covariates (observed version)
+    sigma_u = 0.1
+    u1 = U1_true .+ randn(Nu) .* sigma_u
+    u2 = U2_true .+ randn(Nu) .* sigma_u
+    u3 = U3_true .+ randn(Nu) .* sigma_u
+
+
+    return ( y, z, u1, u2, u3, 
+      coords_z, coords_u_s, coords_u_t, coords_y_s, coords_y_t )
+
   end
 
 

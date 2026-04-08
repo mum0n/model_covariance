@@ -38,3 +38,29 @@ end
 
 
 
+function generate_inducing_points(coords_st, M_inducing, seed=42)
+    # Helper function to generate inducing points (simple random sampling for now)
+    Random.seed!(seed)
+    N_data = size(coords_st, 1)
+    if M_inducing >= N_data
+        return coords_st # If M >= N, just use all data points (becomes exact GP)
+    end
+    indices = sample(1:N_data, M_inducing, replace=false)
+    return coords_st[indices, :]
+end
+
+
+function kmeans_inducing_points(coords_st, M_inducing, seed=42)
+    # Helper function to generate inducing points using K-Means
+    Random.seed!(seed)
+    N_data = size(coords_st, 1)
+    if M_inducing >= N_data
+        return coords_st # If M >= N, just use all data points
+    end
+
+    # Perform K-Means clustering
+    R = kmeans(Matrix(coords_st'), M_inducing; maxiter=200, init=:kmpp, display=:none)
+    
+    # Centroids of the clusters are the inducing points
+    return R.centers'
+end

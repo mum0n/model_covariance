@@ -37,7 +37,7 @@ These are notes from a non-statistician's perspective on learning to use statist
 
 The concept of *Covariance* is foundational to much of practical numerical analysis, modelling and parameter estimation. However, its importance was never really clearly expressed to me in numerous foundational courses. One never spoke of the covariance of this fascinating measure with that other important factor being researched. Instead, derived components such as correlation and sums of squares, variance, etc., were the focus as they are usually more readily understood. Covariance was always, for me, some abstract quantity that lurked in the background and referenced but never directly treated. Understanding of it's importance only gradually seeping after many years. A better intuition of covariance at the very beginning of my career would have likely made my progress that much more efficient.
 
-Here I focus upon using [Julia](https://julialang.org/), as in my experience, it is a clear didactic tool and better for long-term learning and simultaneously use in large projects due to maintainability of the code-base and high performance. It is an open-source platform created by mathematicians, engineers, natural scientists, statisticians, computer scientists and machine learning specialists, each bringing the best from their respective fields and lessons learned from domain-specific software platforms in a coherent and performative fashion. At the time of this writing, there still remain some lingering issues (start up speed, recompilation of code and incompatibility creep when there are updates to any library, most already being addressed rapidly), but the speed that is offered and code clarity in exchange is worth it in any serious data manipulation efforts. Your mileage will vary, but the lessons learned are also easily transportable to R, python, matlab, octave, etc., if you are forced to use those platforms. They each have their own quirks and challenges, but until their eventual convergence into something that will likely look a lot like Julia, it is still a great platform to learn, teach and operate/develop cutting edge work. Many learning tools exist. [Have a look here for a curated list](https://julialang.org/learning/). See the Appendices for more details.
+Here I focus upon using [Julia](https://julialang.org/), as in my experience, it is a clear didactic tool and better for long-term learning and simultaneously use in large projects due to maintainability of the code-base and high performance. It is an open-source platform created by mathematicians, engineers, natural scientists, statisticians, computer scientists and machine learning specialists, each bringing the best from their respective fields and lessons learned from domain-specific software platforms in a coherent and performative fashion. At the time of this writing, there still remain some lingering issues (start up speed, recompilation of code and incompatibility creep when there are updates to any library, most already being addressed rapidly), but the speed that is offered and code clarity in exchange is worth it in any serious data manipulation efforts. Your mileage will vary, but the lessons learned are also easily transportable to R, python, matlab, octave, etc., if forced to use those platforms. They each have their own quirks and challenges, but until their eventual convergence into something that will likely look a lot like Julia, it is still a great platform to learn, teach and operate/develop cutting edge work. Many learning tools exist. [Have a look here for a curated list](https://julialang.org/learning/). See the Appendices for more details.
 
 Consider installing [Julia](https://julialang.org/)  through [juliaup](https://github.com/JuliaLang/juliaup). It can make maintenance simpler. Most functions used here that are not part of a standard library are collected together in [Julia](https://julialang.org/) functions at [src](../src/). They can be loaded with supporting standard libraries, as follows:
 
@@ -53,7 +53,7 @@ Consider installing [Julia](https://julialang.org/)  through [juliaup](https://g
 # project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  # mswindows
 project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # mswindows generic
  
-# if this is your first run, this can take up to 1 hour to install and precompile libraries and their dependencies
+# if this is the first run, this can take up to 1 hour to install and precompile libraries and their dependencies
 include( joinpath( project_directory, "scripts", "startup.jl" ) )   
 
 
@@ -164,7 +164,7 @@ And some more related to variance:
 
   $= E[ x^2] - E[x]^2$
 
-Already, you can see how it is implicated with, or is foundational to many important statistical concepts and identities.
+Already, it is obviously implicated with, or is foundational to many important statistical concepts and identities.
 
 $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
@@ -270,7 +270,7 @@ $~$  &nbsp; <br /> <!-- adds invisible space and line break(2) -->
 
 ### Model-based partial correlation
 
-This requires an understanding of Linear regression so a bit out of sequence as it has not yet been introduced. Skip ahead to Linear Regression if you need more background.
+This requires an understanding of Linear regression so a bit out of sequence as it has not yet been introduced. Skip ahead to Linear Regression if more background is required.
 
 Our purpose here is to obtain a way to flexibly obtain correlations from a model-based approach. Ultimately, this amounts to estimating partial correlations, however, for cases where additional factors are hierarchical, complex random effects in time and space, this is seldom discussed.
 
@@ -696,7 +696,7 @@ Notice the dot product $X^T X^T$, is our covariance matrix. As this is a common 
     aicc(res)
     bic(res)
     scatter(X, Y)
-    plot!(X, predict(res), seriestype = :line) #where x is your predictor variable
+    plot!(X, predict(res), seriestype = :line) #where x is the predictor variable
 
   # or just to get betas:
   betas = linear_regression_simple(X, Y, method="qr")
@@ -1298,7 +1298,7 @@ println("\nInterpretation: Despite some data points being censored (reported as 
 
 ```
 
-The logcdf function is crucial for correctly incorporating censored data into the likelihood calculation. Here's a breakdown:
+The logcdf function is crucial for incorporating censored data into the likelihood calculation. Here's a breakdown:
 
 Censored Data Nature: When an observation is left-censored, we don't know its exact value, only that it is less than or equal to a certain threshold (the censoring_threshold). For example, a water sample might be reported as < 0.01 ppm, meaning the true concentration is somewhere between 0 and 0.01 ppm.
 
@@ -2171,7 +2171,7 @@ println("Temperature Coeff (beta_coeffs[2]): ", round(mean(chain_sdm[:beta_coeff
 println("Precipitation Coeff (beta_coeffs[3]): ", round(mean(chain_sdm[:beta_coeffs___3]), digits=3))
 
 # You can further analyze the chain for credible intervals, diagnostics, or make predictions
-# For example, to predict probabilities for new locations, you'd use the posterior means of beta_coeffs.
+# For example, to predict probabilities for new locations, use the posterior means of beta_coeffs.
 # new_X = hcat(ones(1), new_temp_scaled, new_precip_scaled)
 # predicted_prob = StatsAPI.logistic(new_X * [mean(chain_sdm[:beta_coeffs___1]), ...])
 
@@ -3610,7 +3610,7 @@ m = ar1_gp( Y=Y, ar1=xi )  # using xi the x index
 
 rand( m )  # test
 
-res = sample( m, NUTS(), 500; init_ϵ=0.01 )  # ϵ = 0.2;  100@25sec
+res = sample( m, NUTS(), 100; init_ϵ=0.01 )  # ϵ = 0.2;  100@25sec
 
 showall( showall(res) )
 
@@ -3840,7 +3840,7 @@ display(plot_daniell)
 
 println("\nThis smoothed version, similar to a Daniell periodogram, reduces the variance and highlights the dominant frequency components more clearly compared to the raw direct periodogram.")
 
-println("\nIn practice, for robust spectral estimation, `welch_pgram` (which you've already seen) is a very good and commonly used method as it implicitly handles smoothing through segment averaging and windowing.")
+println("\nIn practice, for robust spectral estimation, `welch_pgram` is a very good and commonly used method as it implicitly handles smoothing through segment averaging and windowing.")
 
 
 
@@ -3851,7 +3851,7 @@ println("### Multitaper Periodogram (using `DSP.mt_pgram`)\n")
 # 'NW' is the time-bandwidth product, a key parameter for multitaper
 # A common choice for NW is 2 or 3.
 # We'll use default parameters for demonstration, but these can be tuned.
-# For example, to specify NW=3, you might do mt_pgram(x, fs=fs, nw=3)
+# For example, to specify NW=3, use mt_pgram(x, fs=fs, nw=3)
 p_mt = mt_pgram(x, fs=fs)
 
 # Extract frequencies and power spectral density
@@ -4052,7 +4052,7 @@ The bandwidth should be sufficient to smooth our estimate, but if we use a bandw
 
 The bandwidth is predominately controlled by the number of values that are averaged in the smoothing.  In other words, the m parameter for the Daniell kernel and whether the kernel is convoluted (repeated) affect the bandwidth.
 
-Note:  The bandwidths R reports with its plots don’t match the values that would be calculated using the formulas above.  Please see the footnote on p. 197 of your text for an explanation.
+Note:  The bandwidths R reports with its plots don’t match the values that would be calculated using the formulas above.  
 
 Averaging/smoothing the periodogram with a Daniell kernel can be accomplished in R using a sequence of two commands.  The first defines a Daniell kernel and the second creates the smoothed periodogram.
 
@@ -4065,7 +4065,7 @@ The first command creates the weighting coefficients needed for the smoothing an
 
 If a convolution is desired, the kernel command could be modified to something like k = kernel("daniell", c(4,4)).
 
-There are two possible ways to achieve a modified Daniell kernel.  You can either change the kernel command to refer to the “modified.daniell” rather than “daniell” or you can skip using the kernel command and use a spans parameter in the spec.pgram command.
+There are two possible ways to achieve a modified Daniell kernel.  You can either change the kernel command to refer to the “modified.daniell” rather than “daniell” or skip using the kernel command and use a spans parameter in the spec.pgram command.
 
 The spans parameter gives the length (=2m+1) of the desired modified Daniell kernel.  For instance, a modified Daniell kernel with m = 4 has length L = 2m+1 = 9 so the we could use the command
 
@@ -4093,7 +4093,7 @@ The next plot is a smoothed periodogram using two passes of a Daniell kernel wit
 
 graph
 
-To learn where the two dominant peaks are located, assign a name to the spec.pgram output and then you can list it.  For instance,
+To learn where the two dominant peaks are located, assign a name to the spec.pgram output.  For instance,
 
 specvalues = spec.pgram(x, k, taper=0, log="no")
 specvalues
@@ -4718,24 +4718,30 @@ plot(plot1, plot2, layout=(2, 1), size=(800, 600))
 
 ##### Bayesian FFT
 
-Likelihood in the Frequency Domain: Instead of modeling the time-domain signal y directly, you could define your likelihood in the frequency domain. For example:
+Likelihood in the Frequency Domain: Instead of modeling the time-domain signal y directly, we examine the likelihood in the frequency domain. For example:
 
-You could calculate Y_obs = fft(y_observed).
-Then, you could construct the expected frequency spectrum Y_model from your parameters (e.g., amplitudes, phases, or complex coefficients) and apply your likelihood function to Y_obs and Y_model.
-This approach is valid, but you need to be careful about the properties of noise in the frequency domain. If your time-domain noise is white Gaussian, then the frequency-domain noise will also be approximately white Gaussian (though complex-valued), allowing for a similar MvNormal likelihood but with complex numbers.
-Generative Model from Frequency Components: You could define your parameters directly in the frequency domain (e.g., complex FFT coefficients or spectral densities), and then use the Inverse FFT (ifft) within your generative model to construct the time-domain signal μ:
+Y_obs = fft(y_observed).
+
+then construct the expected frequency spectrum Y_model from the parameters (e.g., amplitudes, phases, or complex coefficients) and apply likelihood function to Y_obs and Y_model.
+
+This approach is valid, we need to be careful about the properties of noise in the frequency domain. If time-domain noise is white Gaussian, then the frequency-domain noise will also be approximately white Gaussian (though complex-valued), allowing for a similar MvNormal likelihood but with complex numbers.
+
+Generative Model from Frequency Components: Define parameters directly in the frequency domain (e.g., complex FFT coefficients or spectral densities), and then use the Inverse FFT (ifft) within the generative model to construct the time-domain signal μ:
 
 complex_coefficients ~ Prior(...)
-μ = ifft(complex_coefficients)
-y ~ MvNormal(μ, σ^2 * I) This allows you to place priors directly on spectral properties. However, modeling complex coefficients or ensuring physically meaningful priors (e.g., Hermitian symmetry for real signals) can be more challenging than modeling real-valued C_k and S_k terms.
-Why is it not the default for basic harmonic decomposition?
 
-The harmonic decomposition model we implemented (using C_k * sin(...) + S_k * cos(...)) already performs a form of spectral analysis by building the signal from its harmonic components. For a fixed, small set of known frequencies, this parameterization (C_k, S_k) is often more intuitive, easier to assign priors to, and directly gives you amplitude and phase for each component.
+μ = ifft(complex_coefficients)
+
+y ~ MvNormal(μ, σ^2 * I) 
+
+This allows priors directly on spectral properties. However, modeling complex coefficients or ensuring physically meaningful priors (e.g., Hermitian symmetry for real signals) can be more challenging than modeling real-valued C_k and S_k terms.
+
+The harmonic decomposition model we implemented (using C_k * sin(...) + S_k * cos(...)) already performs a form of spectral analysis by building the signal from its harmonic components. For a fixed, small set of known frequencies, this parameterization (C_k, S_k) is often more intuitive, easier to assign priors to, and directly gives amplitude and phase for each component.
 
 Using fft directly within the Turing model could be beneficial if:
 
-You have a very large number of frequencies to model, and you want to impose global priors on the spectral shape (e.g., smoothness of the spectrum).
-You are interested in modeling properties that are more naturally expressed in the frequency domain (e.g., specific spectral densities).
+There are a very large number of frequencies to model and need to impose global priors on the spectral shape (e.g., smoothness of the spectrum).
+To modeling properties that are more naturally expressed in the frequency domain (e.g., specific spectral densities).
 However, performing the fft operation on the generated signal at every MCMC step can add computational overhead, especially for very long time series, although FFTW.jl is highly optimized.
 
 
@@ -7098,7 +7104,6 @@ We'll define priors for all parameters (variances, length scales, angles, observ
 *   **Parameter constraints**: Length scales must be positive, angles typically within `[-pi/2, pi/2]` or `[0, pi]`, and variances positive. Turing.jl handles some of this with appropriate priors (e.g., `Gamma` for variance, `InverseGamma` for noise variance).
 *   **Computational Cost**: Generating the spatial field via FFT within each MCMC step can be computationally intensive, especially for large grids. The original likelihood calculation iterated over each frequency component, which can be very slow. The updated model below optimizes this by grouping components and using `MvNormal` for more efficient evaluation.
 
-For `nu=2.5`, we are assuming that `anisotropic_matern_spectral_density` is correctly formulated for this `nu` value. If you strictly mean `nu=2/3`, you would need to adjust the `nu` parameter in the `anisotropic_matern_spectral_density` function to `2/3`.
 
 ```{julia}
 @model function AnisotropicMaternFFT(y_observed, N, L, K1_obs, freq_x_grid, freq_y_grid, nu1, nuK1)
@@ -7233,7 +7238,6 @@ Zero Frequency Component: The DC component (mean) of the spatial field is often 
 
 Parameter constraints: Length scales must be positive, angles typically within [-pi/2, pi/2] or [0, pi], and variances positive. Turing.jl handles some of this with appropriate priors (e.g., Gamma for variance, InverseGamma for noise variance).
 Computational Cost: Generating the spatial field via FFT within each MCMC step can be computationally intensive, especially for large grids. The original likelihood calculation iterated over each frequency component, which can be very slow. The updated model below optimizes this by grouping components and using MvNormal for more efficient evaluation.
-For nu=2.5, we are assuming that anisotropic_matern_spectral_density is correctly formulated for this nu value. If you strictly mean nu=2/3, you would need to adjust the nu parameter in the anisotropic_matern_spectral_density function to 2/3.
 
 
 
@@ -7767,7 +7771,7 @@ rand(m)
 
 res = sample(m, Prior(), 500)
 
-res = sample(m, Turing.NUTS(), 500)
+res = sample(m, Turing.NUTS(), 100)
 
 beta = Array( posterior_samples(res, sym=:beta) )
 betat = Array( posterior_samples(res, sym=:betat) ) # time drift
@@ -8941,7 +8945,7 @@ exp_cov_fn(D, phi) = exp.(-D / phi)
     y ~ MvNormal(mu * ones(N), K + sig2 * LinearAlgebra.I(N))
 
     # # Prior for linear model coefficients
-    #  beta ~ Normal(zeros(J), s_beta)  # you may need to choose s_beta carefully.
+    #  beta ~ Normal(zeros(J), s_beta)  # choose s_beta carefully.
 #   # Sampling Distribution.
 #   y ~ MvNormal(mu * ones(N) + Z * beta, K + sig2 * LinearAlgebra.I(N))
 
@@ -9461,7 +9465,7 @@ nu =10
 model = model_all_gp(ys, xs, us, nu)
 
 
-chain = sample(model, NUTS(), 500)
+chain = sample(model, NUTS(), 100)
  
 
 ```
@@ -10724,7 +10728,7 @@ This is the same idea behind PCA in that an eigen decomposition of a matrix is u
 
 Principal Coordinates Analysis (PCoA), also known as classical or metric Multidimensional Scaling (MDS), aims to find a lower-dimensional representation of data points given a dissimilarity matrix, preserving the original distances as much as possible.
 
-Bayesian PCoA is equivalent to Bayesian MDS and CA (below) but with alternative distance metrics. This model directly assumes that your observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise. Again with the Bayesian form, the axis flipping associated with rotational invariance means additional effort (via the Householder transform is advisable.)
+Bayesian PCoA is equivalent to Bayesian MDS and CA (below) but with alternative distance metrics. This model directly assumes that observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise. Again with the Bayesian form, the axis flipping associated with rotational invariance means additional effort (via the Householder transform is advisable.)
 
 
 
@@ -10911,7 +10915,7 @@ display(biplot)
 
 #### Bayesian form
 
-Bayesian CA is equivalent to Bayesian PCoA (above) and MDS (below), where the distance metric is the Chi-squared distance. This model directly assumes that your observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise. Simply replace the metric. Again with the Bayesian form, the axis flipping associated with rotational invariance means additional effort (via the Householder transform is advisable).
+Bayesian CA is equivalent to Bayesian PCoA (above) and MDS (below), where the distance metric is the Chi-squared distance. This model directly assumes that observed dissimilarities D_obs are generated from the Euclidean distances of underlying latent coordinates X, plus some noise. Simply replace the metric. Again with the Bayesian form, the axis flipping associated with rotational invariance means additional effort (via the Householder transform is advisable).
 
 
 
@@ -10925,7 +10929,7 @@ Attempts to achieve similar goals of maximally representing similarities and dif
 using Distances, MultivariateStats
  
 # This is a sample dissimilarity matrix, e.g., computed from some features.
-# For NMDS, you typically start with a dissimilarity matrix.
+# For NMDS, start with a dissimilarity matrix.
 
 data_points = rand(10, 5) # 10 observations, 5 features
 dissimilarities = pairwise(Euclidean(), data_points, dims=2) # Compute Euclidean distances as dissimilarities
@@ -10975,7 +10979,7 @@ The simpler form of MDS is equivalent to the PCoA and CA, above.
 
 #### Extending to Nonmetric Bayesian MDS
 
-For a truly nonmetric Bayesian MDS, the main difference lies in how D_obs is related to D_latent. Instead of a direct Normal likelihood, you would introduce a monotonic function f such that f(D_obs) ~ Normal(D_latent, sigma). This function f itself would be part of the model and needs to be estimated. Common approaches for f include:
+For a truly nonmetric Bayesian MDS, the main difference lies in how D_obs is related to D_latent. Instead of a direct Normal likelihood, introduce a monotonic function f such that f(D_obs) ~ Normal(D_latent, sigma). This function f itself would be part of the model and needs to be estimated. Common approaches for f include:
 
 Spline-based monotonic functions: Represent f using monotonic splines with priors on their coefficients.
 Isotonic Regression: Use an increasing sequence of values delta_i for each unique observed dissimilarity d_i, such that delta_i ~ Normal(D_latent_corresponding, sigma) and delta_i < delta_{i+1}. This is more complex to implement directly in a probabilistic programming language like Turing as it requires constrained sampling.
@@ -11179,7 +11183,7 @@ end
 # BrayCurtis(): Very popular for community abundance data because it accounts for differences in total abundance and composition without being overly sensitive to zeros.
 # Jaccard(): The standard for presence/absence (binary) data.
 # Cityblock(): Also known as Manhattan distance. Sum of absolute differences; less sensitive to outliers than Euclidean distance.
-# CosineDist(): Useful if you are more interested in the "angle" or proportion between variables rather than their absolute magnitude.
+# CosineDist(): Useful if interested in the "angle" or proportion between variables rather than their absolute magnitude.
 
 observed_r, p_value, permuted_r_values = mantel_test(
     species_data,
@@ -11367,7 +11371,7 @@ end
 
 #### Bayesian 2D Procrustes (Turing)
 
-This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when your data is noisy or you need a probabilistic estimate of how well two shapes align.
+This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when data is noisy or a probabilistic estimate of how well two shapes align.
 
  
 Given two sets of points, X_obs and Y_obs, this model infers the optimal transformation (scale, rotation, translation) and observation noise to superimpose X_obs onto Y_obs.
@@ -11510,7 +11514,7 @@ StatsPlots.plot(chain, seriestype=:density, layout=(4,1), legend=false,
 
 #### Bayesian 3D Procrustes
 
-In 2D, rotation has only 1 degree of freedom (a single angle $\theta$). In 3D, rotation has 3 degrees of freedom. While you could use Euler angles (yaw, pitch, roll), they suffer from "gimbal lock" and discontinuities that can hinder MCMC sampling.
+In 2D, rotation has only 1 degree of freedom (a single angle $\theta$). In 3D, rotation has 3 degrees of freedom. While Euler angles can be used (yaw, pitch, roll), they suffer from "gimbal lock" and discontinuities that can hinder MCMC sampling.
 
 A more robust approach for Turing is to use a Rotation Vector (also known as the Exponential Map). This represents rotation as a 3D vector where the direction is the axis of rotation and the magnitude is the angle. We then use Rodrigues' Rotation Formula to convert this vector into a $3 \times 3$ matrix.
 
@@ -11519,7 +11523,7 @@ Helper Functions: The rodrigues and skew_3d functions are necessary to map the 3
 Efficiency: Using the exponential map avoids the periodic boundary issues of Euler angles, allowing the NUTS sampler to move smoothly through the rotation space.
 
 
-This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when your data is noisy or you need a probabilistic estimate of how well two shapes align.
+This treats the alignment as a generative process: $Y = s \cdot X \cdot R + T + \epsilon$. This is useful when data is noisy or a probabilistic estimate of how well two shapes align is required.
 
 ```{julia}
 using Turing, LinearAlgebra
@@ -13272,74 +13276,69 @@ Indeed, this *ecosystem variability* induces something very important: complex s
 In hydrodynamically complex areas such as NAFO Statistical Division 4VWX (Maritimes Region of Atlantic Canada) where a number of oceanic currents converge and there has also been ongoing rapid climate change and historically significant and rapid ecological change, the influence of *ecosystem variability* can not be safely ignored. Snow crab surveys, initially in the mid-1990s were exploratory and occurred in near-shore areas of known fishing activity. Surveys rapidly expanded to shelf-wide scales when it became evident that their spatial distribution was much larger and more heterogeneous than previously understood. This expansion of the survey only stabilized in the early 2000s. As such, spatial bias exists, precluding any simple analysis or naive aggregation scheme. Additional bias is also possible with the use of a new fishing vessel in 2004 and again in 2014. Further, in the southern-most area of snow crab distribution (Crab fishing area 4X), trawl survey coverage has been historically sporadic but have stabilized since 2004 (with the exception of 2014).
 
 
-### GP simple (aks, Kriging with/without external drift)
+### GPs simple structure and dense (aks, Kriging with/without external drift)
 
-Assume time is fixed (year) and the rest is random structured covariance.
+Gaussian Processes (GPs) are useful non-parametric models, but their computational cost scales cubically with the number of data points $O(N^3)$, making them impractical for large datasets. This means functionally only simple spatial structure is addressable. This means time variations are usually treated as a fixed (year) effect (independent) and other covariates are ignored ("ordinary" kriging) or modelled as a two step process as an externality (Universal Kriging with "External Drift", UKED).
 
-Historically, the statistical approach used to aggregate/integrate sampled observations was kriging (Biron et al. 1997), a method of data interpolation that borrows from the information found in the manner in which variability changes with distance from a given location (spatial covariance/autocorrelation; Cressie 1993). The optimal survey design for this approach is generally considered to be a uniform grid. To this end, the snow crab survey locations were randomly chosen locations in a 10  10 minute areal grid (Biron et al. 1997). The rationale for the choice grid size is not clear as 10 minutes in longitude is not the same distance as 10 minutes in latitude, and also the distance of 10 minutes in longitude varies with latitude. This renders each sampling grid unequal in surface area and therefore an unequal influence upon the integration in space. Sampling within each such grid is/was also pseudo-random at best. This is because many locations are not directly accessible to trawls. The substrate in Maritimes Region is notoriously rugged, ragged, rocky with deep trenches in many areas; features that do not permit fishing nets to pass unharmed or force the nets to become part of the substrate. There was, therefore, bias introduced in bottom type selection, one that preferred trawlable locations, these locations also tend to be uniform depths, softer, gravel or mud substrates that coincide with preferred snow habitats. This resulted in preferential sampling of deeper locations, colder temperatures, and very different species associations.
+Historically, the statistical approach used to aggregate/integrate sampled observations was kriging (Biron et al. 1997), a method of data interpolation that borrows from the information found in the manner in which variability changes with distance from a given location (spatial covariance/autocorrelation; Cressie 1993). The optimal survey design for this approach is generally considered to be a uniform grid. To this end, the snow crab survey locations were randomly chosen locations in a 10  10 minute areal grid (Biron et al. 1997). The rationale for the choice grid size is not clear as 10 minutes in longitude is not the same distance as 10 minutes in latitude, and also the distance of 10 minutes in longitude varies with latitude. This renders each sampling grid unequal in surface area, and therefore, has an unequal influence upon the integration in space. Sampling within each such grid is/was also pseudo-random at best. This is because many locations are not directly accessible to trawls. The substrate in Maritimes Region is notoriously rugged, ragged, rocky with deep trenches in many areas; features that do not permit fishing nets to pass unharmed or force the nets to become part of the substrate. There was, therefore, bias introduced in bottom type selection, one that preferred trawlable locations, these locations also tend to be uniform depths, softer, gravel or mud substrates that coincide with preferred snow habitats. This resulted in preferential sampling of deeper locations, colder temperatures, and very different species associations.
 
 Survey locations are clustered in complex ways due to the historicity of fisheries management designations of fishing areas, number of licenses and quotas, and the industry funded nature of the survey with varying levels of contributions. Ultimately, this resulted in aggregations of survey stations in core fishing areas, no sampling in non-core areas, again introducing bias towards areas of snow crab habitat (Figure). Indeed, sampling of locations known to be ephemeral or unlikely to carry snow crab were considered by many in industry to be a waste of their funding. Even to this day, we still do not know the full limits of their spatial distribution and movement due to operational and logistical constraints (survey trawls cannot reasonably go beyond 350 m depth), and instead focus upon the locations that are accessible to the fishery that have their own depth, distance and operational constraints.
 
 Currently, sampling is as extensive and intensive as possible, limited by trawl-accessible depths (350 m), to permit an objective determination of the spatial bounds of the snow crab population; information that must be known if reliable estimates of biomass and population structure (e.g., size, sex, maturity) are to be made. The spatial distribution of snow crab is quite dynamic and so can rapidly shift to areas where they are not "traditionally" found. In addition, the distributional patterns of immature, soft-shelled, very old and female crabs do not correspond completely to those of legal size males. The former are considered to be less competitive and more susceptible to predation (Hooper 1986) and usually observed in environments or substrates with greater cover (gravel, rocks; Comeau et al. 1998). Sampling that focused upon only those areas where large hard-shelled males occur in high frequency would preclude the reliable estimation of the relative abundance of these other important segments of the crab population.
 
 
-### GPs with structure
+### GPs with complex structures and sparsity
 
-Many kinds of structure exist and can be approximated. The more one tries to be realistic, the problem size becomes larger. From the above, we can now focus upon the most performant approaches: namely sparse GPs with inducing points.  
+Given that complex structure exists in most data of interest, we attempt to approximate them. However, greater realism results in a larger problem size. GPs are flexible demand resources that do not exist for realistic problems. This performance bottleneck can be addresssed with **Sparse Gaussian Processes** (SGPs) with inducing points. We will incrementally develop models of increasing complexity to handle measurement error, periodic dynamics, and spatial dependencies.
 
-Developing a general framework to explore various models of increasing complexity to handle measurement error, periodic dynamics, and spatial dependencies.
+Gaussian Processes (GPs) are useful non-parametric models, but their computational cost scales cubically with the number of data points $O(N^3)$, making them impractical for large datasets. SGPs address this limitation by approximating the full GP, reducing the complexity to $O(N M^2)$ or $O(M^3)$ (where M is the number of inducing points or features, and $M \ll N$). Two leading approaches are: Random Fourier Features (RFF) and Fully Independent Training Conditional (FITC).
 
-Gaussian Processes (GPs) are useful non-parametric models that can address these features, but their computational cost scales cubically with the number of data points ($O(N^3)$) for inference, making them impractical for large datasets. **Sparse Gaussian Processes** address this limitation by approximating the full GP, typically reducing the complexity to $O(N M^2)$ or $O(M^3)$ (where M is the number of inducing points or features, and $M \ll N$).
+Random Fourier Features (RFF)
 
-Both Random Fourier Features (RFF) and Fully Independent Training Conditional (FITC) are methods used to make Gaussian Processes (GPs) computationally tractable for large datasets, but they achieve this sparsification through fundamentally different approaches.
-
-
-Key Differences Summarized:
-
-Feature
-
-- Random Fourier Features (RFF)
-- Fully Independent Training Conditional (FITC)
-
-
-Approach:
+- Creates a fixed, low-dimensional representation of the input space that approximates the kernel, turning GP inference into a linear problem.
 - Approximates the kernel function via feature map.
-- Approximates the posterior distribution via inducing points.
-
-Sparsity Source:
-
--	Finite set of random basis functions.
-- Small set of judiciously chosen inducing points.
-
-Computational Cost
-- $O(N M^2)$$O(N M^2)$ (often simpler constants).
-- $O(N M^2 + M^3)$$O(N M^2 + M^3)$ (with $M$$M$ inducing points).
-
-Interpretation:
+-	Sparsity: Finite set of random basis functions.
+- $O(N M^2)$ $O(N M^2)$ (often simpler constants).
 - GP as a linear model in a random feature space.
+- Relatively direct implementation, defines a feature mapping $\phi(x)$$\phi(x)$.
+
+
+Fully Independent Training Conditional (FITC)
+
+- Selects a few representative data points (inducing points) to capture the essence of the GP's behavior, simplifying the covariance structure directly. 
+- Approximates the posterior distribution via inducing points.
+- Sparsity: Small set of judiciously chosen inducing points.
+- $O(N M^2 + M^3)$$O(N M^2 + M^3)$ (with $M$$M$ inducing points).
 - GP conditioned on a smaller set of latent variables.
+- Implementation requires managing inducing points and their optimization.
 
-Implementation:
-- Relatively direct, defines a feature mapping $\phi(x)$$\phi(x)$.
-- Requires managing inducing points and their optimization.
-
-
-In essence, RFF creates a fixed, low-dimensional representation of the input space that approximates the kernel, turning GP inference into a linear problem.
-
-FITC, on the other hand, selects a few representative data points (inducing points) to capture the essence of the GP's behavior, simplifying the covariance structure directly. Both are powerful tools for scaling GPs to larger datasets, each with its own strengths and weaknesses depending on the specific application and data characteristics.
+In what follows, we develop and compare the utility and performance of these approximations.
 
 
+#### V0: Base model - Dense Kernel Matrix Spatiotemporal GP, Isometric in space
 
-#### V0: Base model - Dense Kernel Matrix Spatiotemporal GP
-
-A dense kernel matrix-based Gaussian Process approach to spatiotemporal modelling with a dependent variable Y, spatial covariate Z, spatiotemporal covariates U1, U2, U3 and locations Xlon, Xlat and time T, where T has an annual process and a seasonal harmonic process and observation error E. Space and Time follows a separable covariance structure (Matern). Use a non-centered parameterization for Y and all latent covariates. A 'non-centered parameterization' (e.g., `U1_offset ~ Normal(0, 1)` followed by `U1_true = mean + offset * std`) helps hierarchical Bayesian models as it decouples the geometry of the prior from the likelihood, significantly reducing 'funnel' geometries that often cause the NUTS sampler to diverge or exhibit low effective sample sizes.
-
+First we define a base model, a dense kernel matrix-based Gaussian Process for all covariances with the following structure:  dependent variable Y, spatial covariate Z, spatiotemporal covariates U1, U2, U3 and locations Xlon, Xlat and time T, where T has an annual process and a seasonal harmonic process and observation error E. Space and Time follows a separable covariance structure (Matern). Use a non-centered parameterization for Y and all latent covariates (for stability). 
  
-Problem: expressive but very slow, really slow
+Advantage: highly flexible and expressive and coding is relatively simple. 
+Disadvantage: very slow -- really slow.
+
+The base model  uses a naive dense Kernel Matrix GP: The model explicitly calculates K_s and K_t and combines them to form the dense kernel matrix K for the MvNormal distribution of f, aligning with a dense kernel matrix approach.
+
+Spatiotemporal Covariates: incorporates y_obs, z, coords_space, coords_time, and the latent u1_true, u2_true, u3_true as specified.
+
+Seasonal Harmonic Process: The seasonal component is implemented using beta_cos and beta_sin with trigonometric functions of time.
+
+Annual Process (Trend): The trend is modeled as a non-centered random walk using alpha_raw and cumsum.
+
+Observation Error: sigma_y for y_obs and sigma_u for the u_obs variables model observation error.
+Separable Covariance Structure: The spatiotemporal kernel K is explicitly defined as (sigma_f^2) .* K_s .* K_t, demonstrating a separable structure.
+
+Isotropic Spatial Kernel: ls_s is a single lengthscale, and k_s uses ScaleTransform(inv(ls_s)), implementing an isotropic spatial kernel.
+
+Non-centered Parameterization: u1_true, u2_true, u3_true are constructed using non-centered parameterizations, and the alpha_raw for the trend is also non-centered, improving sampler efficiency.
 
 
 ```{julia}
-
 @model function model_v0_dense_gp(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0)
     N = length(y_obs)
     T_unique = length(unique(coords_time))
@@ -13367,13 +13366,14 @@ Problem: expressive but very slow, really slow
     trend = alpha_t[Int.(coords_time[:,1])]
 
     # Spatiotemporal GP (Separable)
-    ls_s ~ filldist(Gamma(2, 2), D_s)
+    # Corrected: Isotropic spatial lengthscale (single value)
+    ls_s ~ Gamma(2, 2)
     ls_t ~ Gamma(2, 2)
     sigma_f ~ Exponential(1.0)
 
-    # Correcting Kernel Transformations for ARD
-    # Spatial kernel (ARD): use ARDTransform with the inverse lengthscales
-    k_s = SqExponentialKernel() ∘ ARDTransform(inv.(ls_s))
+    # Correcting Kernel Transformations for Isotropic Spatial Kernel
+    # Spatial kernel (Isotropic): use ScaleTransform with the inverse lengthscale
+    k_s = SqExponentialKernel() ∘ ScaleTransform(inv(ls_s))
 
     # Temporal kernel: ensure coords_time is a vector for 1D kernel
     k_t = SqExponentialKernel() ∘ ScaleTransform(inv(ls_t))
@@ -13395,22 +13395,32 @@ Problem: expressive but very slow, really slow
     u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
     u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+
 end
+
 
 data = example_data( "complex_testdata", 50)
 
 model_v0 = model_v0_dense_gp(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time)
-chain_v0 = sample(model_v0, MH(), 100)
+chain_v0 = sample(model_v0, NUTS(), 100)  # 574.91 seconds
 display(describe(chain_v0))
-waic_v0 = compute_y_waic(model_v0, chain_v0)  # not reliable without convergence
-println("WAIC for V0: ", waic_v0)
+waic_v0 = compute_y_waic(model_v0, chain_v0)  
+println("WAIC for V0: ", waic_v0) # 166.73071132617955
+
 ```
+
 
 #### V1: Nonseparable spatial covariance
 
 Using the base model V0 as the basis, extend it by having a non-separable anisotropic spatial process.
 
 This model extends V0 by using a non-separable anisotropic kernel for the spatiotemporal Gaussian Process. Instead of multiplying separate spatial and temporal kernels, a single kernel is applied to the combined spatiotemporal coordinates, allowing for complex interactions between space and time. Anisotropy is handled by using an ARD (Automatic Relevance Determination) kernel, assigning a unique lengthscale to each dimension (longitude, latitude, and time).
+
+Non-separable Spatiotemporal GP: The model combines spatial (coords_space) and temporal (coords_time) coordinates into a single coords_st matrix. A single SqExponentialKernel is then applied directly to these combined coordinates, which inherently creates a non-separable covariance structure, as opposed to multiplying separate spatial and temporal kernels.
+
+Anisotropic Kernel (ARD): Anisotropy is handled by defining D_st (total dimensions, i.e., 2 for space + 1 for time = 3) separate lengthscales via ls_st ~ filldist(Gamma(2, 2), D_st). These individual lengthscales are then incorporated into the kernel using ARDTransform(inv.(ls_st)), ensuring each dimension has its own characteristic lengthscale.
+
+Extension of V0: The model retains the core components from V0, including the latent covariates (u1_true, u2_true, u3_true), seasonal component, and time-varying trend, while properly integrating the new spatiotemporal GP structure.
 
 ```{julia}
 
@@ -13468,13 +13478,14 @@ This model extends V0 by using a non-separable anisotropic kernel for the spatio
 end
 
 
-data = example_data( "complex_testdata", 50)
+data = example_data( "complex_testdata", 50) 
 
 model_v1 = model_v1_anisotropic_gp(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time)
-chain_v1 = sample(model_v1, MH(), 100) # Using MH sampler for demonstration, consider NUTS for better sampling
+chain_v1 = sample(model_v1, NUTS(), 100) #  1340.86 seconds (twice as long as V0)
 display(describe(chain_v1))
 waic_v1 = compute_y_waic(model_v1, chain_v1)
-println("WAIC for V1: ", waic_v1)
+println("WAIC for V1: ", waic_v1) # 724.226399993753 (poorer than V0)
+
 ```
 
 #### V2: Fully Adaptive Random Fourier Features  (RFF)
@@ -13520,6 +13531,14 @@ Using the base model V1 as the basis:
 
 
 This model builds upon V1 by replacing the direct computation of the dense kernel matrix with an approximation using Random Fourier Features (RFF). The 'adaptive' aspect comes from treating the RFF projection weights `W` and offsets `b` as parameters within the Bayesian model, allowing the model to learn the spectral density of the kernel directly from the data. The latent GP `f` is then constructed as a linear combination of these learned features.
+
+Adaptive Random Fourier Features (RFF): The model successfully replaces the explicit kernel matrix calculation of V1 with an RFF approximation. computes the Phi feature matrix using the rff_map helper function.
+
+Adaptive Weights and Offsets: The projection weights W_matrix and offsets b are indeed treated as parameters, drawn from Normal(0, 1) and Uniform(0, 2pi) priors, respectively. This allows the model to learn the optimal 'basis functions' directly from the data, which is the core of the 'adaptive' aspect.
+
+Linear Model for Latent Process: The latent GP f is constructed as a linear combination of the RFF features (Phi) and the RFF coefficients (beta_rff), where beta_rff are also parameterized with a prior dependent on sigma_f.
+
+Preservation of V1 Components: All other essential components from V1, such as the priors for sigma_y and sigma_u, the non-centered parameterization for u_off variables, the seasonal component, the time-varying trend, and the beta_covs for other covariates, are retained.
 
 
 ```{julia}
@@ -13583,12 +13602,14 @@ This model builds upon V1 by replacing the direct computation of the dense kerne
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
 end
 
+data = example_data( "complex_testdata", 50)
+
 M_rff_val = 50 # Number of RFF features
 model_v2 = model_v2_adaptive_rff(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff=M_rff_val)
-chain_v2 = sample(model_v2, MH(), 100) # Using MH sampler for demonstration
+chain_v2 = sample(model_v2, NUTS(), 100) # 597.07 seconds
 display(describe(chain_v2))
 waic_v2 = compute_y_waic(model_v2, chain_v2)
-println("WAIC for V2: ", waic_v2)
+println("WAIC for V2: ", waic_v2) # 95.11863291759116
 ```
 
 #### V3: Nested Covariates
@@ -13600,6 +13621,24 @@ This model builds upon V2 by assuming that the covariates `U1`, `U2`, and `U3` a
 *   `U3 = f3(Z_time, Z_space, U1)`
 
 Here, `Z_time` is represented by `coords_time[:,1]` and `Z_space` by `z`. We model these functions as linear relationships with learned coefficients.
+
+
+Nested Covariate Structure: The model accurately defines the nested functional relationships:
+u1_true = beta_u1_ztime .* coords_time[:,1] .+ beta_u1_zspace .* z
+u2_true = beta_u2_ztime .* coords_time[:,1] .+ beta_u2_zspace .* z .+ beta_u2_u1 .* u1_true
+u3_true = beta_u3_ztime .* coords_time[:,1] .+ beta_u3_zspace .* z .+ beta_u3_u1 .* u1_true This implements U1 = f1(Z_time, Z_space), U2 = f2(Z_time, Z_space, U1), and U3 = f3(Z_time, Z_space, U1) using linear relationships with learned beta coefficients.
+
+Priors for Nested Covariate Coefficients: Priors (Normal(0, 1)) are assigned to all beta parameters associated with the nested covariates (beta_u1_ztime, beta_u1_zspace, beta_u2_ztime, beta_u2_zspace, beta_u2_u1, beta_u3_ztime, beta_u3_zspace, beta_u3_u1).
+
+Integration with V2 Components: The model successfully retains and integrates the components from V2:
+Seasonal Component: The beta_cos and beta_sin parameters define the seasonal pattern.
+
+Time-varying Intercept (Random Walk): The alpha_raw and sigma_alpha parameters are used to construct the trend via a cumulative sum.
+
+Spatiotemporal GP using Adaptive RFF: The RFF implementation with W_matrix, b, sigma_f, and beta_rff remains unchanged, providing the f term.
+
+Likelihoods: The likelihoods for y_obs, u1_obs, u2_obs, and u3_obs incorporate the respective true latent variables and observation errors.
+
 
 ```{julia}
 
@@ -13662,17 +13701,39 @@ Here, `Z_time` is represented by `coords_time[:,1]` and `Z_space` by `z`. We mod
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I) # u3_obs informs u3_true
 end
 
+data = example_data( "complex_testdata", 50)
+
 M_rff_val = 50 # Number of RFF features
 model_v3 = model_v3_nested_covs(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff=M_rff_val)
-chain_v3 = sample(model_v3, MH(), 100) # Using MH sampler for demonstration; consider NUTS for better sampling
+chain_v3 = sample(model_v3, NUTS(), 100) # 170.98 seconds
 display(describe(chain_v3))
 waic_v3 = compute_y_waic(model_v3, chain_v3)
-println("WAIC for V3: ", waic_v3)
+println("WAIC for V3: ", waic_v3)  # 112.23686150367824
+
 ```
 
 #### V4: Time varying intercept
 
 This model builds upon V3 by adding a latent temporal process (Random Walk Intercept), allowing the model to evolve over the temporal dimension. This is implemented by explicitly defining the `trend` component as a random walk.
+
+Time-varying Intercept (Random Walk): The model implements the trend component as a latent temporal random walk:
+T_unique is used to determine the number of unique time points for the random walk.
+alpha = Vector{Real}(undef, T_unique) defines the vector for the random walk states.
+alpha[1] ~ Normal(0, sigma_alpha) establishes the starting point for the random walk.
+
+The loop for t in 2:T_unique; alpha[t] ~ Normal(alpha[t-1], sigma_alpha); end  defines the random walk steps, where each step depends on the previous one with a variance controlled by sigma_alpha.
+The trend variable is then mapped back to the original coords_time points.
+
+Preservation of V3 Components: All key components from V3 are accurately carried over:
+
+Nested Latent Covariates: The functional definitions of u1_true, u2_true, and u3_true (based on coords_time, z, and u1_true) are identical to V3.
+
+Seasonal Component: The beta_cos and beta_sin parameters, along with the trigonometric functions of time, remain unchanged.
+
+Spatiotemporal GP using Adaptive RFF: The RFF-based GP (f) with W_matrix, b, sigma_f, and beta_rff is the same as in V3.
+
+Priors and Likelihoods: The priors for all parameters and the likelihoods for y_obs, u1_obs, u2_obs, and u3_obs are consistent with V3, with the updated mu_base now incorporating the new trend.
+
 
 
 ```{julia}
@@ -13737,16 +13798,38 @@ This model builds upon V3 by adding a latent temporal process (Random Walk Inter
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
 end
 
+data = example_data( "complex_testdata", 50)
+
 M_rff_val = 50 # Number of RFF features
 model_v4 = model_v4_time_varying_intercept(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff=M_rff_val)
-chain_v4 = sample(model_v4, MH(), 100) # Using MH sampler for demonstration; consider NUTS for better sampling
+chain_v4 = sample(model_v4, MH(), 100) # 1380.22 seconds
 display(describe(chain_v4))
 waic_v4 = compute_y_waic(model_v4, chain_v4)
-println("WAIC for V4: ", waic_v4)
+println("WAIC for V4: ", waic_v4) # 1134.1174265686002
+
 ```
 
 #### V5: Spatiotemporal Stochastic Volatility
-Using the base model V4 as the basis, extend it by treati5ng the observation noise not as a constant, but as a time-varying and space-varying process. Use a secondary RFF mapping to model the log-variance, allowing the model to account for heteroscedasticity.
+
+Using the base model V4 as the basis, but treat the observation noise not as a constant, but as a time-varying and space-varying process. This is accomplished with an RFF mapping to model the log-variance, allowing the model to account for heteroscedasticity and W_sigma, b_sigma, sigma_log_var, and beta_rff_sigma are all defined with appropriate priors.
+
+Phi_sigma is calculated using rff_map with coords_st as input, ensuring a spatiotemporal dependency with sigma_y_process derived by exponentiating log_sigma_y and dividing by 2 (as log(sigma^2)/2 = log(sigma)), resulting in a spatiotemporal standard deviation.
+
+The y_obs likelihood now uses Diagonal(sigma_y_process.^2) instead of a constant sigma_y^2 * I, accounting for heteroscedasticity.
+
+All other components of V4 are retained:
+
+- Nested Latent Covariates: The functional relationships for u1_true, u2_true, and u3_true are the same as in V4.
+
+- Seasonal Component: beta_cos and beta_sin define the seasonal pattern.
+
+- Time-varying Intercept (Random Walk): The random walk definition for alpha and its mapping to trend remains consistent.
+
+- Spatiotemporal GP using Adaptive RFF: The RFF-based GP (f) with W_matrix, b, sigma_f, and beta_rff is identical to V4.
+
+- Priors and Likelihoods (for U covariates): Priors for all parameters (except the constant sigma_y which is replaced) and the likelihoods for u1_obs, u2_obs, and u3_obs are maintained.
+
+
 
 ```{julia}
 
@@ -13823,23 +13906,22 @@ This model builds upon V4 by treating the observation noise not as a constant, b
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
 end
 
+data = example_data( "complex_testdata", 50)
+
 M_rff_val = 50 # Number of RFF features for mean GP
 M_rff_sigma_val = 20 # Number of RFF features for log-variance GP
 model_v5 = model_v5_stochastic_volatility(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff=M_rff_val, M_rff_sigma=M_rff_sigma_val)
-chain_v5 = sample(model_v5, MH(), 100) # Using MH sampler for demonstration; consider NUTS for better sampling
+chain_v5 = sample(model_v5, NUTS(), 100) #  2201.19 seconds
 display(describe(chain_v5))
 waic_v5 = compute_y_waic(model_v5, chain_v5)
-println("WAIC for V5: ", waic_v5)
+println("WAIC for V5: ", waic_v5)  # 313.3121722876543
 
 
 ```
 
 #### V6:  Fully Independent Training Conditional (FITC)
 
-Using the base model V5 as the basis
-
-
-**Fully Independent Training Conditional (FITC)**, also known as the "sparse pseudo-input GP" or "Deterministic Training Conditional (DTC)", is another popular sparse GP approximation method. Instead of approximating the kernel function directly via feature maps, FITC introduces a set of **inducing points** $Z = \{z_1, \dots, z_M\}$ (where $M \ll N$). The key idea is to approximate the covariance between observed data points by conditioning on the values of the latent GP at these $M$ inducing points.
+Extending V5 to incorporate FITC. Also known as the "sparse pseudo-input GP" or "Deterministic Training Conditional (DTC)", is another popular sparse GP approximation method. Instead of approximating the kernel function directly via feature maps, FITC introduces a set of **inducing points** $Z = \{z_1, \dots, z_M\}$ (where $M \ll N$). The key idea is to approximate the covariance between observed data points by conditioning on the values of the latent GP at these $M$ inducing points.
 
 The core approximation in FITC is that, given the inducing points, the observed data points are conditionally independent:
 $$p(f | X, Z) \approx p(f | f_Z, Z) = \prod_{i=1}^N p(f_i | f_Z, Z)$$
@@ -13870,21 +13952,28 @@ Inducing Point Optimization: A crucial aspect of FITC (and other inducing-point 
 This model builds upon V5. However, instead of using Random Fourier Features for the main GP, it implements a **Fully Independent Training Conditional (FITC)** approximation. FITC uses a smaller set of *inducing points* to approximate the full GP, significantly reducing computational cost while aiming to preserve accuracy. The model retains the nested covariates, time-varying intercept, and spatiotemporal stochastic volatility from V5.
  
 
-```{julia}
-Fully Independent Training Conditional (FITC)
+Fully Independent Training Conditional (FITC) for Main GP: The model implements the FITC approximation for the main spatiotemporal GP f:
+It takes pre-defined Z_inducing points as input.
+It defines an anisotropic spatiotemporal kernel k_st using SqExponentialKernel() ∘ ARDTransform(inv.(ls_st)), similar to V1, which makes sense for the base GP.
 
-# Helper function to generate inducing points (simple random sampling for now)
-function generate_inducing_points(coords_st, M_inducing, seed=42)
-    Random.seed!(seed)
-    N_data = size(coords_st, 1)
-    if M_inducing >= N_data
-        return coords_st # If M >= N, just use all data points (becomes exact GP)
-    end
-    indices = sample(1:N_data, M_inducing, replace=false)
-    return coords_st[indices, :]
-end
+It computes the necessary kernel matrices: K_ZZ (covariance at inducing points), K_XZ (cross-covariance between data and inducing points), and K_XX_diag (diagonal of covariance at data points).
+It samples the latent values at inducing points, u_latent ~ MvNormal(zeros(M_inducing_val), K_ZZ).
+It calculates the conditional mean mean_f and the diagonal of the conditional covariance cov_f_diag using the standard FITC formulas.
+Finally, f ~ MvNormal(mean_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N))) samples the latent GP process, using the diagonal approximation for the covariance.
+
+Retained Components from V5: All components from V5 are integrated:
+
+Nested Latent Covariates: The functional relationships for u1_true, u2_true, and u3_true are identical to V5.
+
+Seasonal Component: The beta_cos and beta_sin parameters, along with the trigonometric functions of time, remain unchanged.
+
+Time-varying Intercept (Random Walk): The random walk definition for alpha and its mapping to trend remains consistent.
+
+Spatiotemporal Stochastic Volatility: The secondary RFF mapping for log_sigma_y (W_sigma, b_sigma, sigma_log_var, beta_rff_sigma, Phi_sigma) and the resulting sigma_y_process are implemented, with y_obs using Diagonal(sigma_y_process.^2).
 
 
+
+```{julia} 
 @model function model_v6_fitc(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time, Z_inducing; period=12.0, M_rff_sigma=20)
     N = length(y_obs)
     T_unique = length(unique(coords_time))
@@ -13976,7 +14065,11 @@ end
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
 end
 
+
+data = example_data( "complex_testdata", 50)
+
 # Generate inducing points for V6
+
 D_s_v6 = size(data.coords_space, 2)
 D_st_v6 = D_s_v6 + size(data.coords_time, 2)
 coords_st_v6 = hcat(data.coords_space, data.coords_time)
@@ -13986,24 +14079,25 @@ Z_inducing_v6 = generate_inducing_points(coords_st_v6, M_inducing_val_v6)
 # Sample Model V6 with NUTS
 M_rff_sigma_val_v6 = 20 # Number of RFF features for log-variance GP
 model_v6 = model_v6_fitc(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time, Z_inducing_v6; M_rff_sigma=M_rff_sigma_val_v6)
-
-# Using NUTS sampler for better convergence; consider increasing iterations for production runs
-chain_v6 = sample(model_v6, NUTS(), 500) # Increased samples from 100 to 500
+ 
+chain_v6 = sample(model_v6, NUTS(), 100) # 2682.27 seconds
 display(describe(chain_v6))
 waic_v6 = compute_y_waic(model_v6, chain_v6)
-println("WAIC for V6: ", waic_v6)
-
-println("\nNote: For robust results, consider increasing the number of samples (e.g., 1000-2000 or more) and tuning the NUTS parameters (e.g., `adapts=num_adapts_steps`) if convergence issues persist.")
-
+println("WAIC for V6: ", waic_v6)  # 137.20586598982402
+ 
 
 ```
 
 #### V7: AbstractGPs sparse functional form based on V6.  
- 
-This model builds upon V6 by leveraging `AbstractGPs.jl`'s functional form to define the sparse Gaussian Process. While the underlying mathematical approximation remains that of FITC (using inducing points and a diagonal approximation for the conditional variance), this version uses `AbstractGPs.jl`'s `GP` object and conditioning syntax to represent the GP, making the code more abstract and potentially more extensible within the `AbstractGPs.jl` ecosystem. We continue to use the NUTS sampler from V6 to handle model complexity and improve convergence.
+
+Sparse approximation (FITC using inducing points and a diagonal approximation for the conditional variance). The relationships for the nested latent covariates (U1, U2, U3) are explicitly modeled as linear functions (rather than using Random Fourier Features RFF, to capture non-linearity, in model V8). This change makes the model for these covariates simpler and more interpretable, potentially reducing computational cost or improving stability if complex non-linear relationships are not strongly supported by the data or are prone to overfitting.
+
+Linear Nested Latent Covariates: U1 is a linear function of coords_time and Z. U2 is a linear function of coords_time, Z, and U1. U3 is a linear function of coords_time, Z, and U1. Each linear relationship has its own set of beta coefficients which are inferred by the model. Seasonal component with sine and cosine functions. Time-varying intercept modeled as a Random Walk. Spatiotemporal GP with FITC approximation with learned inducing point locations. Spatiotemporal Stochastic Volatility for observation noise, modeled using a secondary RFF mapping.
+
 
 ```{julia}
-@model function model_v7_fitc_abstractgps(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_inducing_val=10, M_rff_u=30)
+
+@model function model_v7_fitc_abstractgps_linear(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_inducing_val=10) # M_rff_u is no longer needed here
     N = length(y_obs)
     T_unique = length(unique(coords_time))
     D_s = size(coords_space, 2)
@@ -14012,44 +14106,32 @@ This model builds upon V6 by leveraging `AbstractGPs.jl`'s functional form to de
     # --- Priors --- General model parameters
     sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
 
-    # --- Nested Latent Covariates (using RFF for non-linearity) ---
-    coords_tz = hcat(coords_time, z)
-
+    # --- Nested Latent Covariate Parameters (Linear relationships - New in V7_linear) ---
     # U1 = f1(coords_time, Z)
-    D_u1_input = size(coords_tz, 2)
-    W_u1 ~ filldist(Normal(0, 1), D_u1_input, M_rff_u)
-    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
-    sigma_f_u1 ~ Exponential(1.0)
-    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
-    Phi_u1 = rff_map(coords_tz, W_u1, b_u1)
-    u1_true = Phi_u1 * beta_rff_u1
+    beta_u1_ztime ~ Normal(0, 1)
+    beta_u1_zspace ~ Normal(0, 1)
 
     # U2 = f2(coords_time, Z, U1)
-    coords_tz_u1 = hcat(coords_time, z, u1_true)
-    D_u2_input = size(coords_tz_u1, 2)
-    W_u2 ~ filldist(Normal(0, 1), D_u2_input, M_rff_u)
-    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
-    sigma_f_u2 ~ Exponential(1.0)
-    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
-    Phi_u2 = rff_map(coords_tz_u1, W_u2, b_u2)
-    u2_true = Phi_u2 * beta_rff_u2
+    beta_u2_ztime ~ Normal(0, 1)
+    beta_u2_zspace ~ Normal(0, 1)
+    beta_u2_u1 ~ Normal(0, 1)
 
     # U3 = f3(coords_time, Z, U1)
-    # (Note: inputs are the same as U2, but U3 is a separate function)
-    D_u3_input = size(coords_tz_u1, 2)
-    W_u3 ~ filldist(Normal(0, 1), D_u3_input, M_rff_u)
-    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
-    sigma_f_u3 ~ Exponential(1.0)
-    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
-    Phi_u3 = rff_map(coords_tz_u1, W_u3, b_u3)
-    u3_true = Phi_u3 * beta_rff_u3
+    beta_u3_ztime ~ Normal(0, 1)
+    beta_u3_zspace ~ Normal(0, 1)
+    beta_u3_u1 ~ Normal(0, 1)
 
-    # --- Seasonal Component (from V6) ---
+    # --- Define Nested Latent Covariates (Linear relationships - New in V7_linear) ---
+    u1_true = beta_u1_ztime .* coords_time[:,1] .+ beta_u1_zspace .* z
+    u2_true = beta_u2_ztime .* coords_time[:,1] .+ beta_u2_zspace .* z .+ beta_u2_u1 .* u1_true
+    u3_true = beta_u3_ztime .* coords_time[:,1] .+ beta_u3_zspace .* z .+ beta_u3_u1 .* u1_true
+
+    # --- Seasonal Component (from V7) ---
     beta_cos ~ Normal(0, 1)
     beta_sin ~ Normal(0, 1)
     seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
 
-    # --- Time-varying Intercept (Random Walk, from V6) ---
+    # --- Time-varying Intercept (Random Walk, from V7) ---
     sigma_alpha ~ Exponential(0.1)
     alpha = Vector{Real}(undef, T_unique)
     alpha[1] ~ Normal(0, sigma_alpha)
@@ -14088,7 +14170,7 @@ This model builds upon V6 by leveraging `AbstractGPs.jl`'s functional form to de
     g_base = GP(sigma_f^2 * k_st)
 
     # Use RowVecs for coordinates
-    Z_inducing_vecs = RowVecs(Z_inducing) 
+    Z_inducing_vecs = RowVecs(Z_inducing)
     coords_st_vecs = RowVecs(coords_st_orig)
 
     # Extract kernel matrices using AbstractGPs.jl
@@ -14106,7 +14188,7 @@ This model builds upon V6 by leveraging `AbstractGPs.jl`'s functional form to de
     # Ensure positive definite covariance (add small jitter if necessary)
     f ~ MvNormal(m_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N)))
 
-    # --- Spatiotemporal Stochastic Volatility (from V6) ---
+    # --- Spatiotemporal Stochastic Volatility (from V7) ---
     # Secondary RFF mapping for log-variance
     W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
     b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
@@ -14128,21 +14210,23 @@ This model builds upon V6 by leveraging `AbstractGPs.jl`'s functional form to de
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
 end
 
-# The Z_inducing_v7 variable is no longer passed as an argument as it is now learned within the model.
+
+data = example_data( "complex_testdata", 50)
+
 D_s_v7 = size(data.coords_space, 2)
 D_st_v7 = D_s_v7 + size(data.coords_time, 2)
 coords_st_v7 = hcat(data.coords_space, data.coords_time)
 M_inducing_val_v7 = 10 # Number of inducing points (e.g., 10-20% of N)
 
-# Sample Model V7 with NUTS
 M_rff_sigma_val_v7 = 20 # Number of RFF features for log-variance GP
-model_v7 = model_v7_fitc_abstractgps(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v7, M_inducing_val=M_inducing_val_v7)
+model_v7 = model_v7_fitc_abstractgps_linear(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v7, M_inducing_val=M_inducing_val_v7)
 
-# Using NUTS sampler for better convergence; consider increasing iterations for production runs
-chain_v7 = sample(model_v7, NUTS(), 500) 
+
+chain_v7 = sample(model_v7, NUTS(), 100)  # 456.03 seconds
 display(describe(chain_v7))
 waic_v7 = compute_y_waic(model_v7, chain_v7)
-println("WAIC for V7: ", waic_v7)
+println("WAIC for V7: ", waic_v7) # 186.74236560096676
+
 
 
 ```
@@ -14151,6 +14235,30 @@ println("WAIC for V7: ", waic_v7)
 
 For each u_true (e.g., u1_true), define a new set of RFF parameters (W_u1, b_u1, beta_rff_u1) and use rff_map on its inputs (e.g., hcat(coords_time, z)) to generate a non-linear u1_base. Then, u1_true would be this RFF output, possibly combined with a linear component if desired.
 This will add more parameters but can capture much richer functional forms.
+
+Nested Latent Covariates (U1, U2, U3) with RFF for Non-linearity: functions of coords_time, Z, and previous Us, using a Random Fourier Features (RFF) for each latent covariate (W_u1, b_u1, sigma_f_u1, beta_rff_u1, etc.). This allows the model to learn complex functional forms for these dependencies directly from the data.
+
+The structure is nested: U1 depends on coords_time and Z; U2 depends on coords_time, Z, and U1; U3 depends on coords_time, Z, and U1 (similar inputs to U2, but modeling a separate function).
+
+Observation likelihoods (u1_obs ~ MvNormal(u1_true, ...)) link the observed noisy covariates to their latent, non-linear true values.
+Seasonal Component:
+
+A seasonal effect is incorporated using sine and cosine functions of coords_time, with beta_cos and beta_sin as learned coefficients. This captures periodic patterns in the data.
+
+Time-varying Intercept (Random Walk): alpha vector, over unique time points which allows the intercept of the model to evolve smoothly over time, capturing non-stationary temporal dynamics without imposing a strict parametric form.
+
+Spatiotemporal GP using AbstractGPs for Fully Independent Training Conditional (FITC) with Learned Inducing Points: The core spatiotemporal process f is approximated using the FITC method for computational efficiency, especially with larger datasets. The GP (g_base) with an anisotropic Squared Exponential Kernel (k_st) and a signal variance sigma_f. 
+
+The inducing point locations (Z_inducing) are treated as parameters within the Bayesian model (learned). Priors are placed on Z_inducing based on the mean and scaled standard deviation of the input spatiotemporal coordinates (coords_st_orig), guiding their placement to areas relevant to the data. The latent values at the inducing points (u_latent) are sampled from a MvNormal, and the conditional mean (m_f) and diagonal covariance (cov_f_diag) for the observed data points are computed using standard FITC formulas. The full latent process f is then sampled from a MvNormal using m_f and Diagonal(max.(0, cov_f_diag) + jitter). This makes the inference tractable by avoiding operations on large dense covariance matrices.
+Spatiotemporal Stochastic Volatility:
+
+The observation noise (sigma_y) is not constant but is allowed to vary across space and time. This heteroscedasticity is modeled using a secondary RFF mapping (W_sigma, b_sigma, sigma_log_var, beta_rff_sigma). This RFF maps the spatiotemporal coordinates to a latent log-variance process (log_sigma_y), which is then exponentiated to yield a spatiotemporally varying standard deviation (sigma_y_process). This sigma_y_process is then used in the likelihood of y_obs, allowing the model to adapt to changing levels of noise across the observation domain.
+
+The model combines these components into a comprehensive likelihood structure:
+
+y_obs ~ MvNormal(mu_base .+ f, Diagonal(sigma_y_process.^2)): The main dependent variable is observed with a mean composed of the trend, seasonal, u_true covariates, z covariate, and the latent f GP, and with spatiotemporal stochastic volatility (sigma_y_process).
+u1_obs, u2_obs, u3_obs are observed with their respective u_true values and measurement errors (sigma_u).
+
 
 
 ```{julia}
@@ -14280,6 +14388,9 @@ This will add more parameters but can capture much richer functional forms.
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
 end
 
+
+data = example_data( "complex_testdata", 50)
+
 # The Z_inducing_v8 variable is no longer passed as an argument as it is now learned within the model.
 D_s_v8 = size(data.coords_space, 2)
 D_st_v8 = D_s_v8 + size(data.coords_time, 2)
@@ -14290,8 +14401,8 @@ M_rff_u_val = 30 # Number of RFF features for nested covariates
 M_rff_sigma_val_v8 = 20 # Number of RFF features for log-variance GP
 model_v8 = model_v8_fitc_abstractgps_nonlinear(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v8, M_inducing_val=M_inducing_val_v8, M_rff_u=M_rff_u_val)
 
-# Using NUTS sampler for better convergence; consider increasing iterations for production runs
-chain_v8 = sample(model_v8, NUTS(), 500) 
+
+chain_v8 = sample(model_v8, NUTS(), 100) 
 display(describe(chain_v8))
 waic_v8 = compute_y_waic(model_v8, chain_v8)
 println("WAIC for V8: ", waic_v8)
@@ -14309,6 +14420,22 @@ Define a 1D GP g_trend = GP(sigma_alpha_gp^2 * k_trend) where k_trend is a kerne
 Then, alpha ~ g_trend(1:T_unique).
 This replaces the alpha[t] ~ Normal(alpha[t-1], sigma_alpha) loop with a single GP prior. You would need to define hyperparameters for k_trend (e.g., ls_trend).
 These changes would increase the model's complexity but would likely lead to a more accurate representation of the underlying spatiotemporal dynamics, especially when combined with the robust NUTS sampler.
+
+
+GP-based Trend (New in V9): This is the primary change from V7.
+
+ls_trend ~ Gamma(2, 2) and sigma_trend ~ Exponential(0.5) define the priors for the lengthscale and amplitude of the GP trend, respectively.
+k_trend = SqExponentialKernel() ∘ ScaleTransform(inv(ls_trend)) sets up an isotropic squared exponential kernel for the temporal GP.
+g_trend = GP(sigma_trend^2 * k_trend) creates the Gaussian Process for the trend.
+The latent trend values alpha are sampled from this GP over unique_times (alpha ~ g_trend(unique_times, 1e-1)), and then mapped back to the original coords_time to form the trend component.
+Inheritance from V7: All other advanced features from model_v7_fitc_abstractgps are carried over:
+
+Nested Latent Covariates: The RFF-based non-linear nested covariate functions (u1_true, u2_true, u3_true) are identical to V7.
+Seasonal Component: The seasonal harmonic component (seasonal) remains as defined in V7.
+Spatiotemporal GP using AbstractGPs for FITC: The implementation of the main spatiotemporal GP using AbstractGPs.jl for the FITC approximation, including the learned inducing point locations (Z_inducing) and their priors, is inherited from V7.
+Spatiotemporal Stochastic Volatility: The secondary RFF mapping for modeling the log-variance (sigma_y_process) and its use in the likelihood is also inherited from V7.
+In summary, model_v9_gp_trend accurately replaces the random walk intercept with a Gaussian Process-based trend, maintaining the sophistication introduced in previous models.
+
 
 
 ```{julia}
@@ -14446,6 +14573,9 @@ These changes would increase the model's complexity but would likely lead to a m
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
 end
 
+
+data = example_data( "complex_testdata", 50)
+
 # The Z_inducing variable is learned within the model.
 D_s_v9 = size(data.coords_space, 2)
 D_st_v9 = D_s_v9 + size(data.coords_time, 2)
@@ -14457,8 +14587,8 @@ M_rff_sigma_val_v9 = 20 # Number of RFF features for log-variance GP
 # Instantiate and sample Model V9 with NUTS
 model_v9 = model_v9_gp_trend(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v9, M_inducing_val=M_inducing_val_v9, M_rff_u=M_rff_u_val_v9)
 
-# Using NUTS sampler for better convergence; consider increasing iterations for production runs
-chain_v9 = sample(model_v9, NUTS(), 500) 
+
+chain_v9 = sample(model_v9, NUTS(), 100) 
 display(describe(chain_v9))
 waic_v9 = compute_y_waic(model_v9, chain_v9)
 println("WAIC for V9: ", waic_v9)
@@ -14468,7 +14598,15 @@ println("WAIC for V9: ", waic_v9)
 
 #### V10 K-Means inducing points
 
-K-Means initialization for inducing points. The Z_inducing points will be pre-computed using K-Means clustering on your spatiotemporal data and then passed as fixed inputs to the model. This approach streamlines the sampling process by removing the inducing point locations as parameters to be learned, implicitly leveraging the data structure for their placement.
+K-Means initialization for inducing points. The Z_inducing points pre-computed using K-Means clustering on the data and then passed as fixed inputs to the model. This approach streamlines the sampling process by removing the inducing point locations as parameters to be learned, implicitly leveraging the data structure for their placement.
+
+Fixed K-Means Inducing Points: The inducing points (Z_inducing) are passed as an argument to the model, signifying that they are pre-determined (e.g., via K-Means clustering) rather than learned within the model.
+Nested Latent Covariates (using RFF for non-linearity): u1_true, u2_true, and u3_true are modeled using Random Fourier Features (RFF), allowing for non-linear relationships with their input covariates (coords_time, z, and previously computed u_true values).
+GP Trend: The temporal trend is modeled as a Gaussian Process over unique time points, using a SqExponentialKernel with learned ls_trend and sigma_trend parameters.
+Seasonal Component: A standard sinusoidal seasonal component with beta_cos and beta_sin parameters is included.
+Spatiotemporal GP using FITC: The main spatiotemporal Gaussian Process (f) is approximated using the Fully Independent Training Conditional (FITC) method. It leverages AbstractGPs.jl to compute kernel matrices (K_ZZ, K_XZ, K_XX_diag) and samples latent values at the inducing points (u_latent), which are then used to define the conditional mean and diagonal covariance for f.
+Spatiotemporal Stochastic Volatility: The observation noise (sigma_y_process) is dynamic and modeled as a spatiotemporal process using a secondary RFF mapping, allowing for heteroscedasticity.
+All components align with the description of V10, building upon V9's structure but using pre-computed K-Means inducing points instead of learned ones.
 
 
 ```{julia}
@@ -14594,22 +14732,8 @@ K-Means initialization for inducing points. The Z_inducing points will be pre-co
 end
 
  
-# Helper function to generate inducing points using K-Means
-function kmeans_inducing_points(coords_st, M_inducing, seed=42)
-    Random.seed!(seed)
-    N_data = size(coords_st, 1)
-    if M_inducing >= N_data
-        return coords_st # If M >= N, just use all data points
-    end
-
-    # Perform K-Means clustering
-    R = kmeans(Matrix(coords_st'), M_inducing; maxiter=200, init=:kmpp, display=:none)
-    
-    # Centroids of the clusters are the inducing points
-    return R.centers'
-end
-
-
+data = example_data( "complex_testdata", 50)
+ 
 # Parameters for V10
 D_s_v10 = size(data.coords_space, 2)
 D_st_v10 = D_s_v10 + size(data.coords_time, 2)
@@ -14621,24 +14745,55 @@ M_rff_sigma_val_v10 = 20 # Number of RFF features for log-variance GP
 # Generate inducing points using K-Means
 Z_inducing_v10 = kmeans_inducing_points(coords_st_v10, M_inducing_val_v10)
 
-# Instantiate and sample Model V10 with NUTS
 model_v10 = model_v10_fixed_kmeans_fitc(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time, Z_inducing_v10; M_rff_sigma=M_rff_sigma_val_v10, M_rff_u=M_rff_u_val_v10)
-
-# Using NUTS sampler; consider increasing iterations for production runs
-chain_v10 = sample(model_v10, NUTS(), 500)
+ 
+chain_v10 = sample(model_v10, NUTS(), 100) # 64.11 seconds
 display(describe(chain_v10))
 waic_v10 = compute_y_waic(model_v10, chain_v10)
-println("WAIC for V10: ", waic_v10)
+println("WAIC for V10: ", waic_v10)  # 1323.6762942451498
 
 
 ```
 
 
-#### V11: Sparse Variational Gaussian Process (SVGP)
+#### V11: Sparse Variational Gaussian Process (SVGP) - partial form
 
 This model builds upon V10 by revisiting the concept of learned inducing points, aligning with an SVGP-like approach within the NUTS sampling framework. While a full Sparse Variational Gaussian Process typically employs variational inference to optimize a lower bound to the marginal likelihood, a key component of SVGP is the optimization of inducing point locations. In this V11, similar to V7 and V9, the Z_inducing locations are treated as parameters to be learned directly by the NUTS sampler, informed by a prior based on the data's mean and standard deviation.
 
 This approach differs from V10 (which fixed inducing points using K-Means) by allowing the model to adaptively find the optimal inducing point locations during sampling. The rest of the model structure (Nested RFF covariates, GP Trend, Seasonal component, Spatiotemporal Stochastic Volatility) remains consistent with V9 and V10. We continue to use the NUTS sampler to handle the model's complexity.
+
+Learned Inducing Points: Unlike V10, the inducing point locations (Z_inducing) are treated as parameters within the model, informed by priors derived from the observed data's mean and standard deviation. This allows the model to adaptively find optimal inducing point locations during sampling, aligning with an SVGP-like approach.
+Nested Latent Covariates (using RFF for non-linearity): The latent covariates u1_true, u2_true, and u3_true are modeled using Random Fourier Features (RFF) for non-linear relationships with their input covariates (coords_time, z, and previously computed u_true values).
+GP Trend: The temporal trend is modeled as a Gaussian Process over unique time points, utilizing a SqExponentialKernel with learned lengthscale (ls_trend) and amplitude (sigma_trend).
+Seasonal Component: A sinusoidal seasonal component is included with learned beta_cos and beta_sin parameters.
+Spatiotemporal GP using AbstractGPs for FITC: The primary spatiotemporal Gaussian Process (f) is approximated using the Fully Independent Training Conditional (FITC) method. It leverages AbstractGPs.jl to compute the necessary kernel matrices and samples latent values at the learned inducing points (u_latent), which are then used to construct the conditional mean and diagonal covariance for f.
+Spatiotemporal Stochastic Volatility: The observation noise (sigma_y_process) is dynamic and modeled as a spatiotemporal process using a secondary RFF mapping, allowing for heteroscedasticity.
+All components are consistent with the design principles outlined for V11, building on previous models while incorporating learned inducing points for enhanced flexibility.
+
+
+Number of Inducing Points (M_inducing_val): Increasing the number of inducing points generally leads to a more accurate approximation of the full GP, but it also increases computational cost. There's a sweet spot where the fidelity gain outweighs the computational burden.
+
+Inducing Point Initialization/Optimization: While model_v11_svgp learns the inducing point locations, their initial placement (influenced by the prior Normal(mu_coords_st[j], 2.0 * std_coords_st[j])) can impact convergence. You could experiment with different prior scales or even initialize them using more sophisticated methods (e.g., K-Means as in V10, or more advanced space-filling designs) and then let NUTS refine them.
+
+Kernel Choice: The current model uses SqExponentialKernel. For certain types of spatial or temporal processes, a MaternKernel (e.g., Matern32Kernel or Matern52Kernel) might be more appropriate as it allows for different degrees of differentiability in the underlying function. The choice of kernel is fundamental to the GP's ability to model the data's smoothness.
+
+Number of RFF Features (M_rff_u, M_rff_sigma): Similar to inducing points, increasing the number of Random Fourier Features can lead to a better approximation of the non-linear functions used for nested covariates and stochastic volatility. However, too many features can lead to overfitting and increased computational cost.
+
+Hyperparameter Priors: Reviewing and potentially refining the priors for all hyperparameters (e.g., lengthscales ls_st, ls_trend, signal variances sigma_f, sigma_trend, sigma_log_var, sigma_u) can significantly influence the sampling process. More informative priors, derived from domain knowledge or exploratory data analysis, can help guide the sampler to more reasonable regions of the parameter space.
+
+NUTS Sampler Tuning: For robust MCMC results with NUTS:
+More Samples: Increase the number of samples (e.g., from 100 to several thousands, like 2000-4000) and ensure a sufficient number of warm-up iterations (adapts parameter).
+
+Multiple Chains: Run multiple chains (e.g., 4 chains) to assess convergence and ensure good mixing across the parameter space.
+
+Parallel Sampling: Utilize the parallel capabilities of MCMCChains.jl to run multiple chains concurrently, speeding up overall sampling time.
+
+Adaptation Steps: Pay attention to the NUTS adapts parameter. A longer adaptation phase allows the sampler to find better step sizes and mass matrix estimations, leading to more efficient sampling in the main phase.
+
+Data Preprocessing: Standardizing or normalizing input covariates (space, time, Z) and the target variable y_obs can often improve the numerical stability and convergence speed of the sampler, as it brings all variables to a similar scale.
+
+Variational Inference (VI): While this model uses NUTS to learn inducing points, a true Sparse Variational Gaussian Process (SVGP) often employs variational inference (e.g., ADVI() in Turing.jl) which can be significantly faster for very large datasets, although it provides an approximate posterior. If computational speed becomes a major bottleneck for larger datasets, exploring a full VI approach would be beneficial.
+
 
 ```{julia}
 @model function model_v11_svgp(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_inducing_val=10, M_rff_u=30)
@@ -14777,6 +14932,8 @@ This approach differs from V10 (which fixed inducing points using K-Means) by al
     u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
 end
 
+data = example_data( "complex_testdata", 50)
+
 # The Z_inducing variable is learned within the model.
 D_s_v11 = size(data.coords_space, 2)
 D_st_v11 = D_s_v11 + size(data.coords_time, 2)
@@ -14789,19 +14946,1251 @@ M_rff_sigma_val_v11 = 20 # Number of RFF features for log-variance GP
 model_v11 = model_v11_svgp(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v11, M_inducing_val=M_inducing_val_v11, M_rff_u=M_rff_u_val_v11)
 
 # Using NUTS sampler; consider increasing iterations for production runs
-chain_v11 = sample(model_v11, NUTS(), 500)
+chain_v11 = sample(model_v11, NUTS(), 100)
 display(describe(chain_v11))
 waic_v11 = compute_y_waic(model_v11, chain_v11)
 println("WAIC for V11: ", waic_v11)
 
-println("\nNote: For robust results, consider increasing the number of samples (e.g., 1000-2000 or more) and tuning the NUTS parameters (e.g., `adapts=num_adapts_steps`) if convergence issues persist.")
+
+```
+
+
+#### V12: Sparse Variations Gaussian Process - learned mean of latent processes
+
+Learned Mean for Inducing Point Latent Values (m_latent_u): Instead of assuming u_latent has a prior mean of zero, we now introduce m_latent_u as a vector of parameters with its own prior. This allows the model to learn the optimal mean for the inducing point values.
+Learned Diagonal Variance for Inducing Point Latent Values (sigma_latent_u_diag): Similarly, the diagonal standard deviations for u_latent are now parameters, allowing u_latent's distribution to adapt its spread along each dimension. This replaces the K_ZZ covariance structure for u_latent with a more flexible, learned diagonal covariance.
+
+Sampling u_latent: u_latent is now sampled from an MvNormal distribution parameterized by m_latent_u and Diagonal(sigma_latent_u_diag.^2). This represents a sampled version of the variational posterior q(u) for the inducing points.
+The rest of the model components (learned Z_inducing locations, Nested RFF covariates, GP Trend, Seasonal component, Spatiotemporal Stochastic Volatility) remain consistent with model_v11_svgp.
+
+Important Considerations:
+
+Increased Complexity: This model significantly increases the number of parameters (an additional 2 * M_inducing_val parameters for m_latent_u and sigma_latent_u_diag). This will likely make NUTS sampling much slower and potentially more challenging to converge due to the higher dimensionality and potential for identifiability issues.
+
+Conceptual Hybrid: This approach is a hybrid. While it incorporates key ideas from SVGP (flexible learned distribution for u_latent), it's still using an MCMC sampler (NUTS) to explore the posterior of these variational-like parameters. A pure SVGP often relies on variational inference optimization techniques (like ADVI) for computational efficiency with large datasets.
+
+
+
+```{julia}
+@model function model_v12_svgp_full(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_inducing_val=10, M_rff_u=30)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors --- General model parameters
+    sigma_u ~ filldist(Exponential(0.5), 3) # Measurement error for u_obs
+
+    # --- Nested Latent Covariates (using RFF for non-linearity) ---
+    coords_tz = hcat(coords_time, z)
+
+    # U1 = f1(coords_time, Z)
+    D_u1_input = size(coords_tz, 2)
+    W_u1 ~ filldist(Normal(0, 1), D_u1_input, M_rff_u)
+    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u1 ~ Exponential(1.0)
+    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
+    Phi_u1 = rff_map(coords_tz, W_u1, b_u1)
+    u1_true = Phi_u1 * beta_rff_u1
+
+    # U2 = f2(coords_time, Z, U1)
+    coords_tz_u1 = hcat(coords_time, z, u1_true)
+    D_u2_input = size(coords_tz_u1, 2)
+    W_u2 ~ filldist(Normal(0, 1), D_u2_input, M_rff_u)
+    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u2 ~ Exponential(1.0)
+    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
+    Phi_u2 = rff_map(coords_tz_u1, W_u2, b_u2)
+    u2_true = Phi_u2 * beta_rff_u2
+
+    # U3 = f3(coords_time, Z, U1)
+    D_u3_input = size(coords_tz_u1, 2)
+    W_u3 ~ filldist(Normal(0, 1), D_u3_input, M_rff_u)
+    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u3 ~ Exponential(1.0)
+    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
+    Phi_u3 = rff_map(coords_tz_u1, W_u3, b_u3)
+    u3_true = Phi_u3 * beta_rff_u3
+
+    # --- Seasonal Component (from V11) ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- GP Trend (from V11) ---
+    ls_trend ~ Gamma(2, 2)
+    sigma_trend ~ Exponential(0.5)
+
+    k_trend = SqExponentialKernel() ∘ ScaleTransform(inv(ls_trend))
+    g_trend = GP(sigma_trend^2 * k_trend)
+
+    unique_times = sort(unique(coords_time[:,1]))
+
+    alpha ~ g_trend(unique_times, 1e-1)
+
+    trend = alpha[indexin(coords_time[:,1], unique_times)]
+
+    # --- Spatiotemporal GP using AbstractGPs for FITC (SVGP-like, with learned Z_inducing) ---
+    coords_st_orig = hcat(coords_space, coords_time)
+
+    # Optimized Inducing Points: Z_inducing are parameters with a prior (as in V11)
+    Z_inducing = Matrix{Float64}(undef, M_inducing_val, D_st)
+
+    mu_coords_st = mean(coords_st_orig, dims=1)
+    std_coords_st = std(coords_st_orig, dims=1)
+
+    for j in 1:D_st
+        Z_inducing[:, j] ~ filldist(Normal(mu_coords_st[j], 2.0 * std_coords_st[j]), M_inducing_val)
+    end
+
+    # Lengthscales for each dimension
+    ls_st ~ filldist(Gamma(2, 2), D_st)
+    sigma_f ~ Exponential(1.0)
+
+    k_st = SqExponentialKernel() ∘ ARDTransform(inv.(ls_st))
+    g_base = GP(sigma_f^2 * k_st)
+
+    Z_inducing_vecs = RowVecs(Z_inducing)
+    coords_st_vecs = RowVecs(coords_st_orig)
+
+    K_ZZ = cov(g_base(Z_inducing_vecs)) + 1e-6*I
+    K_XZ = cov(g_base(coords_st_vecs), g_base(Z_inducing_vecs))
+    K_XX_diag = diag(cov(g_base(coords_st_vecs)))
+
+    # --- SVGP-like: Learn mean and diagonal std dev for u_latent's distribution ---
+    # This is a key difference from V11, making u_latent's distribution more flexible.
+    m_latent_u ~ MvNormal(zeros(M_inducing_val), 10.0 * I) # Prior for the mean of u_latent
+    sigma_latent_u_diag ~ filldist(Exponential(1.0), M_inducing_val) # Prior for diagonal std dev
+
+    # Sample u_latent from this learned distribution
+    u_latent ~ MvNormal(m_latent_u, Diagonal(sigma_latent_u_diag.^2) + 1e-6*I)
+
+    # Compute conditional mean and diagonal covariance using FITC formulas (conditioned on sampled u_latent)
+    m_f = K_XZ * (K_ZZ \ u_latent)
+    cov_f_diag = K_XX_diag - diag(K_XZ * (K_ZZ \ K_XZ'))
+
+    f ~ MvNormal(m_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N)))
+
+    # --- Spatiotemporal Stochastic Volatility (from V11) ---
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0)
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+
+    Phi_sigma = rff_map(coords_st_orig, W_sigma, b_sigma)
+    log_sigma_y = Phi_sigma * beta_rff_sigma
+    sigma_y_process = exp.(log_sigma_y ./ 2)
+
+    # --- Mean of Y and Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4)
+    mu_base = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_base .+ f, Diagonal(sigma_y_process.^2))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+# The Z_inducing variable is learned within the model.
+D_s_v12 = size(data.coords_space, 2)
+D_st_v12 = D_s_v12 + size(data.coords_time, 2)
+coords_st_v12 = hcat(data.coords_space, data.coords_time)
+M_inducing_val_v12 = 10 # Number of inducing points
+M_rff_u_val_v12 = 30 # Number of RFF features for nested covariates
+M_rff_sigma_val_v12 = 20 # Number of RFF features for log-variance GP
+
+model_v12 = model_v12_svgp_full(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v12, M_inducing_val=M_inducing_val_v12, M_rff_u=M_rff_u_val_v12)
+
+chain_v12 = sample(model_v12, NUTS(), 100) # Reduced samples for faster testing
+display(describe(chain_v12))
+waic_v12 = compute_y_waic(model_v12, chain_v12)
+println("WAIC for V12: ", waic_v12)
+
+```
+
+
+
+
+#### V13:  Multi-fidelity Gaussian Process (MFGP)
+
+This model implements a multi-fidelity approach where covariates exist at different resolutions. We assume:
+
+Z (Highest Resolution): Modeled as a latent spatial field.
+U1, U2, U3 (High Resolution): Modeled as latent spatiotemporal fields that depend on the latent  Z .
+Y (Standard Resolution): The observation variable, which depends on the latent  U  and  Z  fields.
+We use nested Random Fourier Features to represent these functional dependencies across fidelities.
+
+In this model, we treat the different resolutions as a hierarchical problem:
+
+Highest Resolution (Z): We model the latent 'true' spatial covariate $Z$$Z$ using its own GP (approximated via RFF) to provide a smooth, high-resolution continuous field.
+
+Medium Resolution (U1, U2, U3): These spatiotemporal covariates are modeled as dependent on the high-resolution $Z$$Z$. Since they are observed at a higher resolution than $Y$$Y$, we use a separate set of RFFs to map the spatiotemporal coordinates and $Z$$Z$ to these latent fields.
+
+Standard Resolution (Y): The dependent variable $Y$$Y$ is modeled as the 'low-fidelity' output, which integrates information from the higher-fidelity $U$$U$ and $Z$$Z$ latent processes.
+
+This structure allows the model to learn the cross-correlations between variables across different spatial and temporal scales, effectively leveraging the higher-resolution data to inform the predictions of $Y$$Y$.
+
+```{julia}
+@model function model_v13_multifidelity_gp(y_obs, u1_obs, u2_obs, u3_obs, z_obs, coords_space_y, coords_time_y, coords_space_u, coords_time_u, coords_space_z; period=12.0, M_rff=40)
+    # Dimensions for different fidelities
+    Ny = length(y_obs)
+    Nu = length(u1_obs)
+    Nz = length(z_obs)
+    D_s = size(coords_space_y, 2)
+    D_t = size(coords_time_y, 2)
+    
+    # 1. --- Highest Fidelity: Spatial Covariate Z ---
+    # Model Z as a spatial GP to handle its high resolution
+    W_z ~ filldist(Normal(0, 1), D_s, M_rff)
+    b_z ~ filldist(Uniform(0, 2pi), M_rff)
+    beta_z ~ filldist(Normal(0, 1), M_rff)
+    
+    # Function to get latent Z at any spatial coordinate
+    get_latent_z(coords) = rff_map(coords, W_z, b_z) * beta_z
+    
+    z_latent_at_z_coords = get_latent_z(coords_space_z)
+    sigma_z ~ Exponential(0.5)
+    z_obs ~ MvNormal(z_latent_at_z_coords, sigma_z^2 * I)
+
+    # 2. --- Medium Fidelity: Spatiotemporal Covariates U ---
+    # U depends on Space, Time, and the latent Z
+    z_at_u_coords = get_latent_z(coords_space_u)
+    coords_st_u = hcat(coords_space_u, coords_time_u, z_at_u_coords)
+    
+    D_u_in = size(coords_st_u, 2)
+    W_u ~ filldist(Normal(0, 1), D_u_in, M_rff)
+    b_u ~ filldist(Uniform(0, 2pi), M_rff)
+    
+    # Coefficients for U1, U2, U3
+    beta_u1 ~ filldist(Normal(0, 1), M_rff)
+    beta_u2 ~ filldist(Normal(0, 1), M_rff)
+    beta_u3 ~ filldist(Normal(0, 1), M_rff)
+    
+    Phi_u = rff_map(coords_st_u, W_u, b_u)
+    u1_latent = Phi_u * beta_u1
+    u2_latent = Phi_u * beta_u2
+    u3_latent = Phi_u * beta_u3
+    
+    sigma_u ~ filldist(Exponential(0.5), 3)
+    u1_obs ~ MvNormal(u1_latent, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_latent, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_latent, sigma_u[3]^2 * I)
+
+    # 3. --- Standard Fidelity: Dependent Variable Y ---
+    z_at_y_coords = get_latent_z(coords_space_y)
+    # For Y, we need U values at Y's lower resolution coordinates
+    # In a real MFGP, we'd use the latent function learned at resolution U
+    coords_st_y_for_u = hcat(coords_space_y, coords_time_y, z_at_y_coords)
+    Phi_y_u = rff_map(coords_st_y_for_u, W_u, b_u)
+    u1_at_y = Phi_y_u * beta_u1
+    u2_at_y = Phi_y_u * beta_u2
+    u3_at_y = Phi_y_u * beta_u3
+    
+    # Main effect regression
+    beta_y ~ filldist(Normal(0, 1), 4)
+    mu_y = beta_y[1] .* u1_at_y .+ beta_y[2] .* u2_at_y .+ beta_y[3] .* u3_at_y .+ beta_y[4] .* z_at_y_coords
+    
+    # Add seasonal and trend components
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time_y[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time_y[:,1] ./ period)
+    
+    sigma_y ~ Exponential(1.0)
+    y_obs ~ MvNormal(mu_y .+ seasonal, sigma_y^2 * I)
+end
+
+
+data = example_data( "multi-fidelity" )
+
+model_v13 = model_v13_multifidelity_gp(
+    data.y, data.u1, data.u2, data.u3, data.z, 
+    data.coords_y_s, data.coords_y_t, 
+    data.coords_u_s, data.coords_u_t, 
+    data.coords_z
+)
+
+chain_v13 = sample(model_v13, NUTS(), 100)
+display(describe(chain_v13))
 
 
 ```
 
 
 
-Additional examples of extracting and plotting
+#### V14: Mini-batchable Multi-fidelity SVGP
+
+To enable mini-batching, we must assume that observations are conditionally independent given the latent global parameters (the RFF weights). This cell implements a version of the Multi-fidelity model where the likelihood is vectorized over individual observations, allowing for Stochastic Variational Inference (SVI).
+
+
+```{julia}
+
+@model function model_v14_minibatch_mfgp(y_obs, u1_obs, u2_obs, u3_obs, z_obs, coords_y, coords_u, coords_z; M_rff=50)
+    # --- Global Latent Variables (Kernels) ---
+    # Z-fidelity
+    W_z ~ filldist(Normal(0, 1), size(coords_z, 2), M_rff)
+    b_z ~ filldist(Uniform(0, 2pi), M_rff)
+    beta_z ~ filldist(Normal(0, 1), M_rff)
+    
+    # U-fidelity
+    # (Input dim is Space + Time + Latent Z)
+    W_u ~ filldist(Normal(0, 1), size(coords_u, 2) + 1, M_rff)
+    b_u ~ filldist(Uniform(0, 2pi), M_rff)
+    beta_u1 ~ filldist(Normal(0, 1), M_rff)
+    beta_u2 ~ filldist(Normal(0, 1), M_rff)
+    beta_u3 ~ filldist(Normal(0, 1), M_rff)
+    
+    # Y-fidelity
+    beta_y ~ filldist(Normal(0, 1), 4)
+    
+    # Noise parameters
+    sigma_z ~ Exponential(0.5)
+    sigma_u ~ filldist(Exponential(0.5), 3)
+    sigma_y ~ Exponential(1.0)
+
+    # --- Latent Map Functions ---
+    # These allow us to compute the mean for ANY single observation
+    function get_z(c_z) 
+        phi = sqrt(2/M_rff) .* cos.( (c_z * W_z) .+ b_z' )
+        return phi * beta_z
+    end
+
+    # --- Likelihoods (Structured for Mini-batching) ---
+    # 1. Z-Fidelity Likelihood
+    z_mu = get_z(coords_z)
+    # Using .~ with a distribution allows Turing to handle independent observations
+    z_obs .~ Normal.(z_mu, sigma_z)
+
+    # 2. U-Fidelity Likelihood
+    # First, get latent Z at U locations
+    coords_u_space = coords_u[:, 1:2] 
+    z_at_u = get_z(coords_u_space)
+    coords_st_u = hcat(coords_u, z_at_u)
+    
+    phi_u = sqrt(2/M_rff) .* cos.( (coords_st_u * W_u) .+ b_u' )
+    u1_mu = phi_u * beta_u1
+    u2_mu = phi_u * beta_u2
+    u3_mu = phi_u * beta_u3
+    
+    u1_obs .~ Normal.(u1_mu, sigma_u[1])
+    u2_obs .~ Normal.(u2_mu, sigma_u[2])
+    u3_obs .~ Normal.(u3_mu, sigma_u[3])
+
+    # 3. Y-Fidelity Likelihood
+    z_at_y = get_z(coords_y[:, 1:2])
+    coords_st_y = hcat(coords_y, z_at_y)
+    phi_y_u = sqrt(2/M_rff) .* cos.( (coords_st_y * W_u) .+ b_u' )
+    
+    u1_at_y = phi_y_u * beta_u1
+    u2_at_y = phi_y_u * beta_u2
+    u3_at_y = phi_y_u * beta_u3
+    
+    y_mu = beta_y[1] .* u1_at_y .+ beta_y[2] .* u2_at_y .+ beta_y[3] .* u3_at_y .+ beta_y[4] .* z_at_y
+    y_obs .~ Normal.(y_mu, sigma_y)
+end
+
+
+batch_indices = sample(1:Ny, 20, replace=false) # Pick 20 random indices for Y
+
+data = example_data( "multi-fidelity" )
+
+
+y_batch = data.y[batch_indices]
+coords_y_batch = hcat( data.coords_y_s, data.coords_y_t)[batch_indices, :]
+
+model_minibatch = model_v14_minibatch_mfgp(
+    y_batch, data.u1, data.u2, data.u3, data.z,
+    coords_y_batch, hcat(data.coords_u_s, data.coords_u_t), data.coords_z
+)
+
+# AdvancedVI.jl optimize this model efficiently
+
+```
+
+
+#### V15: Deep Gaussian Process (Stacked RFF)
+
+This model implements a Deep GP architecture using a hierarchical composition of RFF layers.
+
+Layer 1 (Spatial): Models  Z  as a function of spatial coordinates.
+Layer 2 (Spatiotemporal): Models  U1,U2,U3  as functions of Space, Time, and the latent output from Layer 1 ( Z ).
+Layer 3 (Output): Models  Y  as a function of Space, Time, and the latent outputs from Layer 2 ( U1,U2,U3 ).
+
+By stacking these RFF mappings, we create a deep probabilistic model where each level performs a non-linear transformation (warping) of the input space for the subsequent level.
+
+Given the high dimensionality of the Deep GP (Layered RFF), Markov Chain Monte Carlo (MCMC) like NUTS can be extremely slow. **Variational Inference (VI)** provides a faster alternative by approximating the posterior $p(\theta|y)$ with a simpler distribution $q(\theta)$, typically a Gaussian, and maximizing the **Evidence Lower Bound (ELBO)**.
+
+$$\text{ELBO}(q) = \mathbb{E}_{q(\theta)}[\log p(y, \theta)] - \mathbb{E}_{q(\theta)}[\log q(\theta)]$$
+
+The following code sets up the ADVI objective and the variational posterior.
+
+
+```{julia}
+@model function model_v15_deep_gp(y_obs, u1_obs, u2_obs, u3_obs, z_obs, coords_space, coords_time; period=12.0, M_rff=40)
+    N = length(y_obs)
+    D_s = size(coords_space, 2)
+    D_t = size(coords_time, 2)
+
+    # --- Layer 1: Latent Spatial GP (Z) ---
+    W_z ~ filldist(Normal(0, 1), D_s, M_rff)
+    b_z ~ filldist(Uniform(0, 2pi), M_rff)
+    beta_z ~ filldist(Normal(0, 1), M_rff)
+    
+    # Latent Z values (input to Layer 2)
+    z_latent = rff_map(coords_space, W_z, b_z) * beta_z
+    
+    sigma_z ~ Exponential(0.5)
+    z_obs ~ MvNormal(z_latent, sigma_z^2 * I)
+
+    # --- Layer 2: Latent Spatiotemporal GPs (U1, U2, U3) ---
+    # Inputs: Space + Time + Latent Z from Layer 1
+    coords_l2 = hcat(coords_space, coords_time, z_latent)
+    D_l2_in = size(coords_l2, 2)
+    
+    W_u ~ filldist(Normal(0, 1), D_l2_in, M_rff)
+    b_u ~ filldist(Uniform(0, 2pi), M_rff)
+    
+    beta_u1 ~ filldist(Normal(0, 1), M_rff)
+    beta_u2 ~ filldist(Normal(0, 1), M_rff)
+    beta_u3 ~ filldist(Normal(0, 1), M_rff)
+    
+    Phi_u = rff_map(coords_l2, W_u, b_u)
+    u1_latent = Phi_u * beta_u1
+    u2_latent = Phi_u * beta_u2
+    u3_latent = Phi_u * beta_u3
+
+    sigma_u ~ filldist(Exponential(0.5), 3)
+    u1_obs ~ MvNormal(u1_latent, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_latent, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_latent, sigma_u[3]^2 * I)
+
+    # --- Layer 3: Final Output GP (Y) ---
+    # Inputs: Original coords + Latent U's from Layer 2
+    coords_l3 = hcat(coords_space, coords_time, u1_latent, u2_latent, u3_latent)
+    D_l3_in = size(coords_l3, 2)
+
+    W_y ~ filldist(Normal(0, 1), D_l3_in, M_rff)
+    b_y ~ filldist(Uniform(0, 2pi), M_rff)
+    beta_y_gp ~ filldist(Normal(0, 1), M_rff)
+
+    # Trend and Seasonal components (Structural part of the deep GP)
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+    
+    # Deep GP realization for Y
+    f_y = rff_map(coords_l3, W_y, b_y) * beta_y_gp
+
+    sigma_y ~ Exponential(1.0)
+    y_obs ~ MvNormal(f_y .+ seasonal, sigma_y^2 * I)
+end
+
+
+
+using AdvancedVI
+
+# 1. Instantiate the model with data
+# Assuming `data` is available from previous cells
+model_vi = model_v15_deep_gp(
+    data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.y_obs, # Using y as proxy for z_obs if not distinct
+    data.coords_space, data.coords_time
+)
+
+# 2. Define the Variational Approximation (Mean Field Gaussian)
+# This creates a multivariate normal with diagonal covariance in the unconstrained space
+advi = ADVI(10, 1000) # 10 samples for ELBO gradient estimation, 1000 iterations
+
+# 3. Setup the optimizer and objective
+# In a real workflow, use `vi(model, advi)` which returns the optimized variational posterior
+println("Variational Inference (ADVI) objective configured for Model V15.")
+
+# Simple helper to run optimization (Skeleton)
+function run_vi_optimization(model, samples=10, max_iters=500)
+    # MeanField provides a diagonal Gaussian approximation
+    q = vi(model, ADVI(samples, max_iters))
+    return q
+end
+
+
+```
+
+
+By defining a custom RFFLayer, we can incorporate the Random Fourier Features mapping into standard Flux neural network pipelines. This is particularly useful for 'Deep Kernel Learning', where a neural network is used to learn a feature representation that is then passed to a Gaussian Process. This bridge allows us to leverage Flux's optimization ecosystem and GPU support for the non-linear coordinate warping part of the Deep GP.
+
+This involves converting our coordinates and observations into Float32 matrices, initializing the Deep GP Flux model, and training it using the Adam optimizer to minimize the Mean Squared Error. This demonstration shows how the neural network layers can 'warp' the input space to better fit the data.
+
+
+```{julia}
+using Flux
+
+# Define a custom RFF Layer for Flux
+struct RFFLayer{W, B}
+    weights::W
+    bias::B
+end
+
+# Make the layer callable
+function (m::RFFLayer)(x::AbstractMatrix)
+    projection = (x * m.weights) .+ m.bias'
+    return sqrt(2 / size(m.weights, 2)) .* cos.(projection)
+end
+
+# Make the layer trainable
+Flux.@functor RFFLayer
+
+# Example of a DEEPER GP represented as a Flux Chain with activations
+function create_deep_gp_flux(in_dims, hidden_dims, m_features)
+    return Chain(
+        # Layer 1: Initial transformation
+        Dense(in_dims, hidden_dims, relu),
+        # Layer 2: Intermediate processing with ReLU activation
+        Dense(hidden_dims, hidden_dims, relu),
+        # Layer 3: Another intermediate layer with ReLU activation
+        Dense(hidden_dims, hidden_dims, relu),
+        # Layer 4: RFF mapping (Spectral feature space)
+        RFFLayer(randn(hidden_dims, m_features), rand(m_features) .* 2pi),
+        # Output Layer: Probabilistic linear combination
+        Dense(m_features, 1) 
+    )
+end
+
+println("Updated Flux architecture with ReLU activations between all dense layers.")
+
+# 1. Prepare Data with Train/Validation Split
+using Random
+Random.seed!(123)
+
+# Total data
+x_all = Float32.(hcat(data.coords_space, data.coords_time))
+y_all = Float32.(reshape(data.y_obs, 1, :))
+N_total = size(x_all, 1)
+
+# Simple 80/20 split
+idx = shuffle(1:N_total)
+train_idx = idx[1:Int(floor(0.8*N_total))]
+val_idx = idx[Int(floor(0.8*N_total))+1:end]
+
+x_train = x_all[train_idx, :]
+y_train = y_all[:, train_idx]
+x_val = x_all[val_idx, :]
+y_val = y_all[:, val_idx]
+
+# 2. Initialize Model and Optimizer
+in_dims = size(x_train, 2)
+hidden_dims = 10
+m_features = 50
+model_flux = create_deep_gp_flux(in_dims, hidden_dims, m_features)
+
+loss(m, x, y) = Flux.mse(m(x), y)
+opt_state = Flux.setup(Flux.Adam(0.01), model_flux)
+
+println("Data split into train ($(length(train_idx))) and validation ($(length(val_idx))) sets.")
+
+using Plots
+
+# 1. Early Stopping Parameters
+patience = 20
+best_val_loss = Inf32
+best_model_params = nothing
+
+# 2. Training Loop
+train_losses = Float32[]
+val_losses = Float32[]
+epochs_without_improvement = 0
+
+println("Starting Flux training with early stopping...")
+
+for epoch in 1:1000
+    l_train, grads = Flux.withgradient(model_flux) do m
+        loss(m, x_train, y_train)
+    end
+    Flux.update!(opt_state, model_flux, grads[1])
+
+    l_val = loss(model_flux, x_val, y_val)
+    push!(train_losses, l_train)
+    push!(val_losses, l_val)
+
+    if l_val < best_val_loss
+        best_val_loss = l_val
+        best_model_params = deepcopy(model_flux)
+        epochs_without_improvement = 0
+    else
+        epochs_without_improvement += 1
+    end
+
+    if epoch % 50 == 0
+        println("Epoch $epoch: Train Loss = $l_train, Val Loss = $l_val")
+    end
+
+    if epochs_without_improvement >= patience
+        println("Early stopping triggered at epoch $epoch.")
+        global model_flux = best_model_params
+        break
+    end
+end
+
+# 3. Visualization
+plot(train_losses, label="Train Loss", lw=2, xscale=:log10, yscale=:log10,
+     title="Deep Kernel Learning Convergence", xlabel="Epoch", ylabel="MSE Loss")
+plot!(val_losses, label="Val Loss", lw=2, linestyle=:dash)
+
+using Plots
+
+# Diagnostic plot for Training Loss Convergence
+# This helps visualize if the learning rate was appropriate and how quickly the model reached its plateau
+plot(train_losses, 
+     title="Training Loss Diagnostics", 
+     xlabel="Epoch", 
+     ylabel="Mean Squared Error (MSE)", 
+     label="Training Loss", 
+     lw=2.5, 
+     color=:blue, 
+     xscale=:log10, 
+     yscale=:log10,
+     grid=true,
+     minorgrid=true)
+
+# Annotate the final loss value
+final_loss = train_losses[end]
+annotate!(length(train_losses), final_loss, 
+          text(" Final: $(round(final_loss, digits=5))", :left, 8, :blue))
+
+using Statistics
+using Plots
+
+"""
+    evaluate_and_plot(m, x, y, mu_train; title="Validation Parity Plot", custom_metrics=Dict())
+
+Calculates standard metrics (RMSE, R²), compares against a mean baseline, 
+and processes an optional dictionary of custom metric functions: (y_pred, y_true) -> score.
+"""
+function evaluate_and_plot(m, x, y, mu_train; title="Validation Parity Plot", custom_metrics=Dict())
+    # 1. Model Predictions
+    y_pred = m(x)
+    
+    # 2. Standard Metrics
+    rmse = sqrt(Flux.mse(y_pred, y))
+    ss_res = sum((y .- y_pred).^2)
+    ss_tot = sum((y .- mean(y)).^2)
+    r2 = 1 - (ss_res / ss_tot)
+
+    # 3. Baseline Metrics (Predicting the mean)
+    y_base = fill(mu_train, size(y))
+    rmse_base = sqrt(Flux.mse(y_base, y))
+
+    # 4. Print Summary Table
+    println("--- Performance Summary ---")
+    println(rpad("Metric", 15), " | ", rpad("Model", 10), " | ", rpad("Baseline", 10))
+    println("-"^16, "|", "-"^12, "|", "-"^11)
+    println(rpad("RMSE", 15), " | ", rpad(round(rmse, digits=4), 10), " | ", rpad(round(rmse_base, digits=4), 10))
+    println(rpad("R²", 15), " | ", rpad(round(r2, digits=4), 10), " | ", rpad("0.0000", 10))
+
+    # 5. Custom Metrics Execution
+    for (name, func) in custom_metrics
+        val = func(y_pred, y)
+        println(rpad(string(name), 15), " | ", rpad(round(val, digits=4), 10), " | ", rpad("--", 10))
+    end
+
+    # 6. Parity Plot
+    p = scatter(vec(y), vec(y_pred), aspect_ratio=:equal, title=title, 
+                xlabel="Actual", ylabel="Predicted", label="Predictions", alpha=0.6)
+
+    min_val, max_val = minimum(y), maximum(y)
+    plot!(p, [min_val, max_val], [min_val, max_val], 
+          color=:red, linestyle=:dash, label="Ideal", lw=2)
+
+    return p
+end
+
+# Example execution with a custom metric (MAE)
+train_mu = mean(y_train)
+metrics = Dict("MAE" => (yp, yt) -> mean(abs.(yp .- yt)))
+evaluate_and_plot(model_flux, x_val, y_val, train_mu, custom_metrics=metrics)
+
+
+# 1. Create Mean Baseline Predictions (no model , just the mean)
+train_mean = mean(y_train)
+y_pred_baseline = fill(train_mean, size(y_val))
+
+# 2. Calculate Baseline Metrics
+mse_base = Flux.mse(y_pred_baseline, y_val)
+rmse_base = sqrt(mse_base)
+r2_base = 0.0 # By definition
+
+
+# Using consolidated evaluate_and_plot function defined above
+train_mu = mean(y_train)
+evaluate_and_plot(model_flux, x_val, y_val, train_mu, title="Deep GP Validation")
+
+# 1. Create Mean Baseline Predictions
+train_mean = mean(y_train)
+y_pred_baseline = fill(train_mean, size(y_val))
+
+# 2. Calculate Baseline Metrics
+mse_base = Flux.mse(y_pred_baseline, y_val)
+rmse_base = sqrt(mse_base)
+mae_base = mean(abs.(y_pred_baseline .- y_val))
+ss_res_base = sum((y_val .- y_pred_baseline).^2)
+ss_tot_base = sum((y_val .- mean(y_val)).^2)
+r2_base = 1 - (ss_res_base / ss_tot_base)
+
+# 3. Display Comparison Table
+println("--- Performance Comparison ---")
+println("Metric | Deep GP | Mean Baseline")
+println("-------|---------|--------------")
+println("MSE    | ", round(mse_val, digits=4), "  | ", round(mse_base, digits=4))
+println("RMSE   | ", round(rmse_val, digits=4), "  | ", round(rmse_base, digits=4))
+println("MAE    | ", round(mae_val, digits=4), "  | ", round(mae_base, digits=4))
+println("R²     | ", round(r2_val, digits=4), "  | ", round(r2_base, digits=4))
+
+
+
+using Serialization
+
+# 1. Save the model to a file
+model_path = "deep_gp_model.jls"
+serialize(model_path, model_flux)
+println("Model saved to: ", model_path)
+
+# 2. To load the model back later:
+# loaded_model = deserialize(model_path)
+# println("Model successfully reloaded.")
+
+using JLD2
+
+# 1. Save the model to a file using JLD2
+model_path = "deep_gp_model.jld2"
+jldsave(model_path; model_state = model_flux)
+println("Model saved to: ", model_path)
+
+# 2. To load the model back later:
+# data = jldopen(model_path, "r")
+# loaded_model = data["model_state"]
+# println("Model successfully reloaded.")
+```
+
+
+
+#### V16: Nyström Approximation
+
+This model implements the Nyström Approximation to the Gaussian Process. The Nyström method approximates the full  N×N  covariance matrix  K  using a subset of  M  inducing points  Z , such that  K~=KXZK−1ZZKZX . This provides a low-rank approximation of the latent process, which is computationally efficient while maintaining the global correlation structure better than a purely diagonal FITC approximation in some regimes.
+
+Unlike FITC, which assumes conditional independence, Nyström provides a direct low-rank approximation to the kernel matrix $K \approx K_{XZ} K_{ZZ}^{-1} K_{ZX}$$K \approx K_{XZ} K_{ZZ}^{-1} K_{ZX}$. This version integrates with the existing nested covariates and spatiotemporal structure from V12.
+
+
+```{julia}
+@model function model_v16_nystrom(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_inducing_val=15, M_rff_u=30)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors ---
+    sigma_u ~ filldist(Exponential(0.5), 3)
+
+    # --- Nested Latent Covariates (Full RFF-based Logic) ---
+    coords_tz = hcat(coords_time, z)
+    
+    # U1 = f1(coords_time, Z)
+    W_u1 ~ filldist(Normal(0, 1), size(coords_tz, 2), M_rff_u)
+    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u1 ~ Exponential(1.0)
+    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
+    u1_true = rff_map(coords_tz, W_u1, b_u1) * beta_rff_u1
+
+    # U2 = f2(coords_time, Z, U1)
+    coords_tz_u1 = hcat(coords_time, z, u1_true)
+    W_u2 ~ filldist(Normal(0, 1), size(coords_tz_u1, 2), M_rff_u)
+    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u2 ~ Exponential(1.0)
+    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
+    u2_true = rff_map(coords_tz_u1, W_u2, b_u2) * beta_rff_u2
+
+    # U3 = f3(coords_time, Z, U1)
+    W_u3 ~ filldist(Normal(0, 1), size(coords_tz_u1, 2), M_rff_u)
+    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u3 ~ Exponential(1.0)
+    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
+    u3_true = rff_map(coords_tz_u1, W_u3, b_u3) * beta_rff_u3
+
+    # --- Structural Components ---
+    beta_cos ~ Normal(0, 1)
+    beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    ls_trend ~ Gamma(2, 2)
+    sigma_trend ~ Exponential(0.5)
+    k_trend = SqExponentialKernel() ∘ ScaleTransform(inv(ls_trend))
+    g_trend = GP(sigma_trend^2 * k_trend)
+    unique_times = sort(unique(coords_time[:,1]))
+    alpha ~ g_trend(unique_times, 1e-1)
+    trend = alpha[indexin(coords_time[:,1], unique_times)]
+
+    # --- Nystr&#246;m GP (Low Rank Approximation) ---
+    coords_st = hcat(coords_space, coords_time)
+    ls_st ~ filldist(Gamma(2, 2), D_st)
+    sigma_f ~ Exponential(1.0)
+    k_st = SqExponentialKernel() ∘ ARDTransform(inv.(ls_st))
+    
+    # Inducing points learned as parameters
+    Z_ind = Matrix{Float64}(undef, M_inducing_val, D_st)
+    mu_st = mean(coords_st, dims=1)
+    std_st = std(coords_st, dims=1)
+    for j in 1:D_st
+        Z_ind[:, j] ~ filldist(Normal(mu_st[j], 2.0 * std_st[j]), M_inducing_val)
+    end
+
+    # K_zz and K_xz for the Nystr&#246;m projection
+    K_zz = kernelmatrix(k_st, RowVecs(Z_ind)) + 1e-6*I
+    K_xz = kernelmatrix(k_st, RowVecs(coords_st), RowVecs(Z_ind))
+    
+    L_zz = cholesky(K_zz).L
+    v_latent ~ filldist(Normal(0, 1), M_inducing_val)
+    
+    # The low-rank realization f ≈ K_xz * inv(K_zz) * u
+    f = sigma_f .* (K_xz * (L_zz' \\ v_latent))
+
+    # --- Spatiotemporal Stochastic Volatility ---
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0)
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+    
+    Phi_sigma = rff_map(coords_st, W_sigma, b_sigma)
+    sigma_y = exp.(Phi_sigma * beta_rff_sigma ./ 2)
+
+    # --- Likelihoods ---
+    beta_covs ~ filldist(Normal(0, 1), 4)
+    mu_y = trend .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_y .+ f, Diagonal(sigma_y.^2 .+ 1e-4))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+
+ 
+data = example_data( "complex_testdata", 50)
+ 
+model_v16_inst = model_v16_nystrom(
+    data.y_obs, 
+    data.U1_obs, 
+    data.U2_obs, 
+    data.U3_obs, 
+    data.Z, 
+    data.coords_space, 
+    data.coords_time
+)
+ 
+chain_v16 = sample(model_v16_inst, NUTS(), 100)
+ 
+display(describe(chain_v16))
+waic_v16 = compute_y_waic(model_v16_inst, chain_v16)
+println("\nWAIC for V16 (Nystr&#246;m): ", waic_v16)
+
+
+```
+
+#### V17: SPDE Approximation (Spatial Matern 3/2)
+
+This model implements an SPDE Approximation for the spatial component. While a full finite-element mesh-based implementation (like R-INLA) requires specialized triangulations, we approximate the behavior here using a discrete Laplacian on a grid or a Gaussian Markov Random Field (GMRF) representation. This allows the model to scale to larger spatial datasets by exploiting the sparsity of the precision matrix  Q .
+
+```{julia}
+@model function model_v17_spde(y_obs, u1_obs, u2_obs, u3_obs, z, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_rff_u=30)
+    N = length(y_obs)
+    T_unique = length(unique(coords_time))
+    D_s = size(coords_space, 2)
+    D_st = D_s + size(coords_time, 2)
+
+    # --- Priors ---
+    sigma_u ~ filldist(Exponential(0.5), 3)
+
+    # --- Nested Latent Covariates (RFF-based from V12/V16) ---
+    coords_tz = hcat(coords_time, z)
+    W_u1 ~ filldist(Normal(0, 1), size(coords_tz, 2), M_rff_u)
+    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u1 ~ Exponential(1.0)
+    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
+    u1_true = rff_map(coords_tz, W_u1, b_u1) * beta_rff_u1
+
+    coords_tz_u1 = hcat(coords_time, z, u1_true)
+    W_u2 ~ filldist(Normal(0, 1), size(coords_tz_u1, 2), M_rff_u)
+    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u2 ~ Exponential(1.0)
+    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
+    u2_true = rff_map(coords_tz_u1, W_u2, b_u2) * beta_rff_u2
+
+    W_u3 ~ filldist(Normal(0, 1), size(coords_tz_u1, 2), M_rff_u)
+    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u3 ~ Exponential(1.0)
+    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
+    u3_true = rff_map(coords_tz_u1, W_u3, b_u3) * beta_rff_u3
+
+    # --- Structural Components ---
+    beta_cos ~ Normal(0, 1); beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    ls_trend ~ Gamma(2, 2); sigma_trend ~ Exponential(0.5)
+    k_trend = SqExponentialKernel() ∘ ScaleTransform(inv(ls_trend))
+    g_trend = GP(sigma_trend^2 * k_trend)
+    unique_times = sort(unique(coords_time[:,1]))
+    alpha ~ g_trend(unique_times, 1e-1)
+    trend = alpha[indexin(coords_time[:,1], unique_times)]
+
+    # --- SPDE / GMRF Spatial Approximation (Matern 3/2) ---
+    # In the SPDE approach, the Matern kernel is the solution to (̄ͅ - Δ)̲f = W
+    # We approximate the spatial covariance using a sparse precision matrix approach.
+    ls_s ~ Gamma(2, 2)
+    sigma_s ~ Exponential(1.0)
+    
+    # Construct a Matern 3/2 spatial kernel matrix (as proxy for SPDE precision behavior)
+    k_s = Matern32Kernel() ∘ ScaleTransform(inv(ls_s))
+    K_s = sigma_s^2 * kernelmatrix(k_s, RowVecs(coords_space)) + 1e-6*I
+    f_spatial ~ MvNormal(zeros(N), K_s)
+
+    # --- Spatiotemporal Stochastic Volatility ---
+    coords_st = hcat(coords_space, coords_time)
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0)
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+    sigma_y = exp.(rff_map(coords_st, W_sigma, b_sigma) * beta_rff_sigma ./ 2)
+
+    # --- Likelihood ---
+    beta_covs ~ filldist(Normal(0, 1), 4)
+    mu_y = trend .+ seasonal .+ f_spatial .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_y, Diagonal(sigma_y.^2 .+ 1e-4))
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+end
+
+
+ 
+data = example_data( "complex_testdata", 50)
+ 
+ 
+model_v17 = model_v17_spde(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time)
+chain_v17 = sample(model_v17, NUTS(), 100)
+display(describe(chain_v17))
+
+waic_v17 = compute_y_waic(model_v17, chain_v17)
+
+```
+
+#### V18: SPDE Approximation Kronecker-Spatiotemporal 
+
+This model builds upon V17 by replacing the additive seasonal and trend components with a **Spatiotemporal SPDE** modeled via a Kronecker product. By assuming a separable structure $K = K_s \otimes K_t$, we can exploit the sparsity of the precision matrices in both dimensions. This provides a unified spatiotemporal field while keeping the memory footprint low using `SparseArrays`.
+
+
+```{julia}
+
+using SparseArrays
+
+# Helper to sample a spatiotemporal field using Kronecker product of precision matrices
+function kron_matern_sample(Ns, Nt, unique_s, unique_t, ls_s, sigma_s, ls_t, sigma_t, noise_vec)
+    # Spatial Precision
+    k_s = Matern32Kernel() ∘ ScaleTransform(inv(ls_s))
+    K_s = sigma_s^2 * kernelmatrix(k_s, RowVecs(unique_s)) + 1e-6*I
+    Q_s = sparse(inv(K_s))
+
+    # Temporal Precision
+    k_t = Matern32Kernel() ∘ ScaleTransform(inv(ls_t))
+    K_t = sigma_t^2 * kernelmatrix(k_t, unique_t) + 1e-6*I
+    Q_t = sparse(inv(K_t))
+
+    # Full Kronecker Precision
+    Q_full = kron(Q_t, Q_s)
+    L_q = cholesky(Q_full + 1e-6*I)
+    
+    # Sample: f = (L')^-1 * noise
+    return L_q.PtL' \\ noise_vec
+end
+
+@model function model_v18_kronecker_spde(y_obs, u1_obs, u2_obs, u3_obs, z_obs, coords_space, coords_time; M_rff_sigma=20)
+    N = length(y_obs)
+    unique_t = sort(unique(coords_time[:, 1]))
+    Nt = length(unique_t)
+    Ns = N ÷ Nt
+    unique_s = coords_space[1:Ns, :]
+    D_st = size(coords_space, 2) + size(coords_time, 2)
+    coords_st = hcat(coords_space, coords_time)
+
+    # Noise vectors for non-centered parameterization
+    z_noise ~ filldist(Normal(0, 1), N)
+    u1_noise ~ filldist(Normal(0, 1), N)
+    u2_noise ~ filldist(Normal(0, 1), N)
+    u3_noise ~ filldist(Normal(0, 1), N)
+    y_noise ~ filldist(Normal(0, 1), N)
+
+    # Common lengthscale and variance priors for covariates
+    ls_s_cov ~ Gamma(2, 2)
+    sigma_s_cov ~ Exponential(1.0)
+    ls_t_cov ~ Gamma(2, 2)
+    sigma_t_cov ~ Exponential(1.0)
+
+    # 1. Latent Kronecker Field for Z
+    z_true = kron_matern_sample(Ns, Nt, unique_s, unique_t, ls_s_cov, sigma_s_cov, ls_t_cov, sigma_t_cov, z_noise)
+    sigma_z_obs ~ Exponential(0.5)
+    z_obs ~ MvNormal(z_true, sigma_z_obs^2 * I)
+
+    # 2. Latent Kronecker Fields for U1, U2, U3
+    # (All using Matern 3/2 Spatiotemporal Kronecker structure)
+    u1_true = kron_matern_sample(Ns, Nt, unique_s, unique_t, ls_s_cov, sigma_s_cov, ls_t_cov, sigma_t_cov, u1_noise)
+    u2_true = kron_matern_sample(Ns, Nt, unique_s, unique_t, ls_s_cov, sigma_s_cov, ls_t_cov, sigma_t_cov, u2_noise)
+    u3_true = kron_matern_sample(Ns, Nt, unique_s, unique_t, ls_s_cov, sigma_s_cov, ls_t_cov, sigma_t_cov, u3_noise)
+
+    sigma_u ~ filldist(Exponential(0.5), 3)
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+
+    # 3. Latent Kronecker Field for Y (Main Process)
+    ls_s_y ~ Gamma(2, 2)
+    sigma_s_y ~ Exponential(1.0)
+    ls_t_y ~ Gamma(2, 2)
+    sigma_t_y ~ Exponential(1.0)
+    
+    f_st = kron_matern_sample(Ns, Nt, unique_s, unique_t, ls_s_y, sigma_s_y, ls_t_y, sigma_t_y, y_noise)
+
+    # 4. Stochastic Volatility
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0)
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+    sigma_y_vec = exp.(rff_map(coords_st, W_sigma, b_sigma) * beta_rff_sigma ./ 2)
+
+    # 5. Regression and Final Likelihood
+    beta_covs ~ filldist(Normal(0, 1), 4)
+    mu_y = f_st .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z_true .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_y, Diagonal(sigma_y_vec.^2 .+ 1e-4))
+end
+
+
+ 
+data = example_data( "complex_testdata", 50)
+ 
+model_v18 = model_v18_spde(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time)
+chain_v18 = sample(model_v18, NUTS(), 100)
+display(describe(chain_v18))
+
+waic_v18 = compute_y_waic(model_v18, chain_v18)
+
+```
+
+
+#### V19: Sparse Variational Gaussian Process with Matern covariances
+
+
+```{julia}
+@model function model_v19_svgp_matern(y_obs, u1_obs, u2_obs, u3_obs, z_obs, coords_space, coords_time; period=12.0, M_rff_sigma=20, M_rff_u=30)
+    N = length(y_obs)
+    unique_t = sort(unique(coords_time[:, 1]))
+    Nt = length(unique_t)
+    Ns = N ÷ Nt
+    unique_s = coords_space[1:Ns, :]
+    D_st = size(coords_space, 2) + size(coords_time, 2)
+    coords_st = hcat(coords_space, coords_time)
+
+    # --- 1. Latent Covariates (Nested RFF with Matern Structure) ---
+    # Noise for non-centered parameterization of fields
+    u1_noise ~ filldist(Normal(0, 1), N)
+    u2_noise ~ filldist(Normal(0, 1), N)
+    u3_noise ~ filldist(Normal(0, 1), N)
+
+    ls_s_u ~ Gamma(2, 2); sigma_s_u ~ Exponential(1.0)
+    rho_u ~ Uniform(-0.99, 0.99); sigma_t_u ~ Exponential(0.5)
+
+    # U1, U2, U3 as latent spatiotemporal fields (Simplified here via RFF for the nesting logic)
+    # Z is treated as a known spatial covariate here, consistent with V12
+    coords_tz = hcat(coords_time, z_obs)
+    W_u1 ~ filldist(Normal(0, 1), size(coords_tz, 2), M_rff_u)
+    b_u1 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u1 ~ Exponential(1.0)
+    beta_rff_u1 ~ filldist(Normal(0, sigma_f_u1^2), M_rff_u)
+    u1_true = rff_map(coords_tz, W_u1, b_u1) * beta_rff_u1
+
+    coords_tz_u1 = hcat(coords_time, z_obs, u1_true)
+    W_u2 ~ filldist(Normal(0, 1), size(coords_tz_u1, 2), M_rff_u)
+    b_u2 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u2 ~ Exponential(1.0)
+    beta_rff_u2 ~ filldist(Normal(0, sigma_f_u2^2), M_rff_u)
+    u2_true = rff_map(coords_tz_u1, W_u2, b_u2) * beta_rff_u2
+
+    W_u3 ~ filldist(Normal(0, 1), size(coords_tz_u1, 2), M_rff_u)
+    b_u3 ~ filldist(Uniform(0, 2pi), M_rff_u)
+    sigma_f_u3 ~ Exponential(1.0)
+    beta_rff_u3 ~ filldist(Normal(0, sigma_f_u3^2), M_rff_u)
+    u3_true = rff_map(coords_tz_u1, W_u3, b_u3) * beta_rff_u3
+
+    sigma_u ~ filldist(Exponential(0.5), 3)
+    u1_obs ~ MvNormal(u1_true, sigma_u[1]^2 * I)
+    u2_obs ~ MvNormal(u2_true, sigma_u[2]^2 * I)
+    u3_obs ~ MvNormal(u3_true, sigma_u[3]^2 * I)
+
+    # --- 2. Main Spatiotemporal Process (Kronecker Matern) ---
+    ls_s_y ~ Gamma(2, 2); sigma_s_y ~ Exponential(1.0)
+    ls_t_y ~ Gamma(2, 2); sigma_t_y ~ Exponential(1.0)
+    y_noise ~ filldist(Normal(0, 1), N)
+
+    # Use the helper from V18/V20 context
+    f_st = kron_matern_sample(Ns, Nt, unique_s, unique_t, ls_s_y, sigma_s_y, ls_t_y, sigma_t_y, y_noise)
+
+    # --- 3. Structural Components ---
+    beta_cos ~ Normal(0, 1); beta_sin ~ Normal(0, 1)
+    seasonal = beta_cos .* cos.(2 * pi .* coords_time[:,1] ./ period) .+ beta_sin .* sin.(2 * pi .* coords_time[:,1] ./ period)
+
+    # --- 4. Stochastic Volatility ---
+    W_sigma ~ filldist(Normal(0, 1), D_st, M_rff_sigma)
+    b_sigma ~ filldist(Uniform(0, 2pi), M_rff_sigma)
+    sigma_log_var ~ Exponential(1.0)
+    beta_rff_sigma ~ filldist(Normal(0, sigma_log_var^2), M_rff_sigma)
+    sigma_y_vec = exp.(rff_map(coords_st, W_sigma, b_sigma) * beta_rff_sigma ./ 2)
+
+    # --- 5. Likelihood ---
+    beta_covs ~ filldist(Normal(0, 1), 4)
+    mu_y = f_st .+ seasonal .+ (u1_true .* beta_covs[1]) .+ (u2_true .* beta_covs[2]) .+ (u3_true .* beta_covs[3]) .+ (z_obs .* beta_covs[4])
+
+    y_obs ~ MvNormal(mu_y, Diagonal(sigma_y_vec.^2 .+ 1e-4))
+end
+
+
+ 
+data = example_data( "complex_testdata", 50)
+ 
+model_v19 = model_v19_spde(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time)
+chain_v19 = sample(model_v19, NUTS(), 100)
+display(describe(chain_v19))
+
+waic_v19 = compute_y_waic(model_v19, chain_v19)
+
+```
+
+#### V20: Multi-fidelity Matern Kronecker
+
+This model which extends the multi-fidelity framework by using Matérn 3/2 kernels for all spatial components. For spatiotemporal interactions, it employs a Kronecker product between the spatial Matérn precision and a temporal AR(1) precision matrix. This provides a robust, physics-informed structure for the latent processes across the standard (Y), medium (U), and high (Z) fidelity levels.
+
+
+```{julia}
+
+using SparseArrays
+
+
+# Helper to create AR1 precision matrix
+function ar1_precision(n, rho, sigma_e)
+    Q = spzeros(n, n)
+    # Main diagonal
+    Q[1, 1] = 1.0
+    for i in 2:(n - 1)
+        Q[i, i] = 1.0 + rho^2
+    end
+    Q[n, n] = 1.0
+    # Off-diagonals
+    for i in 1:(n - 1)
+        Q[i, i + 1] = -rho
+        Q[i + 1, i] = -rho
+    end
+    return (1.0 / sigma_e^2) .* Q
+end
+
+# Helper for Kronecker AR1 x Matern Sampling
+function kron_ar1_matern_sample(Ns, Nt, unique_s, ls_s, sigma_s, rho_t, sigma_t_noise, noise_vec)
+    # Spatial Matern 3/2 Precision
+    k_s = Matern32Kernel() ∘ ScaleTransform(inv(ls_s))
+    K_s = sigma_s^2 * kernelmatrix(k_s, RowVecs(unique_s)) + 1e-6*I
+    Q_s = sparse(inv(K_s))
+
+    # Temporal AR1 Precision
+    Q_t = ar1_precision(Nt, rho_t, sigma_t_noise)
+
+    # Kronecker Product Q = Qt ⊗ Qs
+    Q_full = kron(Q_t, Q_s)
+    L_q = cholesky(Q_full + 1e-6*I)
+    
+    return L_q.PtL' \\ noise_vec
+end
+
+@model function model_v20_multifidelity_gp_matern(y_obs, u1_obs, u2_obs, u3_obs, z_obs, coords_y_s, coords_y_t, coords_u_s, coords_u_t, coords_z_s; period=12.0)
+    # Dimensions
+    Ny = length(y_obs); Nt_y = length(unique(coords_y_t)); Ns_y = Ny ÷ Nt_y
+    Nu = length(u1_obs); Nt_u = length(unique(coords_u_t)); Ns_u = Nu ÷ Nt_u
+    Nz = length(z_obs)
+    
+    # --- 1. High Fidelity: Latent Spatial Z (Matern 3/2) ---
+    ls_z ~ Gamma(2, 2)
+    sigma_z_f ~ Exponential(1.0)
+    k_z = Matern32Kernel() ∘ ScaleTransform(inv(ls_z))
+    # Define latent Z on its own high-res spatial grid
+    K_z = sigma_z_f^2 * kernelmatrix(k_z, RowVecs(coords_z_s)) + 1e-6*I
+    z_latent ~ MvNormal(zeros(Nz), K_z)
+    
+    sigma_z_obs ~ Exponential(0.5)
+    z_obs ~ MvNormal(z_latent, sigma_z_obs^2 * I)
+    
+    # --- Interpolation logic for cross-fidelity dependencies ---
+    # In this simplified implementation, we use the kernel to project latent Z 
+    # to U and Y locations.
+    K_z_u = sigma_z_f^2 * kernelmatrix(k_z, RowVecs(coords_u_s), RowVecs(coords_z_s))
+    z_at_u = (K_z_u * (K_z \\ z_latent)) # Latent Z interpolated to U spatial locations
+    z_at_u_full = repeat(z_at_u, Nt_u)
+
+    # --- 2. Medium Fidelity: Latent Spatiotemporal U (Kron AR1 x Matern) ---
+    ls_s_u ~ Gamma(2, 2); sigma_s_u ~ Exponential(1.0)
+    rho_u ~ Uniform(-0.99, 0.99); sigma_t_u ~ Exponential(0.5)
+    
+    # Noise for U1, U2, U3
+    u1_noise ~ filldist(Normal(0, 1), Nu)
+    u2_noise ~ filldist(Normal(0, 1), Nu)
+    u3_noise ~ filldist(Normal(0, 1), Nu)
+
+    # Sample U fields
+    u1_true = kron_ar1_matern_sample(Ns_u, Nt_u, coords_u_s[1:Ns_u, :], ls_s_u, sigma_s_u, rho_u, sigma_t_u, u1_noise)
+    u2_true = kron_ar1_matern_sample(Ns_u, Nt_u, coords_u_s[1:Ns_u, :], ls_s_u, sigma_s_u, rho_u, sigma_t_u, u2_noise)
+    u3_true = kron_ar1_matern_sample(Ns_u, Nt_u, coords_u_s[1:Ns_u, :], ls_s_u, sigma_s_u, rho_u, sigma_t_u, u3_noise)
+
+    # Hierarchical dependence: Add effect of Z on U
+    beta_uz ~ Normal(0, 1)
+    u1_obs ~ MvNormal(u1_true .+ beta_uz .* z_at_u_full, 0.1*I)
+    
+    # --- 3. Standard Fidelity: Dependent Y (Kron AR1 x Matern) ---
+    ls_s_y ~ Gamma(2, 2); sigma_s_y ~ Exponential(1.0)
+    rho_y ~ Uniform(-0.99, 0.99); sigma_t_y ~ Exponential(0.5)
+    y_noise ~ filldist(Normal(0, 1), Ny)
+    
+    f_st_y = kron_ar1_matern_sample(Ns_y, Nt_y, coords_y_s[1:Ns_y, :], ls_s_y, sigma_s_y, rho_y, sigma_t_y, y_noise)
+
+    # Map latent U/Z to Y coordinates (simplified linear projection)
+    beta_y ~ filldist(Normal(0, 1), 4)
+    # For Y, we assume mu_y is a combination of latent fields
+    # (In practice, requires kernel-based interpolation of U to Y coordinates)
+    mu_y = f_st_y .+ beta_y[1] .* z_at_u_full[1:Ny] # Placeholder for alignment
+
+    sigma_y ~ Exponential(1.0)
+    y_obs ~ MvNormal(mu_y, sigma_y^2 * I)
+end
+
+
+data = example_data( "multi-fidelity" )
+
+model_v20 = model_v20_multifidelity_gp_matern(
+    data.y, data.u1, data.u2, data.u3, data.z,
+    data.coords_y_s, data.coords_y_t,
+    data.coords_u_s, data.coords_u_t,
+    data.coords_z
+)
+
+chain_v20 = sample(model_v20, NUTS(), 100)
+display(describe(chain_v20))
+
+```
+
+
+----
+
+
+Examples of extracting and plotting to be moved into functions
 
 
 ```{julia}

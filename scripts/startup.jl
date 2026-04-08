@@ -81,12 +81,14 @@ print( "\nTo (re)-install required packages, run:  install_required_packages() o
 # Main.DEBUG[] = y,p,t  # this stores y, p, t into Main.DEBUG 
 DEBUG = Ref{Any}()  # initiate
 
-
+# support functions
 include( srcdir( "shared_functions.jl") )
 include( srcdir( "simple_linear_regression.jl") )
-include( srcdir( "regression_functions.jl" ))   # support functions  
+include( srcdir( "regression_functions.jl" ))     
 
-include( srcdir( "car_functions.jl" ))   # support functions  
+include( srcdir( "car_functions.jl" ))   
+include( srcdir( "carstm_functions.jl" ))   
+include( srcdir( "spatiotemporal_functions.jl" ))   
 include( srcdir( "example_data.jl" ))     
 
 
