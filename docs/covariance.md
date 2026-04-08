@@ -13291,38 +13291,18 @@ Currently, sampling is as extensive and intensive as possible, limited by trawl-
 
 Given that complex structure exists in most data of interest, we attempt to approximate them. However, greater realism results in a larger problem size. GPs are flexible demand resources that do not exist for realistic problems. This performance bottleneck can be addresssed with **Sparse Gaussian Processes** (SGPs) with inducing points. We will incrementally develop models of increasing complexity to handle measurement error, periodic dynamics, and spatial dependencies.
 
-Gaussian Processes (GPs) are useful non-parametric models, but their computational cost scales cubically with the number of data points $O(N^3)$, making them impractical for large datasets. SGPs address this limitation by approximating the full GP, reducing the complexity to $O(N M^2)$ or $O(M^3)$ (where M is the number of inducing points or features, and $M \ll N$). Two leading approaches are: Random Fourier Features (RFF) and Fully Independent Training Conditional (FITC).
-
-Random Fourier Features (RFF)
-
-- Creates a fixed, low-dimensional representation of the input space that approximates the kernel, turning GP inference into a linear problem.
-- Approximates the kernel function via feature map.
--	Sparsity: Finite set of random basis functions.
-- $O(N M^2)$ $O(N M^2)$ (often simpler constants).
-- GP as a linear model in a random feature space.
-- Relatively direct implementation, defines a feature mapping $\phi(x)$$\phi(x)$.
-
-
-Fully Independent Training Conditional (FITC)
-
-- Selects a few representative data points (inducing points) to capture the essence of the GP's behavior, simplifying the covariance structure directly. 
-- Approximates the posterior distribution via inducing points.
-- Sparsity: Small set of judiciously chosen inducing points.
-- $O(N M^2 + M^3)$$O(N M^2 + M^3)$ (with $M$$M$ inducing points).
-- GP conditioned on a smaller set of latent variables.
-- Implementation requires managing inducing points and their optimization.
-
-In what follows, we develop and compare the utility and performance of these approximations.
+Gaussian Processes (GPs) are useful non-parametric models, but their computational cost scales cubically with the number of data points $O(N^3)$, making them impractical for large datasets. SGPs address this limitation by approximating the full GP, reducing the complexity to $O(N M^2)$ or $O(M^3)$ (where M is the number of inducing points or features, and $M \ll N$). Two leading approaches are: Random Fourier Features (RFF) and Fully Independent Training Conditional (FITC). They are examined. Other related methods are also explored, all under the context of Bayesian models. We develop and compare the utility and performance of these approximations.
 
 
 #### V0: Base model - Dense Kernel Matrix Spatiotemporal GP, Isometric in space
 
-First we define a base model, a dense kernel matrix-based Gaussian Process for all covariances with the following structure:  dependent variable Y, spatial covariate Z, spatiotemporal covariates U1, U2, U3 and locations Xlon, Xlat and time T, where T has an annual process and a seasonal harmonic process and observation error E. Space and Time follows a separable covariance structure (Matern). Use a non-centered parameterization for Y and all latent covariates (for stability). 
+The base model is a dense kernel matrix-based Gaussian Process for all covariances with the following structure: dependent variable Y, spatial covariate Z, spatiotemporal covariates U1, U2, U3 and locations Xlon, Xlat and time T, where T has an annual process and a seasonal harmonic process and observation error E. Space and Time follows a separable covariance structure (Matern). Use a non-centered parameterization for Y and all latent covariates (for stability). 
  
 Advantage: highly flexible and expressive and coding is relatively simple. 
+
 Disadvantage: very slow -- really slow.
 
-The base model  uses a naive dense Kernel Matrix GP: The model explicitly calculates K_s and K_t and combines them to form the dense kernel matrix K for the MvNormal distribution of f, aligning with a dense kernel matrix approach.
+The base model uses a naive dense Kernel Matrix GP: The model explicitly calculates K_s and K_t and combines them to form the dense kernel matrix K for the MvNormal distribution of f, aligning with a dense kernel matrix approach.
 
 Spatiotemporal Covariates: incorporates y_obs, z, coords_space, coords_time, and the latent u1_true, u2_true, u3_true as specified.
 
@@ -13398,7 +13378,6 @@ Non-centered Parameterization: u1_true, u2_true, u3_true are constructed using n
 
 end
 
-
 data = example_data( "complex_testdata", 50)
 
 model_v0 = model_v0_dense_gp(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time)
@@ -13407,20 +13386,16 @@ display(describe(chain_v0))
 waic_v0 = compute_y_waic(model_v0, chain_v0)  
 println("WAIC for V0: ", waic_v0) # 166.73071132617955
 
+
 ```
+V0: (WAIC=166.7; time=575 s)
+ 
 
 
 #### V1: Nonseparable spatial covariance
 
-Using the base model V0 as the basis, extend it by having a non-separable anisotropic spatial process.
+Next we extend the base model V0 with a non-separable anisotropic spatial and spatiotemporal Gaussian Processes. Instead of multiplying separate spatial and temporal kernels as in V0, a single kernel is applied to the combined spatiotemporal coordinates, allowing for complex interactions between space and time. Anisotropy is handled by using an ARD (Automatic Relevance Determination) kernel, assigning a unique lengthscale to each dimension (longitude, latitude, and time).The spatial (coords_space) and temporal (coords_time) coordinates are combined into a single coords_st matrix with a single SqExponentialKernel creates a non-separable covariance structure. Other the core components from V0 are retained, including the latent covariates (u1_true, u2_true, u3_true), seasonal component, and time-varying trend.
 
-This model extends V0 by using a non-separable anisotropic kernel for the spatiotemporal Gaussian Process. Instead of multiplying separate spatial and temporal kernels, a single kernel is applied to the combined spatiotemporal coordinates, allowing for complex interactions between space and time. Anisotropy is handled by using an ARD (Automatic Relevance Determination) kernel, assigning a unique lengthscale to each dimension (longitude, latitude, and time).
-
-Non-separable Spatiotemporal GP: The model combines spatial (coords_space) and temporal (coords_time) coordinates into a single coords_st matrix. A single SqExponentialKernel is then applied directly to these combined coordinates, which inherently creates a non-separable covariance structure, as opposed to multiplying separate spatial and temporal kernels.
-
-Anisotropic Kernel (ARD): Anisotropy is handled by defining D_st (total dimensions, i.e., 2 for space + 1 for time = 3) separate lengthscales via ls_st ~ filldist(Gamma(2, 2), D_st). These individual lengthscales are then incorporated into the kernel using ARDTransform(inv.(ls_st)), ensuring each dimension has its own characteristic lengthscale.
-
-Extension of V0: The model retains the core components from V0, including the latent covariates (u1_true, u2_true, u3_true), seasonal component, and time-varying trend, while properly integrating the new spatiotemporal GP structure.
 
 ```{julia}
 
@@ -13487,48 +13462,51 @@ waic_v1 = compute_y_waic(model_v1, chain_v1)
 println("WAIC for V1: ", waic_v1) # 724.226399993753 (poorer than V0)
 
 ```
+V0: (WAIC=166.7; time=575 s)
+V1: (WAIC=724.2; time=1340 s)  # poorer and slower
+
 
 #### V2: Fully Adaptive Random Fourier Features  (RFF)
 
 
-**Random Fourier Features (RFF)**, introduced by Rahimi and Recht (2007), provide a popular method for sparse GP approximation. The core idea is to approximate a shift-invariant kernel (like the Squared Exponential or Matérn kernel) using a finite-dimensional feature map.
+Random Fourier Features (RFF)
 
-1.  **Bochner's Theorem**: This theorem states that any shift-invariant kernel can be expressed as the Fourier transform of a non-negative measure (spectral density).
+- introduced by Rahimi and Recht (2007)
+- The core idea is to approximate a shift-invariant kernel (like the Squared Exponential or Matérn kernel) using a finite-dimensional feature map.
 
-2.  **Monte Carlo Approximation**: Instead of integrating over the spectral density, RFF approximates it using Monte Carlo sampling. We sample random frequencies (or spectral weights) $W$ from the Fourier transform of the kernel's spectral density and random phases $b$ from a uniform distribution.
+- Creates a fixed, low-dimensional representation of the input space that approximates the kernel, turning GP inference into a linear problem.
+- Approximates the kernel function via feature map.
+-	Sparsity: Finite set of random basis functions.
+- $O(N M^2)$ $O(N M^2)$ (often simpler constants).
+- GP as a linear model in a random feature space.
+- Relatively direct implementation, defines a feature mapping $\phi(x)$$\phi(x)$.
 
-3.  **Feature Map**: The original input data $x$ is then transformed into a higher-dimensional feature space using these random projections:
+- Justification: 
+  
+  1.  **Bochner's Theorem**: This theorem states that any shift-invariant kernel can be expressed as the Fourier transform of a non-negative measure (spectral density).
+
+  2.  **Monte Carlo Approximation**: Instead of integrating over the spectral density, RFF approximates it using Monte Carlo sampling. We sample random frequencies (or spectral weights) $W$ from the Fourier transform of the kernel's spectral density and random phases $b$ from a uniform distribution.
+
+  3.  **Feature Map**: The original input data $x$ is then transformed into a higher-dimensional feature space using these random projections:
     
-$$\phi(x) = \sqrt{\frac{2}{M}} \cos(x W + b)$$
+  $$\phi(x) = \sqrt{\frac{2}{M}} \cos(x W + b)$$
     
-where $M$ is the number of random features, $W$ is a $D \times M$ matrix of sampled frequencies (for $D$-dimensional input $x$), and $b$ is an $M$-dimensional vector of sampled phases.
+  where $M$ is the number of random features, $W$ is a $D \times M$ matrix of sampled frequencies (for $D$-dimensional input $x$), and $b$ is an $M$-dimensional vector of sampled phases.
 
-4.  **Linear Model**: Once transformed, the GP regression problem becomes equivalent to a Bayesian linear regression problem in this new feature space, where the original kernel $k(x, x')$ is approximated by $\phi(x)^T \phi(x')$. This transformation converts the non-linear GP into a computationally efficient linear model with $M$ features.
+  4.  **Linear Model**: Once transformed, the GP regression problem becomes equivalent to a Bayesian linear regression problem in this new feature space, where the original kernel $k(x, x')$ is approximated by $\phi(x)^T \phi(x')$. This transformation converts the non-linear GP into a computationally efficient linear model with $M$ features.
 
-**Advantages of RFF**:
+- Advantages of RFF:
 
-*   **Computational Efficiency**: Reduces complexity from $O(N^3)$ to $O(N M^2)$ (or $O(N D M)$ for feature map calculation and $O(M^3)$ for inversion), enabling GPs for larger datasets.
+  * **Computational Efficiency**: Reduces complexity from $O(N^3)$ to $O(N M^2)$ (or $O(N D M)$ for feature map calculation and $O(M^3)$ for inversion), enabling GPs for larger datasets.
 
-*   **Simplicity**: Relatively straightforward to implement.
+  * Simplicity.  Relatively straightforward to implement.
 
-*   **Direct Integration**: Easily integrated into probabilistic programming frameworks like Turing.jl by defining the feature map $\phi(x)$ and treating $\beta_{GP}$ as regression coefficients.
+  * Direct Integration - Easily integrated into probabilistic programming frameworks like Turing.jl by defining the feature map $\phi(x)$ and treating $\beta_{GP}$ as regression coefficients.
 
-An "adaptive" form of RFF where the spectral weights $W$ (or their scaling via lengthscales) and phases $b$ are treated as parameters to be learned by the model, allows the kernel's shape to adapt to the data rather than fixing it beforehand.
-
-
-Using the base model V1 as the basis:
-
-- Core Idea: RFF transforms the input data into a finite-dimensional feature space using random projections. This transformation allows the kernel function of the GP to be approximated as an inner product in this new feature space.
-
-- Theoretical Basis: It's rooted in Bochner's Theorem, which states that any shift-invariant kernel (like the squared exponential or Matérn) can be expressed as the Fourier transform of a non-negative measure (spectral density). RFF approximates this integral using Monte Carlo sampling of frequencies and phases.
-
-- Mechanism: It generates a fixed number of random basis functions (Fourier features) and then models the GP as a linear regression problem in the space spanned by these features. The hyperparameters of the GP (like lengthscales) often implicitly define the distribution from which these random features are drawn.
-
-- Computational Advantage: Reduces the computational complexity from $O(N^3)$$O(N^3)$ (for exact GPs) to $O(N M^2)$$O(N M^2)$ for training and $O(N D M)$$O(N D M)$ for feature mapping (where $N$$N$ is data points, $M$$M$ is features, $D$$D$ is input dimensions, and $M \ll N$$M \ll N$).
-
-- Adaptivity: In the models discussed (V1-V4), we use an "adaptive" RFF where the parameters defining these random features (like weights and phases or their scaling via lengthscales) are learned during inference, allowing the model to adapt the kernel's shape to the data.
+  * Here we use an "adaptive" form of RFF where the spectral weights $W$ (or their scaling via lengthscales) and phases $b$ are treated as parameters to be learned by the model, allows the kernel's shape to adapt to the data rather than fixing it beforehand.
 
 
+Implementation notes:
 
 This model builds upon V1 by replacing the direct computation of the dense kernel matrix with an approximation using Random Fourier Features (RFF). The 'adaptive' aspect comes from treating the RFF projection weights `W` and offsets `b` as parameters within the Bayesian model, allowing the model to learn the spectral density of the kernel directly from the data. The latent GP `f` is then constructed as a linear combination of these learned features.
 
@@ -13612,7 +13590,14 @@ waic_v2 = compute_y_waic(model_v2, chain_v2)
 println("WAIC for V2: ", waic_v2) # 95.11863291759116
 ```
 
+V0: (WAIC=166.7; time=575 s)
+V1: (WAIC=724.2; time=1340 s)  # poorer and slower vs V0
+V2: (WAIC=95.1; time=597 s) # better and similar speed vs V0
+
+
+
 #### V3: Nested Covariates
+
 Using the base model V2 as the basis, extend it by assuming that the covariates are nested functions such that: U1 = f1(Z1, Z2) and U2 = f2(Z1, Z2, U1) and  U3 = f3(Z1, Z2, U1).
 
 This model builds upon V2 by assuming that the covariates `U1`, `U2`, and `U3` are nested functions such that:
@@ -13711,6 +13696,11 @@ waic_v3 = compute_y_waic(model_v3, chain_v3)
 println("WAIC for V3: ", waic_v3)  # 112.23686150367824
 
 ```
+V0: (WAIC=166.7; time=575 s)
+V1: (WAIC=724.2; time=1340 s)  # poorer and slower vs V0
+V2: (WAIC=95.1; time=597 s)    # better and similar speed vs V0
+V3: (WAIC=112.2; time=171 s)   # poorer than V2; fast
+
 
 #### V4: Time varying intercept
 
@@ -13808,6 +13798,13 @@ waic_v4 = compute_y_waic(model_v4, chain_v4)
 println("WAIC for V4: ", waic_v4) # 1134.1174265686002
 
 ```
+
+V0: (WAIC=166.7; time=575 s)
+V1: (WAIC=724.2; time=1340 s)  # poorer and slower vs V0
+V2: (WAIC=95.1; time=597 s)    # better and similar speed vs V0
+V3: (WAIC=112.2; time=171 s)   # poorer than V2; fast
+V4: (WAIC=1134.1; time=1380 s) 
+
 
 #### V5: Spatiotemporal Stochastic Volatility
 
@@ -13916,60 +13913,53 @@ display(describe(chain_v5))
 waic_v5 = compute_y_waic(model_v5, chain_v5)
 println("WAIC for V5: ", waic_v5)  # 313.3121722876543
 
-
 ```
+V0: (WAIC=166.7; time=575 s)
+V1: (WAIC=724.2; time=1340 s)  # poorer and slower vs V0
+V2: (WAIC=95.1; time=597 s)    # better and similar speed vs V0
+V3: (WAIC=112.2; time=171 s)   # poorer than V2; fast
+V4: (WAIC=1134.1; time=1380 s) 
+V5: (WAIC=313.3; time=2201 s) 
+
 
 #### V6:  Fully Independent Training Conditional (FITC)
 
-Extending V5 to incorporate FITC. Also known as the "sparse pseudo-input GP" or "Deterministic Training Conditional (DTC)", is another popular sparse GP approximation method. Instead of approximating the kernel function directly via feature maps, FITC introduces a set of **inducing points** $Z = \{z_1, \dots, z_M\}$ (where $M \ll N$). The key idea is to approximate the covariance between observed data points by conditioning on the values of the latent GP at these $M$ inducing points.
+FITC is an approximation method for Gaussian Processes (GPs) that addresses the computational burden of large datasets. It is also known as the "sparse pseudo-input GP" or "Deterministic Training Conditional (DTC)".
 
-The core approximation in FITC is that, given the inducing points, the observed data points are conditionally independent:
+**Core Idea and Theoretical Basis**
+
+Instead of directly approximating the kernel function via feature maps (like RFFs), FITC introduces a small set of **inducing points** ($Z = \{z_1, \dots, z_M\}$, where $M \ll N$). The fundamental assumption is that, conditional on the values of the latent GP at these inducing points ($f_Z$), the observed data points ($f_i$) are conditionally independent:
+
 $$p(f | X, Z) \approx p(f | f_Z, Z) = \prod_{i=1}^N p(f_i | f_Z, Z)$$
-This simplifies the covariance structure, making the inversion much faster.
 
-**FITC with AbstractGPs.jl**:
+This approximation significantly simplifies the covariance structure and speeds up calculations.
 
-`AbstractGPs.jl` and `KernelFunctions.jl` provide a powerful framework for defining kernels and exact Gaussian Processes. While `AbstractGPs.jl` itself primarily focuses on exact GP computations and composable kernel definitions, implementing sparse approximations like FITC or Sparse Variational GPs (SVGP) on top of it often involves:
+**Mechanism and Computational Advantages**
 
-*   **Custom `FiniteGP` Types**: One might need to define custom `FiniteGP` types that incorporate inducing point logic.
+*   **Sparsity Source**: A small set of judiciously chosen inducing points. These points are not necessarily part of the training data.
+*   **Approximation**: FITC approximates the posterior distribution of the GP, effectively 'compressing' the GP through these inducing points.
+*   **Covariance Calculation**: It simplifies the computation of the covariance matrix by involving inversions only for the smaller $M \times M$ covariance matrix of the inducing points ($K_{ZZ}$) and their cross-covariances with the data ($K_{XZ}$). The inducing points act as a bottleneck for information flow.
+*   **Computational Advantage**: Reduces the computational complexity from $O(N^3)$ (for exact GPs) to $O(N M^2 + M^3)$.
+*   **Interpretation**: The GP is conditioned on a smaller set of latent variables (the values at the inducing points).
+*   **Inducing Point Optimization**: A crucial aspect is the choice and optimization of the inducing point locations and possibly their values. These are often treated as hyperparameters to be learned or optimized within the model.
 
-*   **Specialized Libraries**: More advanced sparse GP implementations, including FITC or SVGP, are often found in specialized libraries built upon `AbstractGPs.jl` (e.g., `GPs.jl` or other research-oriented packages) that handle the inducing point optimization and the approximate inference.
+**Implementation Notes for Model V6**
 
-*   **Manual Construction**: For a direct implementation, one would manually construct the approximate covariance matrix based on the inducing points and integrate this into the likelihood within a probabilistic programming framework.
+Model V6 builds upon V5 by replacing the Random Fourier Features (RFF) for the main GP with a FITC approximation. It retains the nested covariates, time-varying intercept, and spatiotemporal stochastic volatility from V5.
 
-In the context of our RFF-based models, while we are not directly implementing FITC, the conceptual link lies in both methods aiming to reduce the computational burden of exact GPs by introducing approximations (either through a finite feature map in RFF or through a smaller set of inducing points in FITC). `AbstractGPs.jl` offers the expressive power to define the *exact kernel* that RFF aims to approximate or that FITC conditions upon, providing a solid theoretical foundation for both approaches.
+**FITC for Main GP**:
+*   Takes pre-defined `Z_inducing` points as input.
+*   Defines an anisotropic spatiotemporal kernel `k_st` using `SqExponentialKernel() \circ ARDTransform(inv.(ls_st))`, similar to Model V1.
+*   Computes the necessary kernel matrices: `K_ZZ` (covariance at inducing points), `K_XZ` (cross-covariance between data and inducing points), and `K_XX_diag` (diagonal of covariance at data points).
+*   Samples the latent values at inducing points: `u_latent ~ MvNormal(zeros(M_inducing_val), K_ZZ)`.
+*   Calculates the conditional mean (`mean_f`) and the diagonal of the conditional covariance (`cov_f_diag`) using standard FITC formulas.
+*   Finally, `f ~ MvNormal(mean_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N)))` samples the latent GP process, using the diagonal approximation for the covariance.
 
-- Core Idea: FITC introduces a small set of inducing points ($M \ll N$$M \ll N$) that are not necessarily part of the training data. The key assumption is that, conditional on the values of the latent GP at these inducing points, the observed data points are conditionally independent.
-
-- Theoretical Basis: It's an approximation to the true GP posterior. Instead of approximating the kernel itself, it approximates the posterior distribution of the GP. The GP is effectively 'compressed' through these inducing points.
-
-- Mechanism: The covariance matrix calculations are simplified by only performing inversions involving the smaller $M \times M$$M \times M$ covariance matrix of the inducing points and their cross-covariances with the data. The inducing points act as a bottleneck for information flow.
-
-- Computational Advantage: Reduces computational complexity to $O(N M^2 + M^3)$$O(N M^2 + M^3)$.
-Inducing Point Optimization: A crucial aspect of FITC (and other inducing-point methods like Sparse Variational GPs) is the choice and optimization of the inducing point locations and possibly their values. These are often treated as hyperparameters to be learned or optimized.
-
-
-This model builds upon V5. However, instead of using Random Fourier Features for the main GP, it implements a **Fully Independent Training Conditional (FITC)** approximation. FITC uses a smaller set of *inducing points* to approximate the full GP, significantly reducing computational cost while aiming to preserve accuracy. The model retains the nested covariates, time-varying intercept, and spatiotemporal stochastic volatility from V5.
- 
-
-Fully Independent Training Conditional (FITC) for Main GP: The model implements the FITC approximation for the main spatiotemporal GP f:
-It takes pre-defined Z_inducing points as input.
-It defines an anisotropic spatiotemporal kernel k_st using SqExponentialKernel() ∘ ARDTransform(inv.(ls_st)), similar to V1, which makes sense for the base GP.
-
-It computes the necessary kernel matrices: K_ZZ (covariance at inducing points), K_XZ (cross-covariance between data and inducing points), and K_XX_diag (diagonal of covariance at data points).
-It samples the latent values at inducing points, u_latent ~ MvNormal(zeros(M_inducing_val), K_ZZ).
-It calculates the conditional mean mean_f and the diagonal of the conditional covariance cov_f_diag using the standard FITC formulas.
-Finally, f ~ MvNormal(mean_f, Diagonal(max.(0, cov_f_diag) + 1e-6*ones(N))) samples the latent GP process, using the diagonal approximation for the covariance.
-
-Retained Components from V5: All components from V5 are integrated:
-
-Nested Latent Covariates: The functional relationships for u1_true, u2_true, and u3_true are identical to V5.
-
-Seasonal Component: The beta_cos and beta_sin parameters, along with the trigonometric functions of time, remain unchanged.
-
-Time-varying Intercept (Random Walk): The random walk definition for alpha and its mapping to trend remains consistent.
-
-Spatiotemporal Stochastic Volatility: The secondary RFF mapping for log_sigma_y (W_sigma, b_sigma, sigma_log_var, beta_rff_sigma, Phi_sigma) and the resulting sigma_y_process are implemented, with y_obs using Diagonal(sigma_y_process.^2).
+**Retained Components from V5**:
+*   **Nested Latent Covariates**: The functional relationships for `u1_true`, `u2_true`, and `u3_true` are identical to V5.
+*   **Seasonal Component**: The `beta_cos` and `beta_sin` parameters, along with the trigonometric functions of time, remain unchanged.
+*   **Time-varying Intercept (Random Walk)**: The random walk definition for `alpha` and its mapping to `trend` remains consistent.
+*   **Spatiotemporal Stochastic Volatility**: The secondary RFF mapping for `log_sigma_y` (parameters `W_sigma`, `b_sigma`, `sigma_log_var`, `beta_rff_sigma`, `Phi_sigma`) and the resulting `sigma_y_process` are implemented, with `y_obs` using `Diagonal(sigma_y_process.^2)`.
 
 
 
@@ -14087,6 +14077,15 @@ println("WAIC for V6: ", waic_v6)  # 137.20586598982402
  
 
 ```
+
+V0: (WAIC=166.7; time=575 s)
+V1: (WAIC=724.2; time=1340 s)  # poorer and slower vs V0
+V2: (WAIC=95.1; time=597 s)    # better and similar speed vs V0
+V3: (WAIC=112.2; time=171 s)   # poorer than V2; fast
+V4: (WAIC=1134.1; time=1380 s) 
+V5: (WAIC=313.3; time=2201 s) 
+V6: (WAIC=137.2; time=2682 s)
+
 
 #### V7: AbstractGPs sparse functional form based on V6.  
 
@@ -14231,6 +14230,16 @@ println("WAIC for V7: ", waic_v7) # 186.74236560096676
 
 ```
 
+V0: (WAIC=166.7; time=575 s)
+V1: (WAIC=724.2; time=1340 s)  # poorer and slower vs V0
+V2: (WAIC=95.1; time=597 s)    # better and similar speed vs V0
+V3: (WAIC=112.2; time=171 s)   # poorer than V2; fast
+V4: (WAIC=1134.1; time=1380 s) 
+V5: (WAIC=313.3; time=2201 s) 
+V6: (WAIC=137.2; time=2682 s)
+V7: (WAIC=186.7; time= 456 s)
+
+
 #### V8: Sparse form (FITC) with nonlinearity
 
 For each u_true (e.g., u1_true), define a new set of RFF parameters (W_u1, b_u1, beta_rff_u1) and use rff_map on its inputs (e.g., hcat(coords_time, z)) to generate a non-linear u1_base. Then, u1_true would be this RFF output, possibly combined with a linear component if desired.
@@ -14250,6 +14259,7 @@ Time-varying Intercept (Random Walk): alpha vector, over unique time points whic
 Spatiotemporal GP using AbstractGPs for Fully Independent Training Conditional (FITC) with Learned Inducing Points: The core spatiotemporal process f is approximated using the FITC method for computational efficiency, especially with larger datasets. The GP (g_base) with an anisotropic Squared Exponential Kernel (k_st) and a signal variance sigma_f. 
 
 The inducing point locations (Z_inducing) are treated as parameters within the Bayesian model (learned). Priors are placed on Z_inducing based on the mean and scaled standard deviation of the input spatiotemporal coordinates (coords_st_orig), guiding their placement to areas relevant to the data. The latent values at the inducing points (u_latent) are sampled from a MvNormal, and the conditional mean (m_f) and diagonal covariance (cov_f_diag) for the observed data points are computed using standard FITC formulas. The full latent process f is then sampled from a MvNormal using m_f and Diagonal(max.(0, cov_f_diag) + jitter). This makes the inference tractable by avoiding operations on large dense covariance matrices.
+
 Spatiotemporal Stochastic Volatility:
 
 The observation noise (sigma_y) is not constant but is allowed to vary across space and time. This heteroscedasticity is modeled using a secondary RFF mapping (W_sigma, b_sigma, sigma_log_var, beta_rff_sigma). This RFF maps the spatiotemporal coordinates to a latent log-variance process (log_sigma_y), which is then exponentiated to yield a spatiotemporally varying standard deviation (sigma_y_process). This sigma_y_process is then used in the likelihood of y_obs, allowing the model to adapt to changing levels of noise across the observation domain.
@@ -14402,14 +14412,23 @@ M_rff_sigma_val_v8 = 20 # Number of RFF features for log-variance GP
 model_v8 = model_v8_fitc_abstractgps_nonlinear(data.y_obs, data.U1_obs, data.U2_obs, data.U3_obs, data.Z, data.coords_space, data.coords_time; M_rff_sigma=M_rff_sigma_val_v8, M_inducing_val=M_inducing_val_v8, M_rff_u=M_rff_u_val)
 
 
-chain_v8 = sample(model_v8, NUTS(), 100) 
+chain_v8 = sample(model_v8, NUTS(), 100) # 4960.76 seconds
 display(describe(chain_v8))
 waic_v8 = compute_y_waic(model_v8, chain_v8)
-println("WAIC for V8: ", waic_v8)
+println("WAIC for V8: ", waic_v8)  # 117.6
 
 
 ```
 
+V0: (WAIC= 166.7;  time= 575 s)
+V1: (WAIC= 724.2;  time=1340 s)   
+V2: (WAIC=  95.1;  time= 597 s)     
+V3: (WAIC= 112.2;  time= 171 s)    
+V4: (WAIC=1134.1;  time=1380 s) 
+V5: (WAIC= 313.3;  time=2201 s) 
+V6: (WAIC= 137.2;  time=2682 s)
+V7: (WAIC= 186.7;  time= 456 s)
+V8: (WAIC= 117.6;  time=4961 s)
 
 
 #### V9: A Gaussian Process Time Trend 
@@ -14595,6 +14614,16 @@ println("WAIC for V9: ", waic_v9)
 
 
 ```
+V0: (WAIC= 166.7;  time= 575 s)
+V1: (WAIC= 724.2;  time=1340 s)   
+V2: (WAIC=  95.1;  time= 597 s)     
+V3: (WAIC= 112.2;  time= 171 s)    
+V4: (WAIC=1134.1;  time=1380 s) 
+V5: (WAIC= 313.3;  time=2201 s) 
+V6: (WAIC= 137.2;  time=2682 s)
+V7: (WAIC= 186.7;  time= 456 s)
+V8: (WAIC= 117.6;  time=4961 s)
+
 
 #### V10 K-Means inducing points
 
