@@ -19,7 +19,7 @@ quickactivate(project_directory)
 current_directory =  @__DIR__() 
 print( "Current directory is: ", current_directory, "\n\n" )
 
-pkgs = [  
+pkgs = unique( [  
     "DrWatson", "Revise", "Requires", 
     "CurlHTTP",
     "PrecompileTools", "PackageCompiler","Memoization", "BenchmarkTools", "OhMyREPL",
@@ -36,10 +36,21 @@ pkgs = [
     "Optim", "Flux",  
     "Peaks", "KernelDensity", "DSP", "Interpolations", 
     "ADTypes",  "ForwardDiff", 
+    "Random", "Statistics", "LinearAlgebra", "DataFrames",
+       "StatsBase", "SparseArrays",
+        "JLD2", "DelaunayTriangulation",
+        "PolygonOps", "GeoInterface", "StatsPlots",
+        "Random", "Turing", "Distributions", "Statistics", "MCMCChains", "DataFrames",
+        "LinearAlgebra", "Clustering", "StatsBase",
+        "JLD2", "FFTW",  "SparseArrays", "StaticArrays", "FillArrays",
+         "Bijectors", "DynamicPPL", "AdvancedVI", "Optimisers",
     "AdvancedVI",  "Turing", "Bijectors", "ArchGDAL",
     "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions", "TemporalGPs"
-]
+] )
 
+
+
+# "Lux", "ArchGDAL", 
 
 # using "CodeTracking",  "Setfield",  "AdvancedHMC", "DynamicHMC", "DistributionsAD",   "Libtask", "ReverseDiff"  
     # "Symbolics", "Logging",  

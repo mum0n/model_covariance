@@ -40,6 +40,228 @@ species composition (Multivariate Normal, latent with Householder
 transform, space-time; [spatial processes](./spatial_processes.md)) and snow crab (Hurdle,
 binomial and Poisson, space-time) in the Maritimes Region of Canada.
 
+## Example 0: Simulated data
+
+```{julia}
+
+# define 'project_directory' as the location of the repository -- required
+# project_directory = joinpath( "/home", "jae", "projects", "model_covariance")  # linux
+# project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  # mswindows
+project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # mswindows generic
+ 
+# if this is the first run, this can take up to 1 hour to install and precompile libraries and their dependencies
+
+include( joinpath( project_directory, "scripts", "startup.jl" ) )   
+ 
+
+
+# Data Generation
+n_pts = 100
+n_time = 15
+
+(pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
+  generate_sim_data(n_pts, n_time; rndseed=42)
+
+
+# Demonstrate the :gp_cvt method has a good basis
+
+area_method = :gp_cvt
+
+(centroids, area_assignments, W_sym, area_idx) = assign_spatial_units(pts, area_method, n_time;
+                             dist_threshold=1.5, time_idx=time_idx)
+
+# Visualize the GP-weighted result
+plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
+                         title="GP Matern-Weighted CVT Partition",
+                         show_boundaries=true)
+display(plt)
+
+# --- Run Full Model Inference ---
+# Using NUTS to verify the gradients and logic of the refactored model.
+
+# Explicitly ensure cov_indices is a 2D matrix (N_obs x 4) as expected by the model.
+# This handles cases where it might still be a 1D vector from previous executions.
+if ndims(cov_indices) == 1
+    # Assuming the model expects 4 covariates (based on loop for k in 1:4)
+    # and that the single column vector should be reshaped into N_obs x 4.
+    # n_pts and n_time are defined in cell FoV6J_mGrv8Q.
+    n_total = n_pts * n_time
+    if length(cov_indices) == n_total
+        cov_indices = reshape(cov_indices, n_total, 4)
+    else
+        error("Unexpected length for cov_indices: $(length(cov_indices)). Expected $n_total for reshaping.")
+    end
+end
+
+
+# Generate synthetic data for Model V3 (Binomial)
+# trials_sim represents the number of trials for each observation.
+# For binary data, it's often 1 trial per observation.
+# For proportional data, it could be a larger integer.
+# class1_sim and class2_sim are categorical fixed effects.
+
+trials_sim = ones(Int, length(y_binary)) # For binary outcome, 1 trial per observation
+class1_sim = rand(1:13, length(y_binary)) # A categorical variable with 13 levels
+class2_sim = rand(1:2, length(y_binary))  # A categorical variable with 2 levels
+
+println("Synthetic data for Model V3 generated: trials_sim, class1_sim, class2_sim")
+
+weights_sim = ones(Float64, length(y_binary)) # Assign equal weight to all observations
+
+println("Synthetic data for Model V4 generated: weights_sim")
+
+
+
+# ----------
+
+# Instantiate the renamed model
+full_model_obj = model_v1_carstm_basic(y_sim, time_idx, area_idx, cov_indices, W_sym)
+
+# Run a short chain for verification
+chain_full = sample(full_model_obj, MH(), 100)
+
+plot_model_fit(chain_full, y_sim, time_idx, area_idx)
+ 
+plt_v1 = plot_spatial_time_slice(chain_full, pts, 1, area_idx, time_idx)
+display(plt_v1)
+
+ 
+# ----------
+
+# Test the RFF model
+rff_model_obj = model_v2_carstm_rff(y_sim, time_idx, area_idx, cov_indices, W_sym)
+chain_rff = sample(rff_model_obj, MH(), 100)
+display(summarize(chain_rff))
+
+plt_v2 = plot_spatial_time_slice(chain_rff, pts, 1, area_idx, time_idx)
+display(plt_v2)
+ 
+# ----------
+
+
+
+# Instantiate model with binary data
+
+binom_model_obj = model_v3_binomial(y_binary, trials_sim, time_idx, area_idx, cov_indices, W_sym, class1_sim, class2_sim)
+
+# Run sampling
+chain_binary = sample(binom_model_obj, MH(), 100)
+display(summarize(chain_binary))
+
+
+plt_v3 = plot_spatial_time_slice(chain_binary, pts, 1, area_idx, time_idx)
+display(plt_v3)
+
+
+
+# ------------
+
+
+
+# Instantiate and run model
+weighted_model_obj = model_v4_weighted_binary(
+    y_binary, trials_sim, weights_sim,
+    time_idx, area_idx, cov_indices,
+    W_sym, class1_sim, class2_sim
+)
+
+chain_weighted = sample(weighted_model_obj, MH(), 100)
+display(summarize(chain_weighted))
+
+plt_v4 = plot_spatial_time_slice(chain_weighted, pts, 1, area_idx, time_idx)
+display(plt_v4)
+
+
+
+# --- Testing Model V5 ---
+
+deep_model_obj = model_v5_deep_gp_carstm(
+  y_binary, trials_sim, weights_sim, time_idx, area_idx, pts,
+  cov_indices, W_sym, class1_sim, class2_sim
+)
+
+# Sample using MH for quick verification
+chain_deep = sample(deep_model_obj, MH(), 100)
+display(summarize(chain_deep))
+
+plt_v5 = plot_spatial_time_slice(chain_deep, pts, 1, area_idx, time_idx)
+display(plt_v5)
+
+
+
+# ----- 
+
+
+using Random
+using Turing
+using Turing: Variational # This is used for q_meanfield_gaussian
+using AdvancedVI # q_meanfield_gaussian comes from here
+using DataFrames # For DataFrame in results display
+using MCMCChains
+
+n_samples_posterior = 1000 # Number of samples to draw from the approximated posterior
+n_iters = 1000 # Number of iterations for VI optimization
+
+results = []
+
+# 1. Model V1: Basic CARSTM (GMRF)
+println("Benchmarking Model V1...")
+mod_v1 = model_v1_carstm_basic(y_sim, time_idx, area_idx, cov_indices, W_sym)
+vi_v1, vi_v1_info, vi_v1_state = vi(mod_v1, q_meanfield_gaussian(mod_v1), n_iters; show_progress=true);
+samples_v1 = rand(vi_v1, n_samples_posterior)
+waic_v1 = calculate_waic(mod_v1, samples_v1)
+push!(results, (model="V1_GMRF", waic=waic_v1))
+
+# 2. Model V2: RFF CARSTM
+println("Benchmarking Model V2...")
+mod_v2 = model_v2_carstm_rff(y_sim, time_idx, area_idx, cov_indices, W_sym)
+vi_v2, vi_v2_info, vi_v2_state = vi(mod_v2, q_meanfield_gaussian(mod_v2), n_iters; show_progress=true);
+samples_v2 = rand(vi_v2, n_samples_posterior)
+waic_v2 = calculate_waic(mod_v2, samples_v2)
+push!(results, (model="V2_RFF", waic=waic_v2))
+
+# 3. Model V3: Binomial
+println("Benchmarking Model V3...")
+mod_v3 = model_v3_binomial(y_binary, trials_sim, time_idx, area_idx, cov_indices, W_sym, class1_sim, class2_sim)
+vi_v3, vi_v3_info, vi_v3_state = vi(mod_v3, q_meanfield_gaussian(mod_v3), n_iters; show_progress=true);
+samples_v3 = rand(vi_v3, n_samples_posterior)
+waic_v3 = calculate_waic(mod_v3, samples_v3)
+push!(results, (model="V3_Binomial", waic=waic_v3))
+
+# 4. Model V4: Weighted Binomial
+println("Benchmarking Model V4...")
+mod_v4 = model_v4_weighted_binary(
+    y_binary, trials_sim, weights_sim,
+    time_idx, area_idx, cov_indices,
+    W_sym, class1_sim, class2_sim
+)
+vi_v4, vi_v4_info, vi_v4_state = vi(mod_v4, q_meanfield_gaussian(mod_v4), n_iters; show_progress=true);
+samples_v4 = rand(vi_v4, n_samples_posterior)
+waic_v4 = calculate_waic(mod_v4, samples_v4)
+push!(results, (model="V4_Weighted", waic=waic_v4))
+
+# 5. Model V5: Deep GP
+println("Benchmarking Model V5...")
+mod_v5 = model_v5_deep_gp_carstm(
+  y_binary, trials_sim, weights_sim, time_idx, area_idx, pts,
+  cov_indices, W_sym, class1_sim, class2_sim
+)
+vi_v5, vi_v5_info, vi_v5_state = vi(mod_v5, q_meanfield_gaussian(mod_v5), n_iters; show_progress=true);
+samples_v5 = rand(vi_v5, n_samples_posterior)
+waic_v5 = calculate_waic(mod_v5, samples_v5)
+
+push!(results, (model="V5_DeepGP", waic=waic_v5))
+
+# Display Results
+df_results = DataFrame(results)
+sort!(df_results, :waic)
+println("\n--- Model Comparison (Sorted by WAIC) ---")
+display(df_results)
+
+
+
+```
+
   
 
 ## Example 1: Bottom temperatures
@@ -89,145 +311,145 @@ The example data is bounded by longitudes (-65, -62) and latitudes (45,
 
 ```julia
 
-    project_directory = joinpath( homedir(), "projects", "model_covariance"  )
+project_directory = joinpath( homedir(), "projects", "model_covariance"  )
 
-    funcs = ( "startup.jl", "pca_functions.jl",  "regression_functions.jl", "car_functions.jl", "carstm_functions.jl" )
+funcs = ( "startup.jl", "pca_functions.jl",  "regression_functions.jl", "car_functions.jl", "carstm_functions.jl" )
 
-    download_directly = false
-    if download_directly
-      using Downloads
-      project_url = "https://raw.githubusercontent.com/jae0/model_covariance/master/"
+download_directly = false
+if download_directly
+  using Downloads
+  project_url = "https://raw.githubusercontent.com/jae0/model_covariance/master/"
 
-      for f in funcs
-        include( Downloads.download( string(project_url, f) ))
-      end
+  for f in funcs
+    include( Downloads.download( string(project_url, f) ))
+  end
 
-    else 
+else 
 
-      for f in funcs
-        include( joinpath( project_directory, "src", f) )
-      end
+  for f in funcs
+    include( joinpath( project_directory, "src", f) )
+  end
 
-    end
-
-
-    # include( joinpath( project_directory, "src", "bijectors_override.jl") )
-
-    Random.seed!(1); # Set a seed for reproducibility.
+end
 
 
-    # load test data: 1999:2023 
-    # NOTE: data created in /home/jae/bio/aegis.temperature/inst/scripts/
-    
-    using RData  
+# include( joinpath( project_directory, "src", "bijectors_override.jl") )
 
-    #fndat = "https://github.com/jae0/model_covariance/data/example_bottom_temp.rdz"
-
-    #fn = Downloads.download(fndat)  # save rdz locally
-    fn = joinpath( project_directory, "data", "example_bottom_temp.rdz" )
-
-    bt = RData.load( fn, convert=true)
-    
-    # W = nb_to_adjacency_matrix( bt["nb"] )
-
-    node1, node2, scaling_factor = nodes( bt["nb"] ) # pre-compute required vars from adjacency_matrix outside of modelling step
-    
-    Y = bt["obs"] 
-    
-    nob, nvar = size(Y)   
-    nz = 2  # no latent factors to use
- 
-    # X = linear covars
-    G = Y[:,["z"]]
-    G.z = log.(G.z)
-    nG = size(G,2)
-
-    # inducing_points for GP (for prediction)
-    n_inducing = 10
-    Gp =  zeros(n_inducing, nG)
-    for i in 1:nG
-      Gp[:,i] = quantile(vec(G[:,i]), LinRange(0.01, 0.99, n_inducing))
-    end
+Random.seed!(1); # Set a seed for reproducibility.
 
 
-    # log_offset (if any)
-    nAU = size( bt["nb"], 1 )  # no of au
-    auid = collect( 1:nAU )
-    nbeta = 0 # no of covars linear
+# load test data: 1999:2023 
+# NOTE: data created in /home/jae/bio/aegis.temperature/inst/scripts/
+
+using RData  
+
+#fndat = "https://github.com/jae0/model_covariance/data/example_bottom_temp.rdz"
+
+#fn = Downloads.download(fndat)  # save rdz locally
+fn = joinpath( project_directory, "data", "example_bottom_temp.rdz" )
+
+bt = RData.load( fn, convert=true)
+
+# W = nb_to_adjacency_matrix( bt["nb"] )
+
+node1, node2, scaling_factor = nodes( bt["nb"] ) # pre-compute required vars from adjacency_matrix outside of modelling step
+
+Y = bt["obs"] 
+
+nob, nvar = size(Y)   
+nz = 2  # no latent factors to use
+
+# X = linear covars
+G = Y[:,["z"]]
+G.z = log.(G.z)
+nG = size(G,2)
+
+# inducing_points for GP (for prediction)
+n_inducing = 10
+Gp =  zeros(n_inducing, nG)
+for i in 1:nG
+  Gp[:,i] = quantile(vec(G[:,i]), LinRange(0.01, 0.99, n_inducing))
+end
 
 
-    n_samples = 10  # posterior sampling
-    sampler = Turing.NUTS()  
-    
-    # carstm_temperature() # incomplete (see carstm_functions.jl)
+# log_offset (if any)
+nAU = size( bt["nb"], 1 )  # no of au
+auid = collect( 1:nAU )
+nbeta = 0 # no of covars linear
 
-    Y 
-    nob=size(Y, 1)
-    nvar=size(Y, 2)
-    nz=2
-    nvh=Int(nvar*nz - nz * (nz-1) / 2)
-    noise=1e-9 
-    
-  # Fixed (covariate) effects 
-    #f_beta ~ filldist( Normal(0.0, 1.0), nbeta);
-    #f_effect = X * f_beta + log_offset
 
-    # icar (spatial effects)
-    beta_s ~ filldist( Normal(0.0, 1.0), nbeta); 
-    s_theta ~ filldist( Normal(0.0, 1.0), nAU)  # unstructured (heterogeneous effect)
-    s_phi ~ filldist( Normal(0.0, 1.0), nAU) # spatial effects: stan goes from -Inf to Inf .. 
-    dphi_s = s_phi[node1] - s_phi[node2]
-    Turing.@addlogprob! (-0.5 * dot( dphi_s, dphi_s ))
-    sum_phi_s = sum(s_phi) 
-    sum_phi_s ~ Normal(0, 0.001 * nAU);      # soft sum-to-zero constraint on s_phi)
-    s_sigma ~ truncated( Normal(0.0, 1.0), 0, Inf) ; 
-    s_rho ~ Beta(0.5, 0.5);
+n_samples = 10  # posterior sampling
+sampler = Turing.NUTS()  
 
-    # spatial effects:  nAU
-    convolved_re_s = s_sigma .*( sqrt.(1 .- s_rho) .* s_theta .+ sqrt.(s_rho ./ scaling_factor) .* s_phi )
-    mp_icar =  X * beta_s +  convolved_re_s[auid]  # mean process for bym2 / icar
- 
-    # GP (higher order terms)
-    # kernel_var ~ filldist(LogNormal(0.0, 0.5), nG)
-    # kernel_scale ~ filldist(LogNormal(0.0, 0.5), nG)
+# carstm_temperature() # incomplete (see carstm_functions.jl)
 
-    # k = ( kernel_var[1] * SqExponentialKernel() ) ∘ ScaleTransform(kernel_scale[1])
+Y 
+nob=size(Y, 1)
+nvar=size(Y, 2)
+nz=2
+nvh=Int(nvar*nz - nz * (nz-1) / 2)
+noise=1e-9 
 
-    # variance process  
-    # gp = atomic( Stheno.GP(k), Stheno.GPC())
-    # gpo = gp(Xo, I2reg )
-    # gpp = gp(Xp, eps() )
-    # sfgp = SparseFiniteGP(gpp, gpp)
-    # vcv = cov(sfgp.fobs)
+# Fixed (covariate) effects 
+#f_beta ~ filldist( Normal(0.0, 1.0), nbeta);
+#f_effect = X * f_beta + log_offset
 
-    #    --- add more .. but kind of slow 
+# icar (spatial effects)
+beta_s ~ filldist( Normal(0.0, 1.0), nbeta); 
+s_theta ~ filldist( Normal(0.0, 1.0), nAU)  # unstructured (heterogeneous effect)
+s_phi ~ filldist( Normal(0.0, 1.0), nAU) # spatial effects: stan goes from -Inf to Inf .. 
+dphi_s = s_phi[node1] - s_phi[node2]
+Turing.@addlogprob! (-0.5 * dot( dphi_s, dphi_s ))
+sum_phi_s = sum(s_phi) 
+sum_phi_s ~ Normal(0, 0.001 * nAU);      # soft sum-to-zero constraint on s_phi)
+s_sigma ~ truncated( Normal(0.0, 1.0), 0, Inf) ; 
+s_rho ~ Beta(0.5, 0.5);
+
+# spatial effects:  nAU
+convolved_re_s = s_sigma .*( sqrt.(1 .- s_rho) .* s_theta .+ sqrt.(s_rho ./ scaling_factor) .* s_phi )
+mp_icar =  X * beta_s +  convolved_re_s[auid]  # mean process for bym2 / icar
+
+# GP (higher order terms)
+# kernel_var ~ filldist(LogNormal(0.0, 0.5), nG)
+# kernel_scale ~ filldist(LogNormal(0.0, 0.5), nG)
+
+# k = ( kernel_var[1] * SqExponentialKernel() ) ∘ ScaleTransform(kernel_scale[1])
+
+# variance process  
+# gp = atomic( Stheno.GP(k), Stheno.GPC())
+# gpo = gp(Xo, I2reg )
+# gpp = gp(Xp, eps() )
+# sfgp = SparseFiniteGP(gpp, gpp)
+# vcv = cov(sfgp.fobs)
+
+#    --- add more .. but kind of slow 
 #    --- ... looking at AbstractGPs as a possible solution
 
-    # gps = rand( MvNormal( mean_process, Symmetric(kmat) ) ) # faster
-    # mp_gp = sum(gps, dims=1)  # mean process
+# gps = rand( MvNormal( mean_process, Symmetric(kmat) ) ) # faster
+# mp_gp = sum(gps, dims=1)  # mean process
 
 
 
-    # Fourier process (global, main effect)
-    t_period ~ filldist( LogNormal(0.0, 0.5), ncf ) 
-    t_beta ~ Normal(0, 1)  # linear trend in time
-    t_amp ~ MvNormal(Zeros(ncf), I) #  coefficients of harmonic components
-    t_phase ~ MvNormal(Zeros(ncf), I) #  coefficients of harmonic components
-    # t_error ~ LogNormal(0, 1)
- 
-     # fourier effects
-    mu_fp = t_beta .* ti + 
-        t_amp[1] .* cos.(t_phase[1]) .* sin.( (2pi / t_period[1]) .* ti )   + 
-        t_amp[1] .* sin.(t_phase[1]) .* cos.( (2pi / t_period[1]) .* ti )   +
-        t_amp[2] .* cos.(t_phase[2]) .* sin.( (2pi / t_period[2]) .* ti )   + 
-        t_amp[2] .* sin.(t_phase[2]) .* cos.( (2pi / t_period[2]) .* ti ) 
+# Fourier process (global, main effect)
+t_period ~ filldist( LogNormal(0.0, 0.5), ncf ) 
+t_beta ~ Normal(0, 1)  # linear trend in time
+t_amp ~ MvNormal(Zeros(ncf), I) #  coefficients of harmonic components
+t_phase ~ MvNormal(Zeros(ncf), I) #  coefficients of harmonic components
+# t_error ~ LogNormal(0, 1)
 
-    # mp_fp = rand( MvNormal( mu_fp, t_error^2 * I ) )  
-  
-    # space X time
+ # fourier effects
+mu_fp = t_beta .* ti + 
+    t_amp[1] .* cos.(t_phase[1]) .* sin.( (2pi / t_period[1]) .* ti )   + 
+    t_amp[1] .* sin.(t_phase[1]) .* cos.( (2pi / t_period[1]) .* ti )   +
+    t_amp[2] .* cos.(t_phase[2]) .* sin.( (2pi / t_period[2]) .* ti )   + 
+    t_amp[2] .* sin.(t_phase[2]) .* cos.( (2pi / t_period[2]) .* ti ) 
+
+# mp_fp = rand( MvNormal( mu_fp, t_error^2 * I ) )  
+
+# space X time
 
 
-    Y ~ MvNormal( mu_fp .+ mp_icar, Symmetric(vcv) )   # add mvn noise
+Y ~ MvNormal( mu_fp .+ mp_icar, Symmetric(vcv) )   # add mvn noise
 
 
 ```
