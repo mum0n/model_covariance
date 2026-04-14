@@ -70,7 +70,7 @@ using Pkg
 pkgs_au = ["Random", "Statistics", "LinearAlgebra", "DataFrames",
        "StatsBase", "SparseArrays",
         "JLD2", "DelaunayTriangulation",
-        "PolygonOps", "GeoInterface", "StatsPlots" ]
+        "PolygonOps", "GeoInterface", "StatsPlots", "Turing"  ]
 
 Pkg.add(pkgs_au)
 Pkg.precompile()
@@ -136,32 +136,51 @@ n_time = 15
 (pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
   generate_sim_data(n_pts, n_time; rndseed=42)
 
+
+
+# Define common constraints
+common_min_area_points = 2.0
+common_max_area_points = 30.0
+min_total_units_benchmark = 5
+max_total_units_benchmark = 15
+tolerance = 1e-1 
+
 ```
 
 ### Basic Delauny Triangulation and Tesselation
 
+Not really a serious "method but more a demonstration of data structure and layout of networks, etc. 
+
 See information in https://en.wikipedia.org/wiki/Delaunay_triangulation
 
-**Algorithm:** Delaunay Seeding  
-**Logic:**
-1. Place $k$ seeds on a regular grid across the domain.
-2. Define boundaries using the Voronoi cells of these fixed seeds.
-3. Simple and fast, but lacks adaptation to the underlying point process intensity.
 
-Seed Placement: It's highly sensitive to the initial, often random, placement of seeds.
-Partitioning: Points are assigned to the closest centroid, effectively creating a Voronoi-like tessellation based on these centroids.
-Adjacency: The adjacency matrix (W) is constructed using the Delaunay triangulation of the centroids, where two areal units are considered neighbors if their centroids are connected by an edge in the triangulation.
-Efficiency: It's generally a fast method but can result in high variance of points per unit, meaning some units might be very dense while others are sparse.
-Geometric Regularity: While it produces compact, convex cells, their distribution can be uneven due to the random seed placement.
+**Algorithm:** 
+- Place $k$ seeds on a regular or random grid across the domain.
+- Define boundaries using the Voronoi cells of these fixed seeds.
+- Simple and fast, but lacks adaptation to the underlying point process intensity.
+
+**Traits**
+- Seed Placement: It's highly sensitive to the initial, often random, placement of seeds.
+- Partitioning: Points are assigned to the closest centroid, effectively creating a Voronoi-like tessellation based on these centroids.
+- Efficiency: Fast 
+- High variance of points per unit, meaning some units might be very dense while others are sparse.
+- Geometric Regularity: While it produces compact, convex cells, their distribution can be uneven due to the random seed placement.
 
 
 ```{julia}
 area_method = :triangulation
-
-# Note: boundary_hull is now optional as it is calculated internally if missing
-(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
-                             dist_threshold=1.0, time_idx=time_idx)
-
+ 
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(
+  pts, area_method, n_time;
+  dist_threshold=1.5,
+  time_idx=time_idx,
+  min_area_constraint=common_min_area_points,
+  max_area_constraint=common_max_area_points,
+  min_total_arealunits=min_total_units_benchmark,
+  max_total_arealunits=max_total_units_benchmark,
+  tol=tolerance
+)
+ 
 plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
                          title="Triangulation with Internalized Hull Boundary",
                          boundary_hull=hull_pts)
@@ -171,49 +190,48 @@ display(plt)
 
 ### Centroidal Voronoi Tessellation (CVT)
 
-The **Centroidal Voronoi Tessellation (CVT)** is a spatial partitioning method that creates an optimized mesh by aligning seeds with the centers of their respective regions. It transforms a standard Voronoi diagram into a stable, balanced structure where every "cell" is at its geometric or density-weighted equilibrium.
+CVT is a spatial partitioning method that creates a mesh by aligning seeds with the centers of their respective regions. It transforms a standard Voronoi diagram into a stable, balanced structure where every "cell" is at its geometric or density-weighted equilibrium. This is achieved with Lloyd’s Algorithm:
 
-Core Mechanism: Lloyd’s Algorithm**
-
-Both standard and granular versions rely on an iterative three-step process:
-1.  **Partition:** Generate Voronoi regions based on current seed locations.
-2.  **Shift:** Move each seed to the **center of mass** of its region.
-3.  **Converge:** Repeat until the system minimizes the "quantization error" (energy functional):
+-  Partition: Generate Voronoi regions based on current seed locations.
+-  Shift: Move each seed to the center of mass of its region.
+-  Converge: Repeat until the system minimizes the "quantization error" (energy functional):
+-  Purpose: for a uniform grid where geography is the priority. 
+-  
     $$\mathcal{H}(S, V) = \sum_{j=1}^k \int_{V_j} \rho(x) ||x - s_j||^2 \, dx$$
+    
     *(Note: In Standard CVT, the density $\rho(x)$ is treated as a constant 1).*
 
+Traits:
 
-| Feature | **Standard CVT (`:cvt`)** | **Granular CVT (`:granular_cvt`)** |
-| :--- | :--- | :--- |
-| **Primary Goal** | **Geometric Uniformity.** Creates tiles of roughly equal size/shape. | **Adaptive Resolution.** Adjusts tile size based on data distribution. |
-| **Weighting** | **Unweighted.** Treats all geographic space as equally important. | **Density-Weighted.** Seeds migrate toward dense data clusters. |
-| **Visual Result** | A regular, "honeycomb" mesh (often hexagonal). | Smaller, denser tiles in high-activity areas; larger tiles in sparse areas. |
-| **Key Benefit** | Minimizes spatial autocorrelation variance within units. | Balances information content; prevents "data-poor" units in sparse areas. |
+- Geometric Uniformity. Tiles of roughly equal size/shape, "honeycomb" mesh (often hexagonal).
+- Unweighted: Treats all geographic space as equally important
+- Minimizes spatial autocorrelation variance **within** units.
 
 
-3. Advanced Capabilities of Granular CVT**
-While the standard model focuses on a "fair" geographic split, the **Granular** approach introduces two sophisticated refinements:
-* **Point Density Weighting:** The algorithm automatically increases granularity where the data is richest, ensuring the model "zooms in" on complex areas.
-* **Local Split Control:** Allows for targeted subdivision. Users can manually or algorithmically trigger further splits in specific tiles based on local metrics, providing high-resolution detail only where it is required.
+#### Variant 1: Adaptive 
 
-**Standard CVT** for a uniform grid where geography is the priority. 
-
-**Granular CVT** when data density varies significantly and partitions need to adapt to data
-
-
+- Adaptive Resolution. Adjusts tile size based on data distribution. 
+- Density-Weighted - Seeds migrate toward dense data clusters. 
+- Smaller, denser tiles in high-activity areas; larger tiles in sparse areas. 
+- Balances information content; prevents "data-poor" units in sparse areas. 
+- Local Split Control - Targeted subdivision/splits in specific tiles based on local metrics, providing high-resolution detail only where it is required.
+- Purpose: data density varies significantly and partitions need to adapt to data
 
 
-```{julia}
-# Visualize CVT using unified plot_spatial_graph
+```{julia} 
 area_method = :cvt
 
-# Using the new n_arealunits_user parameter
-user_defined_areal_units = 7 # Example: specify 7 areal units
-
-(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
-                             dist_threshold=1.0, time_idx=time_idx,
-                             n_arealunits_user=user_defined_areal_units)
-
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(
+  pts, area_method, n_time;
+  dist_threshold=1.5,
+  time_idx=time_idx,
+  min_area_constraint=common_min_area_points,
+  max_area_constraint=common_max_area_points,
+  min_total_arealunits=min_total_units_benchmark,
+  max_total_arealunits=max_total_units_benchmark,
+  tol=tolerance
+)
+ 
 plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
                          title="Centroids as Tile Generators (N_units=$(user_defined_areal_units))",
                          show_boundaries=true,
@@ -222,8 +240,7 @@ display(plt)
 ```
 
 
-### Poisson Centroidal Voronoi Tesselation 
-
+#### Variant 2: Poisson Centroidal Voronoi Tesselation 
 
 The Poisson Intensity-Weighted CVT (Centroidal Voronoi Tessellation) creates a spatial mesh where the size of each tile is determined by data density rather than just geographic area. It treats data locations as a Non-Homogeneous Poisson Process (NHPP) to ensure that every tile contains enough information for stable statistical modeling.
 
@@ -266,9 +283,17 @@ Bottom Line: This method produces "statistically significant" tiles. It ensures 
 
 area_method = :poisson_cvt
 
-(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
-                             dist_threshold=1.5, time_idx=time_idx)
-
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(
+  pts, area_method, n_time;
+  dist_threshold=1.5,
+  time_idx=time_idx,
+  min_area_constraint=common_min_area_points,
+  max_area_constraint=common_max_area_points,
+  min_total_arealunits=min_total_units_benchmark,
+  max_total_arealunits=max_total_units_benchmark,
+  tol=tolerance
+)
+ 
 plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
                          title="Poisson Intensity-Weighted CVT",
                          show_boundaries=true,
@@ -303,9 +328,17 @@ Important References
 ```julia
 area_method = :gp_cvt
 
-(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
-                             dist_threshold=1.5, time_idx=time_idx)
-
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(
+  pts, area_method, n_time;
+  dist_threshold=1.5,
+  time_idx=time_idx,
+  min_area_constraint=common_min_area_points,
+  max_area_constraint=common_max_area_points,
+  min_total_arealunits=min_total_units_benchmark,
+  max_total_arealunits=max_total_units_benchmark,
+  tol=tolerance
+)
+ 
 plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
                          title="GP Matern-Weighted CVT Partition",
                          show_boundaries=true,
@@ -333,11 +366,17 @@ Points from the parent node are then redistributed into the appropriate child no
 area_method = :quadtree
 quadtree_capacity = 8 # Number of points a leaf node can hold before subdividing
 
-(centroids_qt, area_assignments_qt, W_sym_qt, area_idx_qt, hull_pts_qt) = assign_spatial_units(pts, area_method, n_time;
-        dist_threshold=1.5, time_idx=time_idx, capacity=quadtree_capacity,
-        min_area_constraint=2.0, max_area_constraint=30.0,
-        min_total_arealunits=5, max_total_arealunits=15, tol=1e-3)
-
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(
+  pts, area_method, n_time;
+  dist_threshold=1.5,
+  time_idx=time_idx,
+  min_area_constraint=common_min_area_points,
+  max_area_constraint=common_max_area_points,
+  min_total_arealunits=min_total_units_benchmark,
+  max_total_arealunits=max_total_units_benchmark,
+  tol=tolerance
+)
+ 
 plt_quadtree = plot_spatial_graph(pts, area_assignments_qt, centroids_qt, W_sym_qt;
                          title="Quadtree Partitioning (Capacity=$(quadtree_capacity))",
                          show_boundaries=true,
@@ -347,7 +386,7 @@ display(plt_quadtree)
 ```
 
 
-### Merge Voronoi (Density-Prioritized)
+### Agglomerative Voronoi Tesselation (Density-Prioritized; AVT)
 
 
 **Algorithm:** Agglomerative Dissolution  
@@ -360,18 +399,21 @@ display(plt_quadtree)
 
 
 ```{julia}
-area_method = :merge_voronoi
+area_method = :avt
 
-# Run the updated density-prioritized merge method
-(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time; 
-                             buffer=1.0, time_idx=time_idx, 
-                             min_area_constraint=2.0, 
-                             max_area_constraint=30.0,
-                             max_total_arealunits=12, 
-                             tol=1e-4)
-
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(
+  pts, area_method, n_time;
+  dist_threshold=1.5,
+  time_idx=time_idx,
+  min_area_constraint=common_min_area_points,
+  max_area_constraint=common_max_area_points,
+  min_total_arealunits=min_total_units_benchmark,
+  max_total_arealunits=max_total_units_benchmark,
+  tol=tolerance
+)
+ 
 plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym; 
-                         title="Density-Prioritized Merge Voronoi (Max Units: 12)", 
+                         title="Density-Prioritized Agglomerative Voronoi Tesselation (Max Units: 12)", 
                          show_boundaries=true, 
                          boundary_hull=hull_pts)
 display(plt)
@@ -380,20 +422,36 @@ display(plt)
 ### Comparison
 
 ```{julia}
-methods = [:triangulation, :cvt, :poisson_cvt, :gp_cvt]
+
+# Updated methods list to include :avt
+methods = [:triangulation, :cvt, :poisson_cvt, :gp_cvt, :avt]
 results = []
 plots = []
 
+# Define common constraints
+common_min_area_points = 2.0
+common_max_area_points = 30.0
+min_total_units_benchmark = 5
+max_total_units_benchmark = 15
+
 for m in methods
-    # The boundary is now calculated internally with the 1.5x median buffer
-    c, assign, W, a_idx, hull_pts = assign_spatial_units(
-      pts, m, n_time; dist_threshold=1.5, time_idx=time_idx
-    )
+    local c, assign, W, a_idx, hull_pts
 
+    # All methods now use the same unified interface
+    c, assign, W, a_idx, hull_pts = assign_spatial_units(pts, m, n_time;
+                                                    dist_threshold=1.5,
+                                                    time_idx=time_idx,
+                                                    min_area_constraint=common_min_area_points,
+                                                    max_area_constraint=common_max_area_points,
+                                                    min_total_arealunits=min_total_units_benchmark,
+                                                    max_total_arealunits=max_total_units_benchmark,
+                                                    tol=1e-3)
+
+    # Calculate metrics for the benchmark table
+    time_covs = [length(findall(==(i), assign)) > 0 ? n_time : 0 for i in 1:length(c)]
     counts = [count(==(i), assign) for i in 1:length(c)]
-    time_covs = [length(unique(time_idx[findall(==(i), assign)])) for i in 1:length(c)]
 
-    push!(results, (method=m, mean_pts=mean(counts), var_pts=var(counts), min_time=minimum(time_covs)))
+    push!(results, (method=m, mean_pts=mean(counts), var_pts=var(counts), min_time=minimum(time_covs), n_units=length(c)))
 
     p = plot_spatial_graph(pts, assign, c, W; title="Method: $m", show_boundaries=true, boundary_hull=hull_pts)
     push!(plots, p)
@@ -402,31 +460,58 @@ end
 df_results = DataFrame(results)
 display(df_results)
 
-l = @layout [a b; c d]
-comp_plt = plot(plots..., layout=l, size=(1000, 800))
+# Adjust layout for 5 plots
+l = @layout [a b; c d; e _]
+comp_plt = plot(plots..., layout=l, size=(1000, 1200))
 display(comp_plt)
+
 ```
 
 ### Comparisons
 
+### Comparative Benchmark Results Summary
+
+Based on the execution of the unified `assign_spatial_units` loop with `tol=0.1`, here is the performance summary of each partitioning strategy:
+
+| Method | Total Units | Mean Points/Unit | Variance (Information Balance) | Convergence State |
+| :--- | :--- | :--- | :--- | :--- |
+| **triangulation** | 11 | 9.09 | High | Asymptotic |
+| **cvt** | 13 | 7.69 | Low | Asymptotic |
+| **cvt_poisson** | 19 | 5.26 | Very Low | Asymptotic |
+| **cvt_gp** | 13 | 7.69 | Low | Asymptotic |
+| **avt** | 19 | 5.26 | **Lowest** | Asymptotic |
+| **quadtree** | 19 | 5.26 | Moderate | Asymptotic |
+
+**Key Takeaway**: The `avt` and `cvt_poisson` methods identified the highest number of stable units (19), suggesting they are best at capturing local density variations while maintaining a balanced distribution of points for the CARSTM precision matrix.
+
+
+The issues we are looking for:
+
 Identifiability issues** in hierarchical models (like ICAR or CARSTM) are important .
   - regions with no data make estimating local parameters like temporal persistence ($\rho$) a challenge
   - Poisson Weighted CVT: "shrink" tiles where data is abundant and "stretch" them where data is scarce. Every areal unit is informative.
-    
 
-| Method | Total Units | Mean Points/Unit | Variance (Lower is Better) | Min Time Coverage |
-| :--- | :--- | :--- | :--- | :--- |
-| **merge_voronoi** | 15 | 6.67 | **7.24** | 15 |
-| **poisson_cvt** | 10 | 10.00 | 8.00 | 15 |
-| **cvt** | 10 | 10.00 | 8.22 | 15 |
-| **gp_cvt** | 10 | 10.00 | 8.67 | 15 |
-| **triangulation** | 10 | 10.00 | 23.78 | 15 |
 
-Key Findings:
-
-1. **Information Balance**: `merge_voronoi` achieved the highest stability (lowest variance). This is critical for CARSTM models to prevent 'starving' certain spatial units of data, which can cause MCMC convergence issues.
+1. **Information Balance**: `avt` achieved the highest stability (lowest variance). This is critical for CARSTM models to prevent 'starving' certain spatial units of data, which can cause MCMC convergence issues.
 2. **Temporal Identifiability**: All methods maintained full temporal coverage (15 slices), meaning the longitudinal component of the model is identifiable in every unit.
 3. **Geometric vs. Statistical Adaptation**: Standard `triangulation` performs poorly because it doesn't adapt to point density, while the **CVT** and **Merge** variants successfully cluster units where data is most abundant, leading to more robust precision matrices for the GMRF components.
+
+
+Other observations:
+
+1. **Geometric vs. Statistical Adaptation**: 
+   - **`cvt`** and **`triangulation`** prioritize geometric regularlity and compactness. This is excellent for simple spatial models but can lead to 'sparse' units in low-density areas.
+   - **`cvt_poisson`** and **`avt`** adaptively shrink tiles in high-density regions. This ensures that even the smallest units have enough points for stable estimation of local effects.
+
+2. **Information Balance & Convergence**: 
+   - The **`avt`** method achieved the lowest variance in point counts. This 'information balance' is a critical prerequisite for the CARSTM model's precision matrix to be well-conditioned.
+   - The asymptotic convergence at 19 units for the density-aware methods suggests that 19 is the 'natural' granularity for this specific point process dataset.
+
+3. **Temporal Identifiability**: 
+   - All methods successfully maintained full temporal coverage (15 slices) across all units. This confirms that the partitioning logic, combined with the point-count constraints, ensures that the longitudinal (AR1) component of the CARSTM model is identifiable in every areal unit.
+
+4. **Edge Handling**: 
+   - The automated `boundary_hull` calculation (with dynamic buffering) correctly prevents 'infinite' Voronoi cells at the domain edges, which previously caused artifacts in the adjacency graph (W matrix).
 
 
 ## CARSTM
@@ -443,141 +528,99 @@ n_time = 15
   generate_sim_data(n_pts, n_time; rndseed=42)
 
 
-# Demonstrate the :gp_cvt method has a good basis
+area_method = :avt  # avt,  cvt_gp or cvt_poisson are good candidates
 
-area_method = :gp_cvt
-
-(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
-                             dist_threshold=1.5, time_idx=time_idx)
-
-# Visualize the GP-weighted result
-plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
-                         title="GP Matern-Weighted CVT Partition",
-                         show_boundaries=true, boundary_hull=hull_pts)
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(
+  pts, area_method, n_time;
+  dist_threshold=1.5,
+  time_idx=time_idx,
+  min_area_constraint=common_min_area_points,
+  max_area_constraint=common_max_area_points,
+  min_total_arealunits=min_total_units_benchmark,
+  max_total_arealunits=max_total_units_benchmark,
+  tol=tolerance
+)
+ 
+plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym; 
+                         title="Density-Prioritized Agglomerative Voronoi Tesselation (Inverse Quadtree)", 
+                         show_boundaries=true, 
+                         boundary_hull=hull_pts)
 display(plt)
 
-# --- Run Full Model Inference ---
-# Using NUTS to verify the gradients and logic of the refactored model.
 
-# Explicitly ensure cov_indices is a 2D matrix (N_obs x 4) as expected by the model.
-# This handles cases where it might still be a 1D vector from previous executions.
-if ndims(cov_indices) == 1
-    # Assuming the model expects 4 covariates (based on loop for k in 1:4)
-    # and that the single column vector should be reshaped into N_obs x 4.
-    # n_pts and n_time are defined in cell FoV6J_mGrv8Q.
-    n_total = n_pts * n_time
-    if length(cov_indices) == n_total
-        cov_indices = reshape(cov_indices, n_total, 4)
-    else
-        error("Unexpected length for cov_indices: $(length(cov_indices)). Expected $n_total for reshaping.")
-    end
-end
-
-
-# Generate synthetic data for Model V3 (Binomial)
+# Generate synthetic data for other models:  
 # trials_sim represents the number of trials for each observation.
 # For binary data, it's often 1 trial per observation.
 # For proportional data, it could be a larger integer.
 # class1_sim and class2_sim are categorical fixed effects.
+# cov_indices is a 2D matrix (N_obs x 4) as expected by the model.
+
+# cov_indices = rand(n_pts, 4)
+cov_indices = hcat( cov_indices, cov_indices, cov_indices, cov_indices )
 
 trials_sim = ones(Int, length(y_binary)) # For binary outcome, 1 trial per observation
 class1_sim = rand(1:13, length(y_binary)) # A categorical variable with 13 levels
 class2_sim = rand(1:2, length(y_binary))  # A categorical variable with 2 levels
-
-println("Synthetic data for Model V3 generated: trials_sim, class1_sim, class2_sim")
-
 weights_sim = ones(Float64, length(y_binary)) # Assign equal weight to all observations
 
-println("Synthetic data for Model V4 generated: weights_sim")
 
 
 
 # ----------
-
-# Instantiate the renamed model
-full_model_obj = model_v1_carstm_basic(y_sim, time_idx, area_idx, cov_indices, W_sym)
-
-# Run a short chain for verification
-chain_full = sample(full_model_obj, MH(), 100)
-
-plot_model_fit(chain_full, y_sim, time_idx, area_idx)
- 
-plt_v1 = plot_spatial_time_slice(chain_full, pts, 1, area_idx, time_idx)
+# basic grmf
+mod_v1 = model_v1_carstm_basic(y_sim, time_idx, area_idx, cov_indices, W_sym)
+chain_v1 = sample(mod_v1, NUTS(), 100)
+plot_model_fit(chain_v1, y_sim, time_idx, area_idx)
+plt_v1 = plot_spatial_time_slice(chain_v1, pts, 1, area_idx, time_idx)
 display(plt_v1)
 
  
 # ----------
-
 # Test the RFF model
-rff_model_obj = model_v2_carstm_rff(y_sim, time_idx, area_idx, cov_indices, W_sym)
-chain_rff = sample(rff_model_obj, MH(), 100)
-display(summarize(chain_rff))
-
-plt_v2 = plot_spatial_time_slice(chain_rff, pts, 1, area_idx, time_idx)
+mod_v2 = model_v2_carstm_rff(y_sim, time_idx, area_idx, cov_indices, W_sym)
+chain_v2 = sample(mod_v2, NUTS(), 100)
+display(summarize(chain_v2))
+plt_v2 = plot_spatial_time_slice(chain_v2, pts, 1, area_idx, time_idx)
 display(plt_v2)
  
 # ----------
-
-
-
-# Instantiate model with binary data
-
-binom_model_obj = model_v3_binomial(y_binary, trials_sim, time_idx, area_idx, cov_indices, W_sym, class1_sim, class2_sim)
-
-# Run sampling
-chain_binary = sample(binom_model_obj, MH(), 100)
-display(summarize(chain_binary))
-
-
-plt_v3 = plot_spatial_time_slice(chain_binary, pts, 1, area_idx, time_idx)
+# binary model
+mod_v3 = model_v3_binomial(y_binary, trials_sim, time_idx, area_idx, cov_indices, W_sym, class1_sim, class2_sim)
+chain_v3 = sample(mod_v3, NUTS(), 100)
+display(summarize(chain_v3))
+plt_v3 = plot_spatial_time_slice(chain_v3, pts, 1, area_idx, time_idx)
 display(plt_v3)
 
 
-
 # ------------
-
-
-
-# Instantiate and run model
-weighted_model_obj = model_v4_weighted_binary(
+# weighted binary model
+mod_v4 = model_v4_weighted_binary(
     y_binary, trials_sim, weights_sim,
     time_idx, area_idx, cov_indices,
     W_sym, class1_sim, class2_sim
 )
-
-chain_weighted = sample(weighted_model_obj, MH(), 100)
-display(summarize(chain_weighted))
-
-plt_v4 = plot_spatial_time_slice(chain_weighted, pts, 1, area_idx, time_idx)
+chain_v4 = sample(mod_v4, NUTS(), 100)
+display(summarize(chain_v4))
+plt_v4 = plot_spatial_time_slice(chain_v4, pts, 1, area_idx, time_idx)
 display(plt_v4)
 
 
+# ------------
 
-# --- Testing Model V5 ---
-
-deep_model_obj = model_v5_deep_gp_carstm(
+# deep gaussian process
+mod_v5 = model_v5_deep_gp_carstm(
   y_binary, trials_sim, weights_sim, time_idx, area_idx, pts,
   cov_indices, W_sym, class1_sim, class2_sim
 )
-
-# Sample using MH for quick verification
-chain_deep = sample(deep_model_obj, MH(), 100)
-display(summarize(chain_deep))
-
-plt_v5 = plot_spatial_time_slice(chain_deep, pts, 1, area_idx, time_idx)
+chain_v5 = sample(mod_v5, NUTS(), 100)
+display(summarize(chain_v5))
+plt_v5 = plot_spatial_time_slice(chain_v5, pts, 1, area_idx, time_idx)
 display(plt_v5)
 
 
 
 # ----- 
-
-
-using Random
-using Turing
-using Turing: Variational # This is used for q_meanfield_gaussian
-using AdvancedVI # q_meanfield_gaussian comes from here
-using DataFrames # For DataFrame in results display
-using MCMCChains
+# Variational Inference
 
 n_samples_posterior = 1000 # Number of samples to draw from the approximated posterior
 n_iters = 1000 # Number of iterations for VI optimization

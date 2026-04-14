@@ -12,7 +12,7 @@ function generate_sim_data(n_pts, n_time; rndseed=42 )
     spatial_effect_long = repeat(spatial_effect, n_time)
     y_sim  = spatial_effect_long + temporal_effect + randn(n_total) * 0.5
     y_binary = y_sim  .> (mean(y_sim) + 0.5)
-    return (pts=pts, y_sim=y_sim, y_binary=y_binary, time_idx=time_idx, 
+    return (pts=pts, y_sim=y_sim, y_binary=y_binary, time_idx=time_idx,
             weights=weights, trials=trials, cov_indices=cov_indices)
 end
 
@@ -89,15 +89,15 @@ function compute_hybrid_density_cvt(pts, x_g, y_g, dens, initial_centroids; iter
     return centroids, assignments
 end
 
-function assign_spatial_units_merge_voronoi(pts::Vector{Tuple{Float64, Float64}}, n_time::Int; 
-                                            buffer=nothing, time_idx::Vector{Int}, min_time_slices::Int=1, 
-                                            min_area_constraint::Float64=0.0, max_area_constraint::Float64=Inf, 
-                                            min_total_arealunits::Union{Int, Nothing}=nothing, 
-                                            max_total_arealunits::Union{Int, Nothing}=nothing, 
+function assign_spatial_units_merge_voronoi(pts::Vector{Tuple{Float64, Float64}}, n_time::Int;
+                                            buffer=nothing, time_idx::Vector{Int}, min_time_slices::Int=1,
+                                            min_area_constraint::Float64=0.0, max_area_constraint::Float64=Inf,
+                                            min_total_arealunits::Union{Int, Nothing}=nothing,
+                                            max_total_arealunits::Union{Int, Nothing}=nothing,
                                             tol=1e-4)
     n_pts = length(pts)
     x_g, y_g, dens = estimate_intensity_kde_optimized(pts)
-    
+
     tri_full = triangulate(pts)
     hull = convex_hull(tri_full)
     hull_indices = DelaunayTriangulation.get_vertices(hull)
@@ -142,10 +142,10 @@ function assign_spatial_units_merge_voronoi(pts::Vector{Tuple{Float64, Float64}}
             p_indices = areal_units_points[id]
             return mean([dens[clamp(argmin(abs.(x_g .- pts[idx][1])), 1, length(x_g)), clamp(argmin(abs.(y_g .- pts[idx][2])), 1, length(y_g))] for idx in p_indices])
         end
-        
+
         pairs = sort(collect(adj), by=pair -> get_unit_density(pair[1]) + get_unit_density(pair[2]))
         merged_in_pass = false
-        
+
         for (u_id, v_id) in pairs
             if !haskey(areal_units_points, u_id) || !haskey(areal_units_points, v_id) continue end
             comb_pts = vcat(areal_units_points[u_id], areal_units_points[v_id])
@@ -164,7 +164,7 @@ function assign_spatial_units_merge_voronoi(pts::Vector{Tuple{Float64, Float64}}
 
     final_ids = sort(collect(keys(areal_units_points))); n_final = length(final_ids)
     output_centroids = [centroids_map[id] for id in final_ids]
-    
+
     # FIXED: Re-assign all original points to the nearest final centroid
     output_assign = zeros(Int, n_pts)
     for i in 1:n_pts
@@ -200,8 +200,6 @@ function plot_spatial_graph(pts, assignments, centroids, W; title="Spatial Parti
     return p
 end
 
-
-
 struct QuadtreeNode
     boundary::Tuple{Float64, Float64, Float64, Float64} # min_x, max_x, min_y, max_y
     points::Vector{Tuple{Float64, Float64}}
@@ -228,18 +226,18 @@ function _build_quadtree_recursive(pts, indices, boundary, capacity, depth, max_
 
     mid_x = (boundary[1] + boundary[2]) / 2
     mid_y = (boundary[3] + boundary[4]) / 2
-    
+
     child_boundaries = [
         (boundary[1], mid_x, boundary[3], mid_y), (mid_x, boundary[2], boundary[3], mid_y),
         (boundary[1], mid_x, mid_y, boundary[4]), (mid_x, boundary[2], mid_y, boundary[4])
     ]
-    
+
     children = QuadtreeNode[]
     for cb in child_boundaries
         child_indices = filter(i -> pts[i][1] >= cb[1] && pts[i][1] <= cb[2] && pts[i][2] >= cb[3] && pts[i][2] <= cb[4], indices)
         push!(children, _build_quadtree_recursive(pts, child_indices, cb, capacity, depth + 1, max_depth))
     end
-    
+
     return QuadtreeNode(boundary, [pts[i] for i in indices], indices, children, false)
 end
 
@@ -289,8 +287,8 @@ function assign_spatial_units_quadtree(pts::Vector{Tuple{Float64, Float64}}, n_t
         current_time_slices = isempty(node.point_indices) ? 0 : n_time
         node_area = area(node.boundary)
 
-        if num_points_in_node > 0 && 
-           (min_area_constraint == 0.0 || node_area >= min_area_constraint) && 
+        if num_points_in_node > 0 &&
+           (min_area_constraint == 0.0 || node_area >= min_area_constraint) &&
            (max_area_constraint == Inf || node_area <= max_area_constraint) &&
            (min_time_slices == 0 || current_time_slices >= min_time_slices)
             push!(valid_leaf_nodes_filtered, node)
@@ -338,115 +336,85 @@ function assign_spatial_units_quadtree(pts::Vector{Tuple{Float64, Float64}}, n_t
     return centroids, assignments, Symmetric(W), area_idx, boundary_hull
 end
 
-
 function assign_spatial_units(pts, area_method, n_time; kwargs...)
-    # Extract common kwargs
+    # 1. Parameter Extraction
     time_idx = get(kwargs, :time_idx, nothing)
-    dist_threshold = get(kwargs, :dist_threshold, nothing)
-    boundary_hull = get(kwargs, :boundary_hull, nothing)
     buffer = get(kwargs, :buffer, nothing)
     capacity = get(kwargs, :capacity, 5)
-    min_time_slices = get(kwargs, :min_time_slices, 1)
-    min_area_constraint = get(kwargs, :min_area_constraint, 0.0)
-    max_area_constraint = get(kwargs, :max_area_constraint, Inf)
-    n_arealunits_user = get(kwargs, :n_arealunits_user, nothing)
-    min_total_arealunits = get(kwargs, :min_total_arealunits, nothing)
-    max_total_arealunits = get(kwargs, :max_total_arealunits, nothing)
-    tol = get(kwargs, :tol, 1e-4)
+    min_area_constraint = Float64(get(kwargs, :min_area_constraint, 0.0))
+    max_area_constraint = Float64(get(kwargs, :max_area_constraint, Inf))
+    min_total_units = get(kwargs, :min_total_arealunits, 3)
+    max_total_units = get(kwargs, :max_total_arealunits, floor(Int, sqrt(length(pts))))
+    tol = get(kwargs, :tol, 0.1)
 
-    # 1. Specialized Methods with their own internal logic
-    if area_method == :quadtree
-        return assign_spatial_units_quadtree(pts, n_time; 
-            capacity=capacity, 
-            time_idx=time_idx, 
-            min_time_slices=min_time_slices, 
-            min_area_constraint=Float64(min_area_constraint),
-            max_area_constraint=Float64(max_area_constraint))
-    
-    elseif area_method == :merge_voronoi
-        return assign_spatial_units_merge_voronoi(pts, n_time; 
-            buffer=buffer, 
-            time_idx=time_idx, 
-            min_time_slices=min_time_slices, 
-            min_area_constraint=Float64(min_area_constraint),
-            max_area_constraint=Float64(max_area_constraint), 
-            min_total_arealunits=min_total_arealunits,
-            max_total_arealunits=max_total_arealunits, 
-            tol=tol)
-    end
+    current_target = max_total_units
+    prev_mean, prev_var = NaN, NaN
+    best_result = nothing
 
-    # 2. General Methods sharing the Lloyd-style iteration logic
-    n = length(pts)
-    n_arealunits_base = !isnothing(n_arealunits_user) ? n_arealunits_user : max(3, floor(Int, sqrt(n)))
-    if !isnothing(min_total_arealunits) n_arealunits_base = max(n_arealunits_base, min_total_arealunits) end
-    if !isnothing(max_total_arealunits) n_arealunits_base = min(n_arealunits_base, max_total_arealunits) end
+    println("Starting convergence search for method: $area_method")
 
-    # Boundary calculation
-    if isnothing(boundary_hull)
-        tri_full = triangulate(pts)
-        hull = convex_hull(tri_full)
-        hull_indices = DelaunayTriangulation.get_vertices(hull)
-        raw_hull = pts[hull_indices]
-        if isnothing(buffer)
-            dists = [sqrt(sum((pts[i] .- pts[j]).^2)) for i in 1:min(n, 50) for j in (i+1):min(n, 50)]
-            buffer = isempty(dists) ? 0.5 : median(dists) * 0.25
-        end
-        cx, cy = mean(p[1] for p in raw_hull), mean(p[2] for p in raw_hull)
-        boundary_hull = map(raw_hull) do p
-            dx, dy = p[1]-cx, p[2]-cy; mag = sqrt(dx^2+dy^2)
-            (p[1]+(dx/mag)*buffer, p[2]+(dy/mag)*buffer)
-        end
-        push!(boundary_hull, boundary_hull[1])
-    end
+    while current_target >= min_total_units
+        local c, assign, W, a_idx, hull
 
-    local centroids, assignments
+        if area_method == :quadtree
+            adj_capacity = max(capacity, floor(Int, length(pts)/current_target))
+            c, assign, W, a_idx, hull = assign_spatial_units_quadtree(pts, n_time;
+                capacity=adj_capacity, time_idx=time_idx,
+                min_area_constraint=min_area_constraint, max_area_constraint=max_area_constraint)
 
-    if area_method == :triangulation
-        centroids = generate_grid_centroids(pts, n_arealunits_base)
-        assignments = [argmin([sum((p .- s).^2) for s in centroids]) for p in pts]
-    elseif area_method == :cvt || area_method == :granular_cvt
-        initial_centroids = generate_grid_centroids(pts, n_arealunits_base)
-        centroids, assignments = compute_hybrid_density_cvt(pts, 1:10, 1:10, ones(10,10), initial_centroids)
-    elseif area_method == :poisson_cvt
-        x_g, y_g, dens = estimate_intensity_kde_optimized(pts)
-        initial_centroids = generate_grid_centroids(pts, n_arealunits_base)
-        centroids, assignments = compute_hybrid_density_cvt(pts, x_g, y_g, dens, initial_centroids)
-    elseif area_method == :gp_cvt
-        x_g, y_g, dens = estimate_intensity_gp(pts)
-        initial_centroids = generate_grid_centroids(pts, n_arealunits_base)
-        centroids, assignments = compute_hybrid_density_cvt(pts, x_g, y_g, dens, initial_centroids)
-    else
-        error("Method $area_method not supported")
-    end
+        elseif area_method == :avt # Renamed from :merge_voronoi
+            c, assign, W, a_idx, hull = assign_spatial_units_merge_voronoi(pts, n_time;
+                max_total_arealunits=current_target, time_idx=time_idx, buffer=buffer,
+                min_area_constraint=min_area_constraint, max_area_constraint=max_area_constraint,
+                tol=tol)
 
-    # Post-iteration constraint cleanup for iterative methods
-    for iter = 1:10
-        n_units = length(centroids)
-        if n_units <= 1 break end
-        counts = [count(==(i), assignments) for i in 1:n_units]
-        violators = Int[]
-        for i in 1:n_units
-            if (counts[i] < min_area_constraint) || (counts[i] > max_area_constraint)
-                push!(violators, i)
+        else
+            tri_full = triangulate(pts); hull_v = convex_hull(tri_full)
+            raw_hull = pts[DelaunayTriangulation.get_vertices(hull_v)]
+            cx, cy = mean(p[1] for p in raw_hull), mean(p[2] for p in raw_hull)
+            buf_val = isnothing(buffer) ? 0.5 : buffer
+            hull = map(p -> (p[1]+(p[1]-cx)/sqrt((p[1]-cx)^2+(p[2]-cy)^2)*buf_val, p[2]+(p[2]-cy)/sqrt((p[1]-cx)^2+(p[2]-cy)^2)*buf_val), raw_hull)
+            push!(hull, hull[1])
+
+            init_c = generate_grid_centroids(pts, current_target)
+
+            if area_method == :triangulation
+                c, assign = init_c, [argmin([sum((p .- s).^2) for s in init_c]) for p in pts]
+            elseif area_method == :cvt
+                # Merged granular_cvt into standard cvt
+                c, assign = compute_hybrid_density_cvt(pts, 1:10, 1:10, ones(10,10), init_c)
+            elseif area_method == :cvt_poisson
+                xg, yg, dens = estimate_intensity_kde_optimized(pts)
+                c, assign = compute_hybrid_density_cvt(pts, xg, yg, dens, init_c)
+            elseif area_method == :cvt_gp
+                xg, yg, dens = estimate_intensity_gp(pts)
+                c, assign = compute_hybrid_density_cvt(pts, xg, yg, dens, init_c)
+            else
+                error("Unknown method: $area_method")
             end
+
+            n_f = length(c); W = spzeros(n_f, n_f)
+            if n_f >= 3
+                tr = triangulate(c)
+                for e in each_edge(tr)
+                    u,v = e; if u > 0 && v > 0 && u <= n_f && v <= n_f W[u,v]=1.0; W[v,u]=1.0 end
+                end
+            end
+            a_idx = repeat(assign, n_time)
         end
-        if isempty(violators) break end
-        valid_ids = setdiff(1:n_units, violators)
-        if isempty(valid_ids)
-            centroids, assignments = [(mean(p[1] for p in pts), mean(p[2] for p in pts))], ones(Int, n)
+
+        counts = [count(==(i), assign) for i in 1:length(c)]
+        curr_mean, curr_var = mean(counts), var(counts)
+
+        if !isnan(prev_mean) && abs(curr_mean - prev_mean)/prev_mean < tol && abs(curr_var - prev_var)/prev_var < tol
+            println("Asymptotic convergence reached at $current_target units.")
             break
         end
-        centroids = centroids[valid_ids]
-        assignments = [argmin([sum((p .- s).^2) for s in centroids]) for p in pts]
+
+        best_result = (c, assign, Symmetric(W), a_idx, hull)
+        prev_mean, prev_var = curr_mean, curr_var
+        current_target -= 1
     end
 
-    n_f = length(centroids)
-    W_f = spzeros(n_f, n_f)
-    if n_f >= 3
-        tri = triangulate(centroids)
-        for e in each_edge(tri)
-            u,v = e; if u > 0 && v > 0 && u <= n_f && v <= n_f W_f[u,v] = 1.0; W_f[v,u] = 1.0 end
-        end
-    end
-    return centroids, assignments, Symmetric(W_f), repeat(assignments, n_time), boundary_hull
+    return best_result
 end
