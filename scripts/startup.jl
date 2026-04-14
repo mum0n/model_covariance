@@ -35,14 +35,12 @@ pkgs = unique( [
     "MKL", "PDMats", 
     "Optim", "Flux",  
     "Peaks", "KernelDensity", "DSP", "Interpolations", 
-    "ADTypes",  "ForwardDiff", 
-    "Random", "Statistics", "LinearAlgebra", "DataFrames",
-       "StatsBase", "SparseArrays",
+    "ADTypes",  "ForwardDiff",  
         "JLD2", "DelaunayTriangulation",
         "PolygonOps", "GeoInterface", "StatsPlots",
-        "Random", "Turing", "Distributions", "Statistics", "MCMCChains", "DataFrames",
-        "LinearAlgebra", "Clustering", "StatsBase",
-        "JLD2", "FFTW",  "SparseArrays", "StaticArrays", "FillArrays",
+       "MCMCChains",  
+     "Clustering",  
+        "JLD2", "FFTW",  
          "Bijectors", "DynamicPPL", "AdvancedVI", "Optimisers",
     "AdvancedVI",  "Turing", "Bijectors", "ArchGDAL",
     "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions", "TemporalGPs"
@@ -93,14 +91,16 @@ print( "\nTo (re)-install required packages, run:  install_required_packages() o
 DEBUG = Ref{Any}()  # initiate
 
 # support functions
+include( srcdir( "example_data.jl" ))     
 include( srcdir( "shared_functions.jl") )
 include( srcdir( "simple_linear_regression.jl") )
 include( srcdir( "regression_functions.jl" ))     
+include( srcdir( "gaussian_processes_functions.jl" ))     
 
 include( srcdir( "car_functions.jl" ))   
 include( srcdir( "carstm_functions.jl" ))   
 include( srcdir( "spatiotemporal_functions.jl" ))   
-include( srcdir( "example_data.jl" ))     
+# include( srcdir( "fft_functions.jl" ))   
 
 
 # Set a seed for reproducibility.

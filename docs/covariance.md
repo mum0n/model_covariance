@@ -47,13 +47,19 @@ Consider installing [Julia](https://julialang.org/)  through [juliaup](https://g
 #| echo: false
 #| output: false
 
+# WARNING: if this is the first run, this can take up to 1 hour to install and precompile libraries and their dependencies
 
 # define 'project_directory' as the location of the repository -- required
-# project_directory = joinpath( "/home", "jae", "projects", "model_covariance")  # linux
-# project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  # mswindows
-project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # mswindows generic
+
+if Sys.iswindows()
+    project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  
+elseif Sys.islinux()
+    project_directory = joinpath( "/home", "jae", "projects", "model_covariance")
+else
+    project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # examples
+end
+
  
-# if this is the first run, this can take up to 1 hour to install and precompile libraries and their dependencies
 include( joinpath( project_directory, "scripts", "startup.jl" ) )   
 
 

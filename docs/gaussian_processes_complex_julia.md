@@ -42,130 +42,23 @@ Pkg.precompile()
 for pk in pkgs
   @eval using $(Symbol(pk))
 end
-```
  
+
 ## Basic support functions
 
-```{julia}
+# define 'project_directory' as the location of the repository -- required
 
-function compute_y_waic(mod, ch)
-    # to compute WAIC
-    try
-        pll = pointwise_loglikelihoods(mod, ch)
-        y_keys = [k for k in keys(pll) if occursin("y_obs", string(k))]
-        if !isempty(y_keys)
-            loglik_mat = hcat([vec(pll[k]) for k in y_keys]...)
-            lppd = sum(log.(mean(exp.(loglik_mat), dims=1)))
-            p_waic = sum(var(loglik_mat, dims=1))
-            return -2 * (lppd - p_waic)
-        end
-    catch e
-        return NaN
-    end
-    return NaN
+if Sys.iswindows()
+    project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  
+elseif Sys.islinux()
+    project_directory = joinpath( "/home", "jae", "projects", "model_covariance")
+else
+    project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # examples
 end
 
-function get_posterior_means(ch, param_base, N)
-    means = zeros(N)
-    for i in 1:N
-        p_symbol = Symbol("$param_base[$i]")
-        if p_symbol in names(ch, :parameters)
-            means[i] = mean(ch[p_symbol])
-        end
-    end
-    return means
-end
+include( joinpath( project_directory, "src", "gaussian_processes_functions.jl" ) )   
+ 
 
-
-
-function generate_data(N; period=12.0, seed=42)
-    Random.seed!(seed)
-    # 1. Coordinates: Space (Xlon, Xlat) and Time (T)
-    coords_space = rand(N, 2)
-    coords_time = reshape(collect(1.0:N), :, 1)
-
-    # 2. Covariates
-    # Z: Purely spatial covariate
-    Z = randn(N)
-
-    # Latent (True) Spatiotemporal Covariates
-    U1_true = sin.(coords_time[:,1] ./ 5.0) .+ 0.5 .* Z
-    U2_true = cos.(coords_time[:,1] ./ 5.0) .- 0.3 .* Z
-    U3_true = 0.2 .* (coords_time[:,1] ./ N) .+ 0.1 .* Z
-
-    # 3. Add measurement error to covariates (observed version)
-    sigma_u = 0.1
-    U1_obs = U1_true .+ randn(N) .* sigma_u
-    U2_obs = U2_true .+ randn(N) .* sigma_u
-    U3_obs = U3_true .+ randn(N) .* sigma_u
-
-    # 4. Generate Dependent Variable Y
-    # Components: Linear Trend + Seasonal Harmonic + Latent Process + Noise
-    trend = 0.05 .* coords_time[:,1]
-    seasonal = 1.0 .* cos.(2 * pi .* coords_time[:,1] ./ period)
-
-    # Simulate a spatial effect manually for the ground truth
-    spatial_effect = sin.(coords_space[:,1] .* 2π) .* cos.(coords_space[:,2] .* 2π)
-
-    sigma_y = 0.2
-    # Y is a function of trend, season, GP effect, and U1
-    y_obs = 1.0 .+ trend .+ seasonal .+ spatial_effect .+ (0.5 .* U1_true) .+ randn(N) .* sigma_y
-
-    return (
-        y_obs = y_obs,
-        U1_obs = U1_obs,
-        U2_obs = U2_obs,
-        U3_obs = U3_obs,
-        Z = Z,
-        coords_space = coords_space,
-        coords_time = coords_time
-    )
-end
-
-
-function generate_informed_rff_params(coords, M_rff_count)
-    D_in = size(coords, 2)
-    std_coords = vec(std(coords, dims=1)) .+ 1e-6
-    W_fixed = randn(D_in, M_rff_count) ./ std_coords
-    b_fixed = rand(M_rff_count) .* 2pi
-    return W_fixed, b_fixed
-end
-
-function generate_rff_params_for_se_kernel(D_in, M_rff, lengthscale)
-    # Helper function to generate RFF parameters for a Squared Exponential kernel
-    # For a Squared Exponential kernel, the spectral density is Gaussian: N(0, (1/l)^2 * I)
-    sigma_spectral = 1.0 / lengthscale
-    W_matrix = randn(D_in, M_rff) .* sigma_spectral # D_in x M_rff matrix
-    b_vector = rand(Uniform(0, 2pi), M_rff)
-    return W_matrix, b_vector
-end
-
-function rff_map(coords, W, b)
-    projection = (coords * W) .+ b'
-    return sqrt(2 / size(W, 2)) .* cos.(projection)
-end
-
-
-function generate_inducing_points(coords_st, M_inducing, seed=42)
-    # Helper function to generate inducing points (simple random sampling for now)
-    Random.seed!(seed)
-    N_data = size(coords_st, 1)
-    if M_inducing >= N_data
-        return coords_st # If M >= N, just use all data points (becomes exact GP)
-    end
-    indices = sample(1:N_data, M_inducing, replace=false)
-    return coords_st[indices, :]
-end
-
-
-
-```
-
-
-## Generate simulated data
-
-
-```{julia}
 
 # basic data
 data = generate_data(50)

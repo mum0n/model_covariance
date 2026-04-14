@@ -40,20 +40,400 @@ species composition (Multivariate Normal, latent with Householder
 transform, space-time; [spatial processes](./spatial_processes.md)) and snow crab (Hurdle,
 binomial and Poisson, space-time) in the Maritimes Region of Canada.
 
-## Example 0: Simulated data
+
+
+## Areal units: partitioning of space
+
+Areal Unit Modelling (CARSTM), the choice of spatial partition directly impacts the identifiability of temporal and spatial latent effects. A well-constructed partition must balance geometric compactness with statistical information density.
+
+Multiple methods exist for partitioning spatial data. A few of the simpler ones are examined.
+
+Specific criteria:
+  - **Geometric Regularity**: How compact and convex the tiles are.
+  - **Information Balance**: The variance of points per tile (lower is better for CAR stability).
+  - **Temporal Coverage**: The minimum number of unique time points present in any single tile.
+
+
+
+### Start environment
 
 ```{julia}
 
+# WARNING: if this is the first run, this can take up to 1 hour to install and precompile libraries and their dependencies
+
+
+using Pkg
+
+
+### For Areal Units
+
+pkgs_au = ["Random", "Statistics", "LinearAlgebra", "DataFrames",
+       "StatsBase", "SparseArrays",
+        "JLD2", "DelaunayTriangulation",
+        "PolygonOps", "GeoInterface", "StatsPlots" ]
+
+Pkg.add(pkgs_au)
+Pkg.precompile()
+
+for pk in pkgs_au
+  @eval using $(Symbol(pk))
+end
+
+
+
+### For CARSTM 
+
+pkgs = ["Random", "Turing", "Distributions", "Statistics", "MCMCChains", "DataFrames",
+        "LinearAlgebra", "Clustering", "StatsBase",
+        "JLD2", "FFTW",  "SparseArrays", "StaticArrays", "FillArrays",
+         "Bijectors", "DynamicPPL", "AdvancedVI", "Optimisers", "PosteriorStats", "ArviZ", "Turing" ]
+
+# "Lux", "ArchGDAL",
+
+Pkg.add(pkgs)
+Pkg.precompile()
+
+for pk in pkgs
+  @eval using $(Symbol(pk))
+end
+
+
 # define 'project_directory' as the location of the repository -- required
-# project_directory = joinpath( "/home", "jae", "projects", "model_covariance")  # linux
-# project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  # mswindows
-project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # mswindows generic
- 
-# if this is the first run, this can take up to 1 hour to install and precompile libraries and their dependencies
 
-include( joinpath( project_directory, "scripts", "startup.jl" ) )   
- 
+if Sys.iswindows()
+    project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  
+elseif Sys.islinux()
+    project_directory = joinpath( "/home", "jae", "projects", "model_covariance")
+else
+    project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # examples
+end
 
+
+include( joinpath( project_directory, "src", "spatial_partitioning_functions.jl" ) )   
+include( joinpath( project_directory, "src", "carstm_functions.jl" ) )    
+
+
+# overrides
+
+Distributions.rand(rng::AbstractRNG, d::PCPriorSigma) = rand(rng, Exponential(1 / d.lambda))
+Distributions.minimum(d::PCPriorSigma) = 0.0
+Distributions.maximum(d::PCPriorSigma) = Inf
+Bijectors.bijector(d::PCPriorSigma) = Bijectors.exp
+
+
+
+```
+
+
+### Simulated data
+
+```{julia}
+
+# Data Generation
+n_pts = 100
+n_time = 15
+
+(pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
+  generate_sim_data(n_pts, n_time; rndseed=42)
+
+```
+
+### Basic Delauny Triangulation and Tesselation
+
+See information in https://en.wikipedia.org/wiki/Delaunay_triangulation
+
+**Algorithm:** Delaunay Seeding  
+**Logic:**
+1. Place $k$ seeds on a regular grid across the domain.
+2. Define boundaries using the Voronoi cells of these fixed seeds.
+3. Simple and fast, but lacks adaptation to the underlying point process intensity.
+
+Seed Placement: It's highly sensitive to the initial, often random, placement of seeds.
+Partitioning: Points are assigned to the closest centroid, effectively creating a Voronoi-like tessellation based on these centroids.
+Adjacency: The adjacency matrix (W) is constructed using the Delaunay triangulation of the centroids, where two areal units are considered neighbors if their centroids are connected by an edge in the triangulation.
+Efficiency: It's generally a fast method but can result in high variance of points per unit, meaning some units might be very dense while others are sparse.
+Geometric Regularity: While it produces compact, convex cells, their distribution can be uneven due to the random seed placement.
+
+
+```{julia}
+area_method = :triangulation
+
+# Note: boundary_hull is now optional as it is calculated internally if missing
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
+                             dist_threshold=1.0, time_idx=time_idx)
+
+plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
+                         title="Triangulation with Internalized Hull Boundary",
+                         boundary_hull=hull_pts)
+display(plt)
+```
+
+
+### Centroidal Voronoi Tessellation (CVT)
+
+The **Centroidal Voronoi Tessellation (CVT)** is a spatial partitioning method that creates an optimized mesh by aligning seeds with the centers of their respective regions. It transforms a standard Voronoi diagram into a stable, balanced structure where every "cell" is at its geometric or density-weighted equilibrium.
+
+Core Mechanism: Lloyd’s Algorithm**
+
+Both standard and granular versions rely on an iterative three-step process:
+1.  **Partition:** Generate Voronoi regions based on current seed locations.
+2.  **Shift:** Move each seed to the **center of mass** of its region.
+3.  **Converge:** Repeat until the system minimizes the "quantization error" (energy functional):
+    $$\mathcal{H}(S, V) = \sum_{j=1}^k \int_{V_j} \rho(x) ||x - s_j||^2 \, dx$$
+    *(Note: In Standard CVT, the density $\rho(x)$ is treated as a constant 1).*
+
+
+| Feature | **Standard CVT (`:cvt`)** | **Granular CVT (`:granular_cvt`)** |
+| :--- | :--- | :--- |
+| **Primary Goal** | **Geometric Uniformity.** Creates tiles of roughly equal size/shape. | **Adaptive Resolution.** Adjusts tile size based on data distribution. |
+| **Weighting** | **Unweighted.** Treats all geographic space as equally important. | **Density-Weighted.** Seeds migrate toward dense data clusters. |
+| **Visual Result** | A regular, "honeycomb" mesh (often hexagonal). | Smaller, denser tiles in high-activity areas; larger tiles in sparse areas. |
+| **Key Benefit** | Minimizes spatial autocorrelation variance within units. | Balances information content; prevents "data-poor" units in sparse areas. |
+
+
+3. Advanced Capabilities of Granular CVT**
+While the standard model focuses on a "fair" geographic split, the **Granular** approach introduces two sophisticated refinements:
+* **Point Density Weighting:** The algorithm automatically increases granularity where the data is richest, ensuring the model "zooms in" on complex areas.
+* **Local Split Control:** Allows for targeted subdivision. Users can manually or algorithmically trigger further splits in specific tiles based on local metrics, providing high-resolution detail only where it is required.
+
+**Standard CVT** for a uniform grid where geography is the priority. 
+
+**Granular CVT** when data density varies significantly and partitions need to adapt to data
+
+
+
+
+```{julia}
+# Visualize CVT using unified plot_spatial_graph
+area_method = :cvt
+
+# Using the new n_arealunits_user parameter
+user_defined_areal_units = 7 # Example: specify 7 areal units
+
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
+                             dist_threshold=1.0, time_idx=time_idx,
+                             n_arealunits_user=user_defined_areal_units)
+
+plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
+                         title="Centroids as Tile Generators (N_units=$(user_defined_areal_units))",
+                         show_boundaries=true,
+                         boundary_hull=hull_pts)
+display(plt)
+```
+
+
+### Poisson Centroidal Voronoi Tesselation 
+
+
+The Poisson Intensity-Weighted CVT (Centroidal Voronoi Tessellation) creates a spatial mesh where the size of each tile is determined by data density rather than just geographic area. It treats data locations as a Non-Homogeneous Poisson Process (NHPP) to ensure that every tile contains enough information for stable statistical modeling.
+
+1. Core Logic: Density-Weighted Centroids
+Unlike standard Voronoi tiles that use geometric centers, this method uses a Density-Weighted Centroid. Seeds migrate toward areas with more data points based on an intensity function $\lambda(x)$, typically estimated via Kernel Density Estimation (KDE).
+
+The Mathematical Goal:
+
+The position of each seed $s_j$ is calculated as:
+
+$$s_j = \frac{\int_{V_j} x \lambda(x) \, dx}{\int_{V_j} \lambda(x) \, dx}$$
+This ensures the expected number of points per tile remains roughly constant across the entire map, regardless of whether a region is crowded or sparse.
+
+2. Key Advantages
+Prevents "Data Starvation": In standard methods, sparse regions often get stuck with "empty" tiles. This method expands tile size in sparse areas and shrinks it in dense areas, ensuring every tile has sufficient observations to identify temporal trends (e.g., $AR(1)$ processes).
+
+Minimizes Boundary Artifacts: Standard tiles often "split" a high-density cluster in half. The Hybrid CVT migrates seeds to the modes (peaks) of density, ensuring a single data feature stays within a single tile.
+
+Improves Model Convergence: By balancing the number of observations ($n_j$) across tiles, it stabilizes the precision matrix for spatial models (like ICAR/CAR) and ensures MCMC chains converge faster.
+
+3. Process Workflow
+KDE Estimation: Map the data intensity $\lambda(s)$ across the domain.
+
+Mode Seeding: Place initial seeds at the highest density peaks.
+
+**Algorithm:** Weighted Lloyd's Algorithm  
+**Logic:**
+1. Estimate a continuous intensity surface $\lambda(s)$ using KDE (Poisson) or Gaussian Process (GP) regression.
+2. Calculate the **Density-Weighted Centroid** for each unit $V_j$:
+   $$s_j = \frac{\int_{V_j} x \lambda(x) dx}{\int_{V_j} \lambda(x) dx}$$
+3. This forces seeds toward data-rich regions, resulting in smaller tiles in high-density areas.
+
+
+Bottom Line: This method produces "statistically significant" tiles. It ensures that no tile is a "data desert," which directly leads to higher reliability in spatio-temporal modeling.
+
+
+
+
+```{julia}
+
+area_method = :poisson_cvt
+
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
+                             dist_threshold=1.5, time_idx=time_idx)
+
+plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
+                         title="Poisson Intensity-Weighted CVT",
+                         show_boundaries=true,
+                         boundary_hull=hull_pts)
+display(plt)
+```
+
+
+
+### Centroidal Voronoi Tesselation weighted by Matern Gaussian Process 
+
+While the Poisson Intensity-Weighted CVT focuses on balancing the count of observations, a Matérn Gaussian Process (GP) Weighted CVT focuses on the correlation structure of the underlying spatial process.
+
+This is a move from "Where is the data?" to "How far does the data's influence reach?"
+
+Gaussian Process (GP) Matern-Weighted CVT
+**Method:** `:gp_cvt`  
+**Assumption:** The intensity surface is a realization of a latent Gaussian Process. This provides a smoother, more robust intensity estimate than KDE, especially when dealing with small sample sizes or edge effects.
+
+**Mathematical Justification:**  
+We model the log-intensity as a GP with a Matern 3/2 covariance kernel:
+$$C_{\nu=3/2}(d) = \sigma^2 \left(1 + \frac{\sqrt{3}d}{\rho}\right) \exp\left(-\frac{\sqrt{3}d}{\rho}\right)$$
+Using the GP posterior mean for $\lambda(s)$ in the CVT update rule provides a regularization effect, leading to more stable partitions that are less sensitive to local point noise compared to standard KDE-based weights.
+
+Important References
+
+*   **Du, Q., Faber, V., & Gunzburger, M.** (1999). *Centroidal Voronoi Tessellations: Applications and Algorithms*. SIAM Review.
+*   **Diggle, P. J.** (2013). *Statistical Analysis of Spatial and Spatio-Temporal Point Patterns*. CRC Press.
+*   **Lindgren, F., et al.** (2011). *An explicit link between Gaussian fields and Gaussian Markov random fields, the SPDE approach*. Journal of the Royal Statistical Society.
+
+
+```julia
+area_method = :gp_cvt
+
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
+                             dist_threshold=1.5, time_idx=time_idx)
+
+plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
+                         title="GP Matern-Weighted CVT Partition",
+                         show_boundaries=true,
+                         boundary_hull=hull_pts)
+display(plt)
+
+```
+
+### Quadtree 
+
+A top-down approach in which each internal node has exactly four children. Quadtrees are most often used to partition a two-dimensional space by recursively subdividing it into four quadrants or regions. The Quadtree is built recursively such that If a node has fewer points than its capacity, it becomes a leaf node. If a node has more points than its capacity, it subdivides itself into four child nodes (quadrants).
+Points from the parent node are then redistributed into the appropriate child nodes.
+
+
+**Algorithm:** Recursive Spatial Decomposition  
+**Logic:**
+1. Start with a bounding box containing all points.
+2. Recursively divide the box into four equal quadrants if the number of points exceeds the `capacity`.
+3. **Post-Processing:** Filter leaf nodes based on `min_area` and `min_time_slices`.
+4. **Classification:** Re-assign all original points to the centroid of the nearest valid leaf node.
+
+
+```{julia}
+
+area_method = :quadtree
+quadtree_capacity = 8 # Number of points a leaf node can hold before subdividing
+
+(centroids_qt, area_assignments_qt, W_sym_qt, area_idx_qt, hull_pts_qt) = assign_spatial_units(pts, area_method, n_time;
+        dist_threshold=1.5, time_idx=time_idx, capacity=quadtree_capacity,
+        min_area_constraint=2.0, max_area_constraint=30.0,
+        min_total_arealunits=5, max_total_arealunits=15, tol=1e-3)
+
+plt_quadtree = plot_spatial_graph(pts, area_assignments_qt, centroids_qt, W_sym_qt;
+                         title="Quadtree Partitioning (Capacity=$(quadtree_capacity))",
+                         show_boundaries=true,
+                         boundary_hull=hull_pts_qt)
+display(plt_quadtree)
+
+```
+
+
+### Merge Voronoi (Density-Prioritized)
+
+
+**Algorithm:** Agglomerative Dissolution  
+**Logic:**
+1. Initialize each data point as its own Voronoi cell.
+2. Construct an adjacency graph via Delaunay triangulation.
+3. **Prioritized Merging:** Calculate the cumulative Poisson intensity for each adjacent pair. Sort pairs by combined density.
+4. Dissolve the edge between the two units with the **lowest** combined intensity first.
+5. Stop when the target number of units is reached or the point-count variance stabilizes (asymptotic convergence).
+
+
+```{julia}
+area_method = :merge_voronoi
+
+# Run the updated density-prioritized merge method
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time; 
+                             buffer=1.0, time_idx=time_idx, 
+                             min_area_constraint=2.0, 
+                             max_area_constraint=30.0,
+                             max_total_arealunits=12, 
+                             tol=1e-4)
+
+plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym; 
+                         title="Density-Prioritized Merge Voronoi (Max Units: 12)", 
+                         show_boundaries=true, 
+                         boundary_hull=hull_pts)
+display(plt)
+```
+
+### Comparison
+
+```{julia}
+methods = [:triangulation, :cvt, :poisson_cvt, :gp_cvt]
+results = []
+plots = []
+
+for m in methods
+    # The boundary is now calculated internally with the 1.5x median buffer
+    c, assign, W, a_idx, hull_pts = assign_spatial_units(
+      pts, m, n_time; dist_threshold=1.5, time_idx=time_idx
+    )
+
+    counts = [count(==(i), assign) for i in 1:length(c)]
+    time_covs = [length(unique(time_idx[findall(==(i), assign)])) for i in 1:length(c)]
+
+    push!(results, (method=m, mean_pts=mean(counts), var_pts=var(counts), min_time=minimum(time_covs)))
+
+    p = plot_spatial_graph(pts, assign, c, W; title="Method: $m", show_boundaries=true, boundary_hull=hull_pts)
+    push!(plots, p)
+end
+
+df_results = DataFrame(results)
+display(df_results)
+
+l = @layout [a b; c d]
+comp_plt = plot(plots..., layout=l, size=(1000, 800))
+display(comp_plt)
+```
+
+### Comparisons
+
+Identifiability issues** in hierarchical models (like ICAR or CARSTM) are important .
+  - regions with no data make estimating local parameters like temporal persistence ($\rho$) a challenge
+  - Poisson Weighted CVT: "shrink" tiles where data is abundant and "stretch" them where data is scarce. Every areal unit is informative.
+    
+
+| Method | Total Units | Mean Points/Unit | Variance (Lower is Better) | Min Time Coverage |
+| :--- | :--- | :--- | :--- | :--- |
+| **merge_voronoi** | 15 | 6.67 | **7.24** | 15 |
+| **poisson_cvt** | 10 | 10.00 | 8.00 | 15 |
+| **cvt** | 10 | 10.00 | 8.22 | 15 |
+| **gp_cvt** | 10 | 10.00 | 8.67 | 15 |
+| **triangulation** | 10 | 10.00 | 23.78 | 15 |
+
+Key Findings:
+
+1. **Information Balance**: `merge_voronoi` achieved the highest stability (lowest variance). This is critical for CARSTM models to prevent 'starving' certain spatial units of data, which can cause MCMC convergence issues.
+2. **Temporal Identifiability**: All methods maintained full temporal coverage (15 slices), meaning the longitudinal component of the model is identifiable in every unit.
+3. **Geometric vs. Statistical Adaptation**: Standard `triangulation` performs poorly because it doesn't adapt to point density, while the **CVT** and **Merge** variants successfully cluster units where data is most abundant, leading to more robust precision matrices for the GMRF components.
+
+
+## CARSTM
+
+## Example 0: Simulated data
+
+```{julia}
 
 # Data Generation
 n_pts = 100
@@ -67,13 +447,13 @@ n_time = 15
 
 area_method = :gp_cvt
 
-(centroids, area_assignments, W_sym, area_idx) = assign_spatial_units(pts, area_method, n_time;
+(centroids, area_assignments, W_sym, area_idx, hull_pts) = assign_spatial_units(pts, area_method, n_time;
                              dist_threshold=1.5, time_idx=time_idx)
 
 # Visualize the GP-weighted result
 plt = plot_spatial_graph(pts, area_assignments, centroids, W_sym;
                          title="GP Matern-Weighted CVT Partition",
-                         show_boundaries=true)
+                         show_boundaries=true, boundary_hull=hull_pts)
 display(plt)
 
 # --- Run Full Model Inference ---

@@ -381,7 +381,7 @@ Turing.@model function ppca_basic( Y, ::Type{T}=Float64) where {T}
   
   
  
-PCA_BH_indexes = function(nvar, nz) 
+function PCA_BH_indexes(nvar, nz) 
     # indices used withing PCA_BH precomputed to speed things up 
     nvh = Int(nvar*nz - nz*(nz-1)/2)
     iz = float.(nvar .- collect(1:nz))

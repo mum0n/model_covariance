@@ -30,6 +30,21 @@ Test by varing the noise multiplier in step 3 to: 1.5 * randn(N).
 
 ```{julia}
 
+
+if Sys.iswindows()
+    project_directory = joinpath( "C:\\", "home", "jae", "projects", "model_covariance")  
+elseif Sys.islinux()
+    project_directory = joinpath( "/home", "jae", "projects", "model_covariance")
+else
+    project_directory = joinpath( "C:\\", "Users", "choij", "projects", "model_covariance")  # examples
+end
+
+include( joinpath( project_directory, "src", "gaussian_processes_functions.jl" ) )   
+ 
+
+
+
+
 # using ApproximateGPs, Flux, KernelFunctions, LinearAlgebra, Zygote, Distributions, Random
 
 Batch_Size = 256
