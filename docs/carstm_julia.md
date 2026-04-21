@@ -68,7 +68,7 @@ using Pkg
 ### For Areal Units
 
 pkgs_au = ["Random", "Statistics", "LinearAlgebra", "DataFrames",
-       "StatsBase", "SparseArrays", "Plots",
+       "StatsBase", "SparseArrays", "Plots", "StatsPlots", 
         "JLD2", "LibGEOS", "Graphs", "DelaunayTriangulation" ]
 
 Pkg.add(pkgs_au)
@@ -86,15 +86,19 @@ pkgs = ["Random",   "Distributions", "Statistics", "MCMCChains", "DataFrames",
         "LinearAlgebra", "Clustering", "StatsBase", "HypothesisTests",
         "JLD2", "FFTW",  "SparseArrays", "StaticArrays", "FillArrays",
          "Bijectors", "DynamicPPL", "AdvancedVI", "Optimisers", "PosteriorStats",  "Turing" ]
-
-# "Lux", "ArchGDAL", "ArviZ",
-
+ 
 Pkg.add(pkgs)
 Pkg.precompile()
 
 for pk in pkgs
   @eval using $(Symbol(pk))
 end
+
+# using Pkg
+# Pinning LibGEOS to the latest available package version to resolve API inconsistencies
+# Pkg.add(name="LibGEOS", version="0.9.7")
+# Pkg.precompile()
+
 
 
 # define 'project_directory' as the location of the repository -- required
@@ -119,7 +123,7 @@ include( joinpath( project_directory, "src", "carstm_functions.jl" ) )
 ### Simulated data
 
 ```{julia}
- 
+
 # Data Generation
 n_pts = 100
 n_time = 15
@@ -462,18 +466,6 @@ adj_matrix_numeric = Graphs.adjacency_matrix(g_v1)
 
 mod_v1 = model_v1_gaussian(y_sim, time_idx, area_idx, cov_indices_mat, adj_matrix_numeric)
 chain_v1 = sample(mod_v1, NUTS(), 100)
-
-
-# Re-calculate assignments for the full 1500-point dataset
-# The original 'spatial_res.assignments' only covered unique points or a subset
-area_idx = [argmin([sum((p .- sj) .^ 2) for sj in spatial_res.centroids]) for p in pts]
-W_sym = spatial_res.adjacency_edges
-
-println("Verification:")
-println("Length of y_sim: ", length(y_sim))
-println("Length of area_idx: ", length(area_idx))
-println("Number of unique areas: ", length(unique(area_idx)))
-println("Adjacency edges count: ", length(W_sym))
 
 
 plot_model_fit(chain_v1, y_sim, time_idx, area_idx)

@@ -1,3 +1,126 @@
+function expand_hull_v0(pts, buffer_dist)
+    """
+    Synopsis: Computes the convex hull of points and expands it by a buffer distance.
+    Inputs:
+    - pts: Vector of (x, y) tuples.
+    - buffer_dist: Distance to buffer the convex hull.
+    Outputs:
+    - A LibGEOS Polygon geometry representing the buffered convex hull.
+    """
+    if isempty(pts) return LibGEOS.Polygon([[ (0.0,0.0), (0.0,0.0), (0.0,0.0), (0.0,0.0) ]]) end
+    points_geom = LibGEOS.MultiPoint([(p[1], p[2]) for p in pts])
+    hull = LibGEOS.convexhull(points_geom)
+    buffered_hull = LibGEOS.buffer(hull, buffer_dist)
+    return buffered_hull
+end
+
+
+function get_coords_from_geom_v0(geom)
+    """
+    Synopsis: Extracts coordinates from various LibGEOS geometry types.
+    Inputs:
+    - geom: A LibGEOS geometry object.
+    Outputs:
+    - A vector of (x, y) coordinates.
+    """
+    coords = []
+    if LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_POINT
+        push!(coords, (LibGEOS.getX(geom), LibGEOS.getY(geom)))
+    elseif LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_LINESTRING || LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_LINEARRING
+        for i in 1:LibGEOS.getNumPoints(geom)
+            push!(coords, (LibGEOS.getX(geom, i), LibGEOS.getY(geom, i)))
+        end
+    elseif LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_POLYGON
+        exterior = LibGEOS.getExteriorRing(geom)
+        for i in 1:LibGEOS.getNumPoints(exterior)
+            push!(coords, (LibGEOS.getX(exterior, i), LibGEOS.getY(exterior, i)))
+        end
+    elseif LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_MULTIPOLYGON
+        for i in 1:LibGEOS.getNumGeometries(geom)
+            poly = LibGEOS.getGeometryN(geom, i)
+            exterior = LibGEOS.getExteriorRing(poly)
+            for j in 1:LibGEOS.getNumPoints(exterior)
+                push!(coords, (LibGEOS.getX(exterior, j), LibGEOS.getY(exterior, j)))
+            end
+            if i < LibGEOS.getNumGeometries(geom) push!(coords, (NaN, NaN)) end # Separator for plotting
+        end
+    end
+    return coords
+end
+
+
+
+function expand_hull(pts, buffer_dist)
+    """
+    Synopsis: Computes the convex hull of points and expands it by a buffer distance.
+    Inputs:
+    - pts: Vector of (x, y) tuples.
+    - buffer_dist: Distance to buffer the convex hull.
+    Outputs:
+    - A LibGEOS Polygon geometry representing the buffered convex hull.
+    """
+
+    if isempty(pts) return LibGEOS.Polygon([[ (0.0,0.0), (0.0,0.0), (0.0,0.0), (0.0,0.0) ]]) end
+    coords_vec = [[Float64(p[1]), Float64(p[2])] for p in pts]
+    points_geom = LibGEOS.MultiPoint(coords_vec)
+    hull = LibGEOS.convexhull(points_geom)
+    buffered_hull = LibGEOS.buffer(hull, buffer_dist)
+    return buffered_hull
+end
+
+function get_coords_from_geom(geom)
+    """
+    Synopsis: Extracts coordinates from various LibGEOS geometry types.
+    Inputs:
+    - geom: A LibGEOS geometry object.
+    Outputs:
+    - A vector of (x, y) coordinates.
+    """
+
+    coords = Tuple{Float64, Float64}[]
+    local type_id = -1
+    try
+        type_id = LibGEOS.geomTypeId(geom)
+        if type_id == LibGEOS.GEOS_POINT
+             # Access coordinate sequence directly for point types
+             seq = LibGEOS.getCoordSeq(geom)
+             push!(coords, (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1)))
+             return coords
+        elseif type_id == LibGEOS.GEOS_POLYGON
+            ring = LibGEOS.exteriorRing(geom)
+            n = LibGEOS.numPoints(ring)
+            for i in 1:n
+                p = LibGEOS.getPoint(ring, i)
+                seq = LibGEOS.getCoordSeq(p)
+                push!(coords, (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1)))
+            end
+        elseif type_id == LibGEOS.GEOS_MULTIPOLYGON
+            for i in 1:LibGEOS.numGeometries(geom)
+                poly = LibGEOS.getGeometryN(geom, i)
+                ring = LibGEOS.exteriorRing(poly)
+                n = LibGEOS.numPoints(ring)
+                for j in 1:n
+                    p = LibGEOS.getPoint(ring, j)
+                    seq = LibGEOS.getCoordSeq(p)
+                    push!(coords, (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1)))
+                end
+                if i < LibGEOS.numGeometries(geom); push!(coords, (NaN, NaN)); end
+            end
+        elseif type_id in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_LINEARRING]
+            n = LibGEOS.numPoints(geom)
+            for i in 1:n
+                p = LibGEOS.getPoint(geom, i)
+                seq = LibGEOS.getCoordSeq(p)
+                push!(coords, (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1)))
+            end
+        end
+    catch e
+        @warn "Coordinate extraction failed for type $type_id: $e"
+    end
+    return coords
+end
+
+
 function get_bvt_centroids(pts, n_target, min_u, tol)
     """
     Synopsis: Binary Vector Tree partitioning. Recursively splits along the axis of maximum variance.
@@ -62,15 +185,20 @@ function get_qvt_centroids(pts, n_target, min_u, tol)
     end
     return [(mean(p[1] for p in r), mean(p[2] for p in r)) for r in regions]
 end
+
+
+
 function assign_spatial_units(pts, area_method; seeding=:kde, kwargs...)
     """
-    Synopsis: High-level wrapper for spatial partitioning with temporal and density constraints.
+    assign_spatial_units(pts, area_method; seeding=:kde, kwargs...)
+
+    Description: High-level wrapper for spatial partitioning with temporal and density constraints.
+
     Inputs:
     - area_method: :cvt (Iterative), :bvt (Recursive), :qvt (Quadrant), :avt (Agglomerative).
     - target_units: Goal for CVT/AVT.
     - max_units: Hard cap for BVT/QVT and CVT expansion.
     - min_time_slices: Minimum unique time indices required per unit.
-    - time_idx: Vector of time labels for the points.
     """
     max_u = get(kwargs, :max_units, 50)
     target_u = get(kwargs, :target_units, 20)
@@ -135,10 +263,18 @@ function assign_spatial_units(pts, area_method; seeding=:kde, kwargs...)
     g = ensure_connected!(SimpleGraph(length(c)), c)
     return merge(res, (graph=g,))
 end
+
+
+
 function get_voronoi_polygons_and_edges(centroids, hull_geom)
-    """
-    Synopsis: Generates clipped Voronoi polygons and identifies neighbors sharing a boundary.
-    """
+    # Description: Generates clipped Voronoi polygons based on centroids and identifies neighbors sharing a boundary for graph construction.
+    # Inputs:
+    #   - centroids: Vector of (x, y) coordinates for unit centers.
+    #   - hull_geom: LibGEOS geometry used to clip the Voronoi cells.
+    # Outputs:
+    #   - polygons: Vector of coordinate vectors for the polygons.
+    #   - edges: Adjacency list showing connected centroid pairs.
+
     pts_dt = [(Float64(c[1]), Float64(c[2])) for c in centroids]
     tri = triangulate(pts_dt)
     hull_coords = get_coords_from_geom(hull_geom)
@@ -203,6 +339,9 @@ function check_connectivity(g)
     comps = connected_components(g)
     return (is_connected = length(comps) == 1, n_components = length(comps), components = comps)
 end
+
+
+
 function ensure_connected!(g, centroids)
     """
     Synopsis: Force-connects disconnected graph components using nearest-neighbor edges.
@@ -240,6 +379,9 @@ function ensure_connected!(g, centroids)
     end
     return g
 end
+
+
+
 function get_avt_centroids(c_init, pts, hull_coords, hull_geom; min_pts=5, min_units=2, tol=1e-4)
     """
     Synopsis: Agglomerative Voronoi Tessellation that strictly enforces min_pts.
@@ -277,6 +419,9 @@ function get_avt_centroids(c_init, pts, hull_coords, hull_geom; min_pts=5, min_u
 
     return centroids
 end
+
+
+
 function plot_spatial_graph(pts, spatial_res; title="Spatial Partitioning", domain_boundary=[])
     """
     Inputs:
@@ -385,6 +530,13 @@ end
 
 
 function calculate_metrics(spatial_res, pts)
+    # Description: Calculates density metrics (mean, SD, CV) across the partitioned spatial units.
+    # Inputs:
+    #   - spatial_res: Partitioning results containing polygons and assignments.
+    #   - pts: The data points being analyzed.
+    # Outputs:
+    #   - NamedTuple: (mean_density, sd_density, cv_density).
+
     roll(v, k) = v[mod1.(1:length(v), length(v) .- k)]
 
     n_units = length(spatial_res.centroids)

@@ -1,8 +1,13 @@
-
- 
-
 function init_params_extract( res=NaN; load_from_file=false, override_means=false, fn_inits = "init_params.jl2"  )
- 
+  # Description: Extracts initial parameter values from a model result summary or loads them from a file.
+  # Inputs:
+  #   - res: Model result object (default: NaN).
+  #   - load_from_file: Boolean, if true loads params from fn_inits.
+  #   - override_means: Boolean, if true applies custom overrides for specific parameter patterns.
+  #   - fn_inits: String, filename for storage.
+  # Outputs:
+  #   - A FillArray containing the extracted or loaded mean parameter values.
+
   if load_from_file
     init_params = load(fn_inits )
     return(init_params)
@@ -38,6 +43,15 @@ end
 
 function init_params_copy( res=NaN, res0=NaN; load_from_file=false, override_means=false, fn_inits = "init_params.jl2"  )
   # using spatial parts of res0 
+  # Description: Copies parameter values from a reference result (res0) to a target result structure (res).
+  # Inputs:
+  #   - res: Target model result object.
+  #   - res0: Reference model result object.
+  #   - load_from_file: Boolean to load from fn_inits instead.
+  #   - override_means: Boolean to apply custom pattern-based overrides.
+  #   - fn_inits: String, filename for storage.
+  # Outputs:
+  #   - A FillArray containing the merged mean parameter values.
   if load_from_file
     init_params = load(fn_inits )
     return(init_params)
@@ -81,8 +95,39 @@ function init_params_copy( res=NaN, res0=NaN; load_from_file=false, override_mea
 end
 
 
+function plot_kde_simple(pts; grid_res=600, sd_extension_factor=1.0, title="Spatial Intensity (KDE)")
+    # Internal wrapper for estimate_local_kde_with_extrapolation
+    # Description: Generates a simple 2D Heatmap of spatial intensity using Kernel Density Estimation.
+    # Inputs:
+    #   - pts: Vector of (x, y) coordinate tuples.
+    #   - grid_res: Resolution of the output grid.
+    #   - sd_extension_factor: Factor to extend the bandwidth standard deviation.
+    #   - title: Title for the generated plot.
+    # Outputs:
+    #   - A Plots.Plot object (Heatmap with scatter overlay).
+    # Using a dummy time_idx of 1s since we are plotting a static slice
+    t_idx_dummy = ones(Int, length(pts))
+    x_g, y_g, intensity = estimate_local_kde_with_extrapolation(pts, t_idx_dummy, 1; grid_res=grid_res, sd_extension_factor=sd_extension_factor)
+    
+    plt = Plots.heatmap(x_g, y_g, intensity', 
+                  title=title, 
+                  c=:viridis, 
+                  aspect_ratio=:equal,
+                  xlabel="X", ylabel="Y")
+    Plots.scatter!(plt, [p[1] for p in pts], [p[2] for p in pts], 
+                   markersize=2, markercolor=:white, markeralpha=0.5, label="Points")
+    return plt
+end
+
+
 Turing.@model function pca_carstm( Y, ::Type{T}=Float64 ) where {T}
   # X, G, log_offset, y, z, auid, nData, nX, nG, nAU, node1, node2, scaling_factor 
+  # Description: Turing model performing Latent PCA (Householder) followed by a spatial CARSTM (BYM2) on factor scores.
+  # Inputs:
+  #   - Y: Observation matrix (nData x nVar).
+  #   - Implicit globals: nAU, nvar, nz, node1, node2, scaling_factor, sigma_prior.
+  # Outputs:
+  #   - Bayesian posterior estimates for PCA loadings and spatial components.
   # first pca (latent householder transform) then carstm bym2
   
   # pca_sd ~ Bijectors.ordered( MvLogNormal(MvNormal(ones(nz) )) )  
@@ -138,6 +183,13 @@ end
 
 Turing.@model function carstm_pca( Y, ::Type{T}=Float64; nData=size(Y, 1), nvar=size(Y, 2), nz=2, nvh=Int(nvar*nz - nz * (nz-1) / 2), noise=1e-9, log_offset=0.0, hindex=(2,1) ) where {T}
 
+    # Description: Turing model that estimates spatial/temporal effects per variable before a latent PCA reduction.
+    # Inputs:
+    #   - Y: Data matrix.
+    #   - nz: Number of latent factors.
+    #   - Implicit globals: nAU, nX, node1, node2, scaling_factor.
+    # Outputs:
+    #   - Bayesian posterior estimates for individual trends and latent PCA structure.
     # first carstm then pca .. as in msmi . incomplete ... too slow
 
     Threads.@threads for f in 1:nvar
@@ -223,6 +275,13 @@ end
 Turing.@model function carstm_temperature( Y, ::Type{T}=Float64; 
   nData=size(Y, 1), nvar=size(Y, 2), nz=2, nvh=Int(nvar*nz - nz * (nz-1) / 2), noise=1e-9 ) where {T}
   
+    # Description: Turing model for temperature mapping using ICAR (spatial) and Fourier (temporal) processes.
+    # Inputs:
+    #   - Y: Temperature observation vector.
+    #   - Implicit globals: X, nX, nAU, node1, node2, scaling_factor, ti, ncf, vcv.
+    # Outputs:
+    #   - Posterior distribution of spatial trends and periodic temperature fluctuations.
+
     # Fixed (covariate) effects 
     #f_beta ~ filldist( Normal(0.0, 1.0), nX);
     #f_effect = X * f_beta + log_offset
@@ -289,25 +348,46 @@ Turing.@model function carstm_temperature( Y, ::Type{T}=Float64;
 end
  
 
-function lattice_adjacency_matrix(rows, cols)
-    geoms = []
+function libgeos_lattice_adjacency_matrix(rows::Int, cols::Int)
+    """
+    libgeos_lattice_adjacency_matrix(rows, cols)
+
+    Description:
+    Generates a sparse adjacency matrix for a regular 2D lattice using LibGEOS for spatial geometry operations.
+    Constructs unit square polygons for each cell and identifies neighbors based on Queen contiguity
+    (any shared boundary point or edge).
+
+    Inputs:
+    - rows (Int): Number of rows in the lattice grid.
+    - cols (Int): Number of columns in the lattice grid.
+
+    Output:
+    - W (SparseMatrixCSC{Int, Int}): A binary sparse adjacency matrix of size (rows*cols) x (rows*cols).
+    """
+    # Create polygons for each cell in the lattice
+    polygons = []
     for r in 1:rows, c in 1:cols
-        # Create a unit square for each cell
-        poly = ArchGDAL.createpolygon([
-            (Float64(c-1), Float64(r-1)), (Float64(c), Float64(r-1)),
-            (Float64(c), Float64(r)), (Float64(c-1), Float64(r)),
-            (Float64(c-1), Float64(r-1))
-        ])
-        push!(geoms, poly)
+        # Define unit square coordinates as nested vectors for LibGEOS compatibility
+        coords = [
+            [Float64(c-1), Float64(r-1)],
+            [Float64(c),   Float64(r-1)],
+            [Float64(c),   Float64(r)],
+            [Float64(c-1), Float64(r)],
+            [Float64(c-1), Float64(r-1)]
+        ]
+        # Construct LinearRing and then Polygon
+        ring = LibGEOS.LinearRing(coords)
+        push!(polygons, LibGEOS.Polygon(ring))
     end
-    
-    n = length(geoms)
+
+    n = length(polygons)
     W = spzeros(Int, n, n)
+
+    # Queen contiguity check
     for i in 1:n
-        prep_i = ArchGDAL.preparegeom(geoms[i])
+        poly_i = polygons[i]
         for j in (i+1):n
-            # Queen contiguity (any shared point)
-            if ArchGDAL.intersects(prep_i, geoms[j])
+            if LibGEOS.intersects(poly_i, polygons[j])
                 W[i, j] = W[j, i] = 1
             end
         end
@@ -316,11 +396,14 @@ function lattice_adjacency_matrix(rows, cols)
 end
 
 
-
-
-
-
 function summarize_array(samples::AbstractArray; alpha=0.05)
+    # Description: Summarizes a sample array across the last dimension (samples).
+    # Inputs:
+    #   - samples: AbstractArray where the last dimension is the index of MCMC samples.
+    #   - alpha: Significance level for credible intervals.
+    # Outputs:
+    #   - NamedTuple: (mean, median, lower, upper) with sample dimension dropped.
+
     # Assumes last dimension is samples
     dims = size(samples)
     n_dims = length(dims)
@@ -358,6 +441,12 @@ Bijectors.bijector(d::PCPriorSigma) = Bijectors.exp
 
 # --- 2. Precision Matrix Construction ---
 function build_laplacian_precision(adj_matrix)
+    # Description: Builds a standard Laplacian precision matrix (Degree - Adjacency).
+    # Inputs:
+    #   - adj_matrix: Sparse adjacency matrix.
+    # Outputs:
+    #   - Sparse precision matrix.
+
     D = Diagonal(vec(sum(adj_matrix, dims=2)))
     return D - adj_matrix
 end
@@ -370,6 +459,11 @@ function scale_precision!(Q)
 end
 
 function build_rw2_precision(n)
+    # Description: Builds a second-order random walk (RW2) precision matrix for smoothing.
+    # Inputs:
+    #   - n: Number of categories or time points.
+    # Outputs:
+    #   - Sparse precision matrix of size n x n.
     D = spzeros(n - 2, n)
     for i in 1:(n - 2)
         D[i, i] = 1.0
@@ -380,6 +474,13 @@ function build_rw2_precision(n)
 end
 
 function build_ar1_precision(n, rho, tau)
+    # Description: Builds a first-order autoregressive (AR1) precision matrix.
+    # Inputs:
+    #   - n: Number of time points.
+    #   - rho: Correlation coefficient.
+    #   - tau: Precision scale.
+    # Outputs:
+    #   - Sparse precision matrix.
     T = promote_type(typeof(rho), typeof(tau))
     diag_vals = [one(T); fill(one(T) + rho^2, n - 2); one(T)]
     off_diag = fill(-rho, n - 1)
@@ -388,6 +489,13 @@ function build_ar1_precision(n, rho, tau)
 end
 
 function build_cyclic_ar1_precision(n, rho, tau)
+    # Description: Builds a cyclic AR1 precision matrix (wrapping last to first).
+    # Inputs:
+    #   - n: Number of time points.
+    #   - rho: Correlation coefficient.
+    #   - tau: Precision scale.
+    # Outputs:
+    #   - Sparse precision matrix.
     T = promote_type(typeof(rho), typeof(tau))
     Q = zeros(T, n, n)
     for i in 1:n
@@ -400,11 +508,32 @@ function build_cyclic_ar1_precision(n, rho, tau)
 end
 
 function logpdf_gmrf(x, Q)
+    # Description: Calculates the log-probability of a Gaussian Markov Random Field.
+    # Inputs:
+    #   - x: Vector of values.
+    #   - Q: Precision matrix.
+    # Outputs:
+    #   - Log-likelihood value.
     Q_stable = Matrix(Q) + I * 1e-5
     F = cholesky(Symmetric(Q_stable))
     return 0.5 * (logdet(F) - dot(x, Q, x) - length(x) * log(2 * pi))
 end
+
+
+
 function reconstruct_posteriors(model::DynamicPPL.Model, chain::MCMCChains.Chains, pts, area_idx, time_idx, W_sym; cov_indices=nothing, class1=nothing, class2=nothing)
+    # Description: Aggregates and summarizes MCMC samples into denoised spatial, temporal, and prediction matrices.
+    # Inputs:
+    #   - model: Turing model object.
+    #   - chain: MCMC sample chain.
+    #   - pts: Observation points.
+    #   - area_idx/time_idx: Mapping of observations to spatial/temporal units.
+    #   - W_sym: Adjacency matrix.
+    #   - cov_indices/class1/class2: Categorical indices for effects.
+    # Outputs:
+    #   - NamedTuple containing summarized spatial/temporal effects, categorical effects, 
+    #     ST matrices (denoised/noisy), and predictions.
+
     N_obs = size(pts,1); N_areas = size(W_sym, 1); N_time = maximum(time_idx)
     family = detect_model_family(model)
     N_samples = size(chain, 1)
@@ -510,32 +639,33 @@ function reconstruct_posteriors(model::DynamicPPL.Model, chain::MCMCChains.Chain
             predictions = summarize_array(reshape(pred_samples, N_obs, 1, N_samples)),
             family = family)
 end
+
+
+
 function detect_model_family(model::DynamicPPL.Model)
-    # 1. Check model name as a first hint
+    # Description: Infers the likelihood family (e.g. :poisson) from the Turing model function name.
+    # Inputs:
+    #   - model: Turing model object.
+    #   - Outputs:
+    #   - Symbol indicating the family.
+
     name = lowercase(string(model.f))
-    
-    # 2. Introspect variables defined in the model context
-    # This allows for more robust detection if the user renames their model functions
-    ctx = DynamicPPL.VarInfo(model)
-    v_names = string.(keys(ctx.metadata))
-    
-    if any(occursin.("sigma_y", v_names)) || occursin("gaussian", name)
-        return :gaussian
-    elseif any(occursin.("r_nb", v_names)) || occursin("negativebinomial", name)
-        return :negbinomial
-    elseif any(occursin.("phi_zi", v_names))
-        return occursin("poisson", name) ? :zip : :zinb
-    elseif occursin("lognormal", name)
-        return :lognormal
-    elseif occursin("binomial", name)
-        return :binomial
-    elseif occursin("poisson", name)
-        return :poisson
-    else
-        return :gaussian # Default
-    end
+    if occursin("gaussian", name) return :gaussian end
+    if occursin("poisson", name) return :poisson end
+    if occursin("binomial", name) return :binomial end
+    if occursin("negativebinomial", name) return :negbinomial end
+    if occursin("lognormal", name) return :lognormal end
+    return :gaussian # Fallback
 end
-function plot_model_fit(chain, y_sim, time_idx, area_idx)
+
+
+function plot_model_fit(chain, y_sim )
+    # Description: Plots Observed vs Predicted values to visualize overall fit quality.
+    # Inputs:
+    #   - chain: MCMC sample chain containing 'mu' parameters.
+    #   - y_sim: Vector of observed values.
+    # Outputs:
+    #   - A Plots.Plot object (Scatter with Identity line).
     # Simplified fit check: Mean of y_sim vs Mean of posterior predictions
     # Note: Requires reconstruct_posteriors to have run
     # Here we just calculate a quick RMSE based on the denoised mu
@@ -561,7 +691,16 @@ function plot_model_fit(chain, y_sim, time_idx, area_idx)
     display(plt)
     return plt
 end
+
 function posterior_predictive_check(model::DynamicPPL.Model, stats, y_obs)
+    # Description: Performs Posterior Predictive Checks (PPC), computing metrics like RMSE, Pearson R, and Kendall Tau.
+    # Inputs:
+    #   - model: Turing model object.
+    #   - stats: summarized results from reconstruct_posteriors.
+    #   - y_obs: Vector of ground-truth observations.
+    # Outputs:
+    #   - NamedTuple of metrics and Plots.Plot objects for density and scatter checks.
+
     # 1. Automatically detect family from model if not explicitly in stats
     family = haskey(stats, :family) ? stats.family : detect_model_family(model)
     # Ensure y_pred is a 1D vector for calculation compatibility
@@ -596,8 +735,8 @@ function posterior_predictive_check(model::DynamicPPL.Model, stats, y_obs)
     println("Kendall τ: ", round(kendall_val, digits=4), " (p=", round(kendall_p, digits=4), ")")
 
     # 3. Density Visualization
-    plt_density = Plots.density(y_obs, label="Observed", lw=2, color=:black)
-    Plots.density!(plt_density, y_pred, label="Predicted (Denoised)", lw=2, color=:blue, ls=:dash)
+    plt_density = density(y_obs, label="Observed", lw=2, color=:black)
+    density!(plt_density, y_pred, label="Predicted (Denoised)", lw=2, color=:blue, ls=:dash)
     title!(plt_density, "PPC: Posterior Predictive Density ($family)")
     xlabel!(plt_density, "Value")
     ylabel!(plt_density, "Density")
@@ -610,7 +749,19 @@ function posterior_predictive_check(model::DynamicPPL.Model, stats, y_obs)
 
     return (rmse=rmse, pearson=(val=pearson_val, p=pearson_p), kendall=(val=kendall_val, p=kendall_p), plot_density=plt_density, plot_scatter=plt_scatter)
 end
+
+
+
 function plot_posterior_results(stats, pts, centroids, W; time_slice=nothing, effect=:spatial, cov_idx=1)
+    # Description: Visualizes specific model effects (spatial maps or categorical levels) as heatmaps or bar charts.
+    # Inputs:
+    #   - stats: NamedTuple from reconstruct_posteriors.
+    #   - centroids/W: Spatial structure definitions.
+    #   - time_slice: Index for ST slices.
+    #   - effect: :spatial, :st_predictions_denoised, :beta_cov, etc.
+    # Outputs:
+    #   - A Plots.Plot object.
+
     grid_res = 100; x_g = range(0, 10, length=grid_res); y_g = range(0, 10, length=grid_res)
     find_idx(xi, yi) = argmin([sqrt((xi-p[1])^2 + (yi-p[2])^2) for p in centroids])
 
@@ -644,7 +795,18 @@ function plot_posterior_results(stats, pts, centroids, W; time_slice=nothing, ef
         error("Effect $effect not recognized.")
     end
 end
+
+
+
 function plot_posterior_vs_prior(model::DynamicPPL.Model, chain::MCMCChains.Chains, param_sym::Symbol; n_prior_samples=1000, title="Posterior vs Prior")
+    # Description: Overlays posterior and prior densities for a specific parameter to check learning/shrinkage.
+    # Inputs:
+    #   - model: Turing model object.
+    #   - chain: MCMC sample chain.
+    #   - param_sym: Symbol of the parameter to check.
+    # Outputs:
+    #   - A Plots.Plot object.
+
     # 1. Extract posterior samples using .data for AxisArray compatibility
     post_samples = vec(chain[param_sym].data)
 
@@ -653,8 +815,8 @@ function plot_posterior_vs_prior(model::DynamicPPL.Model, chain::MCMCChains.Chai
     prior_samples = vec(prior_chain[param_sym].data)
 
     # 3. Visualization
-    plt = Plots.density(post_samples, label="Posterior: $param_sym", lw=3, color=:blue, fill=(0, 0.2, :blue))
-    Plots.density!(plt, prior_samples, label="Prior (sampled)", lw=2, ls=:dash, color=:red)
+    plt = density(post_samples, label="Posterior: $param_sym", lw=3, color=:blue, fill=(0, 0.2, :blue))
+    density!(plt, prior_samples, label="Prior (sampled)", lw=2, ls=:dash, color=:red)
 
     title!(plt, title)
     xlabel!(plt, "Value")
@@ -662,7 +824,16 @@ function plot_posterior_vs_prior(model::DynamicPPL.Model, chain::MCMCChains.Chai
 
     return plt
 end
+
+
+
 function calculate_st_intervals(stats; alpha=0.05)
+    # Description: Calculates credible intervals for Spatio-Temporal matrices (Placeholder implementation).
+    # Inputs:
+    #   - stats: summarized results from reconstruct_posteriors.
+    # Outputs:
+    #   - NamedTuple: (mean, lower, upper).
+
     # This function assumes stats contains the required matrices
     # In a full Bayesian implementation, this would iterate over multiple samples,
     # but here we provide the structure based on the current stats object.
@@ -682,16 +853,29 @@ function calculate_st_intervals(stats; alpha=0.05)
             lower = stats.st_mat_denoised, 
             upper = stats.st_mat_denoised)
 end
-using Turing, MCMCChains, Statistics, LogExpFunctions, StatsFuns, HypothesisTests, DataFrames, Plots
+
 
 # --- 1. MODEL UTILITIES ---
 
 function NegativeBinomial2(μ, r)
+    # Description: Alternative parametrization of Negative Binomial using mean (μ) and dispersion (r).
+    # Inputs:
+    #   - μ: Mean.
+    #   - r: Size/dispersion parameter.
+    # Outputs:
+    #   - Distributions.NegativeBinomial object.
+
     p = r / (r + μ)
     return NegativeBinomial(r, p)
 end
 
 function calculate_waic(model::DynamicPPL.Model, chain::MCMCChains.Chains)
+    # Description: Computes the Watanabe-Akaike Information Criterion (WAIC) for model comparison.
+    # Inputs:
+    #   - model/chain: Turing model and associated MCMC samples.
+    # Outputs:
+    #   - Float64 value (WAIC).
+
     try
         # Extract pointwise log-likelihoods using the official API
         pointwise_ll = Turing.pointwise_loglikelihoods(model, chain)
@@ -728,6 +912,13 @@ function calculate_waic(model::DynamicPPL.Model, chain::MCMCChains.Chains)
 end
 
 function get_rff_deep2D_basis(X, m, lengthscale)
+    # Description: Generates Random Fourier Feature (RFF) basis for 2D inputs (Spatial/Temporal).
+    # Inputs:
+    #   - X: Input matrix (N x D).
+    #   - m: Number of features.
+    #   - lengthscale: Gaussian kernel lengthscale.
+    # Outputs:
+    #   - N x m feature matrix.
     N, D = size(X)
     Random.seed!(42)
     Omega_samples = randn(m, D) ./ lengthscale
@@ -736,6 +927,13 @@ function get_rff_deep2D_basis(X, m, lengthscale)
 end
 
 function get_rff_trend_basis(t, m, lengthscale)
+    # Description: Generates RFF basis for 1D temporal trends.
+    # Inputs:
+    #   - t: Time vector.
+    #   - m: Number of features.
+    #   - lengthscale: Trend smoothness scale.
+    # Outputs:
+    #   - N x m feature matrix.
     N = length(t)
     Random.seed!(42)
     Omega_samples = randn(m) ./ lengthscale
@@ -748,6 +946,14 @@ function get_rff_trend_basis(t, m, lengthscale)
 end
 
 function get_rff_seasonal_basis(t, m, freq, lengthscale)
+    # Description: Generates RFF-style basis for periodic seasonal components.
+    # Inputs:
+    #   - t: Time vector.
+    #   - m: Number of harmonics.
+    #   - freq: Base frequency.
+    #   - lengthscale: Smoothness scale.
+    # Outputs:
+    #   - N x (2*m) feature matrix.
     N = length(t)
     Z = zeros(N, 2*m)
     for j in 1:m
