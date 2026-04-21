@@ -1,420 +1,440 @@
+function get_bvt_centroids(pts, n_target, min_u, tol)
+    """
+    Synopsis: Binary Vector Tree partitioning. Recursively splits along the axis of maximum variance.
+    Inputs:
+    - n_target: Hard maximum number of units.
+    - min_u: Minimum required units.
+    - tol: Tolerance for density CV stabilization.
+    """
+    regions = [pts]
+    prev_cv = Inf
+    while length(regions) < n_target
+        v_idx = argmax([length(r) > 1 ? max(std([p[1] for p in r]), std([p[2] for p in r])) : 0.0 for r in regions])
+        if length(regions[v_idx]) < 2 break end
+        target_r = regions[v_idx]
+        xs, ys = [p[1] for p in target_r], [p[2] for p in target_r]
+        if std(xs) > std(ys)
+            med = median(xs)
+            r1, r2 = filter(p -> p[1] <= med, target_r), filter(p -> p[1] > med, target_r)
+        else
+            med = median(ys)
+            r1, r2 = filter(p -> p[2] <= med, target_r), filter(p -> p[2] > med, target_r)
+        end
+        if isempty(r1) || isempty(r2) break end
 
+        splice!(regions, v_idx, [r1, r2])
+        counts = length.(regions)
+        curr_cv = std(counts) / (mean(counts) + 1e-9)
+        if length(regions) >= min_u && abs(prev_cv - curr_cv) < (tol * 0.1) break end
+        prev_cv = curr_cv
+    end
+    return [(mean(p[1] for p in r), mean(p[2] for p in r)) for r in regions]
+end
+
+function get_qvt_centroids(pts, n_target, min_u, tol)
+    """
+    Synopsis: Quadrant Voronoi Tessellation. Recursively divides space into four quadrants.
+    """
+    regions = [pts]
+    prev_cv = Inf
+    while length(regions) < n_target
+        v_idx = argmax([length(r) for r in regions])
+        if length(regions[v_idx]) < 2 break end
+        target_r = splice!(regions, v_idx)
+        mx, my = mean(p[1] for p in target_r), mean(p[2] for p in target_r)
+        qs = [filter(p -> p[1] <= mx && p[2] <= my, target_r),
+              filter(p -> p[1] > mx && p[2] <= my, target_r),
+              filter(p -> p[1] <= mx && p[2] > my, target_r),
+              filter(p -> p[1] > mx && p[2] > my, target_r)]
+
+        for q in qs
+            if !isempty(q)
+                push!(regions, q)
+                if length(regions) >= n_target break end
+            end
+        end
+
+        counts = length.(regions)
+        curr_cv = std(counts) / (mean(counts) + 1e-9)
+        if length(regions) >= min_u && abs(prev_cv - curr_cv) < (tol * 0.1) break end
+        prev_cv = curr_cv
+        if length(regions) >= n_target break end
+    end
+    return [(mean(p[1] for p in r), mean(p[2] for p in r)) for r in regions]
+end
+function assign_spatial_units(pts, area_method; seeding=:kde, kwargs...)
+    """
+    Synopsis: High-level wrapper for spatial partitioning with temporal and density constraints.
+    Inputs:
+    - area_method: :cvt (Iterative), :bvt (Recursive), :qvt (Quadrant), :avt (Agglomerative).
+    - target_units: Goal for CVT/AVT.
+    - max_units: Hard cap for BVT/QVT and CVT expansion.
+    - min_time_slices: Minimum unique time indices required per unit.
+    - time_idx: Vector of time labels for the points.
+    """
+    max_u = get(kwargs, :max_units, 50)
+    target_u = get(kwargs, :target_units, 20)
+    min_u_req = get(kwargs, :min_units, 2)
+    buffer_dist_val = get(kwargs, :buffer_dist, 0.5)
+    tol = get(kwargs, :tol, 1e-1)
+    min_ts_req = get(kwargs, :min_time_slices, 1)
+    t_idx = get(kwargs, :time_idx, ones(Int, length(pts)))
+
+    u_pts = unique(pts)
+    hull_geom = expand_hull(u_pts, buffer_dist_val)
+    hull_coords = get_coords_from_geom(hull_geom)
+
+    local c
+    if area_method == :bvt
+        c = get_bvt_centroids(u_pts, max_u, min_u_req, tol)
+    elseif area_method == :qvt
+        c = get_qvt_centroids(u_pts, max_u, min_u_req, tol)
+    elseif area_method == :avt
+        c_init = u_pts[sample(1:length(u_pts), min(target_u, length(u_pts)), replace=false)]
+        c = get_avt_centroids(c_init, pts, hull_coords, hull_geom; min_pts=get(kwargs, :min_pts, 5), min_units=min_u_req, tol=tol)
+    elseif area_method == :cvt
+        curr_target = target_u
+        best_c = []
+        for retry in 1:3
+            c_iter = u_pts[sample(1:length(u_pts), min(curr_target, length(u_pts)), replace=false)]
+            prev_cv = Inf
+            for i in 1:50
+                assign = [argmin([sum((p .- sj).^2) for sj in c_iter]) for p in pts]
+                for k in 1:length(c_iter)
+                    idx = findall(==(k), assign)
+                    if !isempty(idx) c_iter[k] = (mean(p[1] for p in pts[idx]), mean(p[2] for p in pts[idx])) end
+                end
+                counts = [count(==(k), assign) for k in 1:length(c_iter)]
+                current_cv = std(counts) / (mean(counts) + 1e-9)
+                if abs(prev_cv - current_cv) < tol break end
+                prev_cv = current_cv
+            end
+            best_c = c_iter
+            counts = [count(==(k), [argmin([sum((p .- sj).^2) for sj in c_iter]) for p in pts]) for k in 1:length(c_iter)]
+            if (std(counts)/mean(counts)) > tol * 2 && curr_target < max_u
+                curr_target = min(max_u, floor(Int, curr_target * 1.2))
+            else
+                break
+            end
+        end
+        c = best_c
+    end
+
+    while length(c) > min_u_req
+        assigns = [argmin([sum((p .- sj) .^ 2) for sj in c]) for p in pts]
+        ts_counts = [length(unique(t_idx[findall(==(i), assigns)])) for i in 1:length(c)]
+        violators = findall(count -> count < min_ts_req, ts_counts)
+        if isempty(violators) break end
+        target_idx = violators[argmin(ts_counts[violators])]
+        deleteat!(c, target_idx)
+    end
+
+    final_assignments = [argmin([sum((p .- sj) .^ 2) for sj in c]) for p in pts]
+    polys_coords, v_edges_output = get_voronoi_polygons_and_edges(c, hull_geom)
+    res = (centroids=c, assignments=final_assignments, polygons=polys_coords, adjacency_edges=v_edges_output, hull_coords=hull_coords)
+    g = ensure_connected!(SimpleGraph(length(c)), c)
+    return merge(res, (graph=g,))
+end
+function get_voronoi_polygons_and_edges(centroids, hull_geom)
+    """
+    Synopsis: Generates clipped Voronoi polygons and identifies neighbors sharing a boundary.
+    """
+    pts_dt = [(Float64(c[1]), Float64(c[2])) for c in centroids]
+    tri = triangulate(pts_dt)
+    hull_coords = get_coords_from_geom(hull_geom)
+    xs = [p[1] for p in hull_coords if !isnan(p[1])]
+    ys = [p[2] for p in hull_coords if !isnan(p[2])]
+    bbox = (minimum(xs), maximum(xs), minimum(ys), maximum(ys))
+    vorn = voronoi(tri)
+
+    clipped_polys = []
+    for i in each_generator(vorn)
+        vertices = get_polygon_coordinates(vorn, i, bbox)
+        if !isempty(vertices)
+            poly_pts = [[v[1], v[2]] for v in vertices]
+            if poly_pts[1] != poly_pts[end] push!(poly_pts, poly_pts[1]) end
+            try
+                lg_poly = LibGEOS.Polygon([poly_pts])
+                clipped = LibGEOS.intersection(lg_poly, hull_geom)
+                if !LibGEOS.isEmpty(clipped)
+                    push!(clipped_polys, (id=i, geom=clipped))
+                end
+            catch e end
+        end
+    end
+
+    final_coords = [get_coords_from_geom(p.geom) for p in clipped_polys]
+    v_edges = []
+
+    # Precision-robust adjacency using LibGEOS predicates
+    for i in 1:length(clipped_polys)
+        g1 = clipped_polys[i].geom
+        for j in i+1:length(clipped_polys)
+            g2 = clipped_polys[j].geom
+            
+            # Standard GEOS predicate for adjacency
+            if LibGEOS.touches(g1, g2)
+                push!(v_edges, (centroids[clipped_polys[i].id], centroids[clipped_polys[j].id]))
+            else
+                # Fallback: Robust check using a tiny buffer for floating-point misalignments
+                g1_buffered = LibGEOS.buffer(g1, 1e-6)
+                if LibGEOS.intersects(g1_buffered, g2)
+                    inter = LibGEOS.intersection(g1_buffered, g2)
+                    if !LibGEOS.isEmpty(inter) && (LibGEOS.area(inter) > 1e-9 || LibGEOS.geomTypeId(inter) in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_MULTILINESTRING])
+                        push!(v_edges, (centroids[clipped_polys[i].id], centroids[clipped_polys[j].id]))
+                    end
+                end
+            end
+        end
+    end
+
+    return final_coords, v_edges
+end
+
+
+function check_connectivity(g)
+    """
+    Synopsis: Evaluates the connectivity of a spatial graph.
+    Inputs:
+    - g: A SimpleGraph.
+    Outputs:
+    - NamedTuple showing connection status and components.
+    """
+    comps = connected_components(g)
+    return (is_connected = length(comps) == 1, n_components = length(comps), components = comps)
+end
+function ensure_connected!(g, centroids)
+    """
+    Synopsis: Force-connects disconnected graph components using nearest-neighbor edges.
+    Inputs:
+    - g: SimpleGraph (modified in-place).
+    - centroids: Vector of (x, y) tuples.
+    Outputs:
+    - The modified connected SimpleGraph.
+    """
+    comps = connected_components(g)
+    while length(comps) > 1
+        # Take the first component and find the closest node in any other component
+        c1 = comps[1]
+        others = vcat(comps[2:end]...)
+        
+        min_dist = Inf
+        best_pair = (0, 0)
+        
+        for i in c1
+            for j in others
+                d = sum((centroids[i] .- centroids[j]).^2)
+                if d < min_dist
+                    min_dist = d
+                    best_pair = (i, j)
+                end
+            end
+        end
+        
+        if best_pair[1] > 0
+            add_edge!(g, best_pair[1], best_pair[2])
+        end
+        
+        # Re-calculate components after adding the edge
+        comps = connected_components(g)
+    end
+    return g
+end
+function get_avt_centroids(c_init, pts, hull_coords, hull_geom; min_pts=5, min_units=2, tol=1e-4)
+    """
+    Synopsis: Agglomerative Voronoi Tessellation that strictly enforces min_pts.
+    """
+    centroids = copy(c_init)
+    
+    while length(centroids) > min_units
+        assignments = [argmin([sum((p .- sj) .^ 2) for sj in centroids]) for p in pts]
+        counts = [count(==(i), assignments) for i in 1:length(centroids)]
+        
+        # Identify units below the point threshold
+        violators = findall(c -> c < min_pts, counts)
+        if isempty(violators)
+            break # All units satisfy min_pts
+        end
+
+        # Merge the unit with the fewest points into its nearest neighbor
+        target_idx = violators[argmin(counts[violators])]
+        
+        dists = [i == target_idx ? Inf : sum((centroids[target_idx] .- centroids[i]).^2) for i in 1:length(centroids)]
+        merge_with = argmin(dists)
+        
+        if dists[merge_with] == Inf break end
+
+        # Update centroid of the merged unit to be the weighted mean of both
+        total_pts = counts[target_idx] + counts[merge_with]
+        if total_pts > 0
+            new_c = ( (centroids[target_idx][1]*counts[target_idx] + centroids[merge_with][1]*counts[merge_with])/total_pts,
+                      (centroids[target_idx][2]*counts[target_idx] + centroids[merge_with][2]*counts[merge_with])/total_pts )
+            centroids[merge_with] = new_c
+        end
+
+        deleteat!(centroids, target_idx)
+    end
+
+    return centroids
+end
+function plot_spatial_graph(pts, spatial_res; title="Spatial Partitioning", domain_boundary=[])
+    """
+    Inputs:
+    - pts: Data points.
+    - spatial_res: Result containing polygons, centroids, and edges.
+
+    Outputs:
+    - A Plots.Plot object.
+    """
+    p = Plots.plot(aspect_ratio=:equal, title=title, legend=false)
+    if !isempty(domain_boundary)
+        bx = [pt[1] for pt in domain_boundary if !isnan(pt[1])]
+        by = [pt[2] for pt in domain_boundary if !isnan(pt[2])]
+        if !isempty(bx) && (bx[1], by[1]) != (bx[end], by[end])
+            push!(bx, bx[1]); push!(by, by[1])
+        end
+        Plots.plot!(p, bx, by, color=:black, lw=2)
+    end
+    for poly_coords in spatial_res.polygons
+        if length(poly_coords) > 2
+            px, py = [pt[1] for pt in poly_coords if !isnan(pt[1])], [pt[2] for pt in poly_coords if !isnan(pt[1])]
+            if !isempty(px); push!(px, px[1]); push!(py, py[1]); Plots.plot!(p, px, py, seriestype=:shape, fillalpha=0.3, linecolor=:white, lw=0.5); end
+        end
+    end
+    for edge in spatial_res.adjacency_edges
+        p1, p2 = edge
+        Plots.plot!(p, [p1[1], p2[1]], [p1[2], p2[2]], color=:red, lw=1.5, alpha=0.6)
+    end
+    Plots.scatter!(p, [pt[1] for pt in pts], [pt[2] for pt in pts], markersize=1, markercolor=:gray, alpha=0.3)
+    Plots.scatter!(p, [pt[1] for pt in spatial_res.centroids], [pt[2] for pt in spatial_res.centroids], markersize=4, markercolor=:blue, markerstrokecolor=:white)
+    return p
+end
+# Data Generation
+n_pts = 100
+n_time = 15
+
+# Modified generate_sim_data to align pts length with time_idx length
 function generate_sim_data(n_pts, n_time; rndseed=42 )
-    n_total = n_pts * n_time
     Random.seed!(rndseed)
-    pts = [(rand() * 10, rand() * 10) for _ in 1:n_pts]
+    unique_pts = [(rand() * 10, rand() * 10) for _ in 1:n_pts]
+
+    # Repeat the unique points for each time slice to match n_total observations
+    pts_full_dataset = repeat(unique_pts, n_time)
+
+    n_total = n_pts * n_time # This is now consistent with pts_full_dataset
     time_idx = repeat(1:n_time, inner=n_pts)
     weights = ones(n_total)
     trials = ones(Int, n_total)
     cov_indices = rand(1:3, n_total)
-    spatial_effect = [sin(p[1]/2) + cos(p[2]/2) for p in pts]
-    temporal_effect = sin.(time_idx)
+
+    spatial_effect = [sin(p[1]/2) + cos(p[2]/2) for p in unique_pts]
     spatial_effect_long = repeat(spatial_effect, n_time)
+
+    temporal_effect = sin.(time_idx)
     y_sim  = spatial_effect_long + temporal_effect + randn(n_total) * 0.5
     y_binary = y_sim  .> (mean(y_sim) + 0.5)
-    return (pts=pts, y_sim=y_sim, y_binary=y_binary, time_idx=time_idx,
+
+    return (pts=pts_full_dataset, y_sim=y_sim, y_binary=y_binary, time_idx=time_idx,
             weights=weights, trials=trials, cov_indices=cov_indices)
 end
 
-# --- Intensity Estimation Helpers ---
-
-function estimate_intensity_kde_optimized(pts; grid_res=50)
-    xs = [p[1] for p in pts]; ys = [p[2] for p in pts]
-    x_grid = range(0, 10, length=grid_res)
-    y_grid = range(0, 10, length=grid_res)
-    bw = 0.9 * min(std(xs), (quantile(xs, 0.75)-quantile(xs, 0.25))/1.34) * length(pts)^(-0.2)
-    intensity = zeros(grid_res, grid_res)
-    for (i, x) in enumerate(x_grid), (j, y) in enumerate(y_grid)
-        intensity[i,j] = sum(exp.(-0.5 * (((x .- xs).^2 .+ (y .- ys).^2) ./ bw^2))) / (2π * bw^2)
+(pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
+  generate_sim_data(n_pts, n_time; rndseed=42);
+function estimate_local_kde_with_extrapolation(pts, time_idx, target_ts; grid_res=100, sd_extension_factor=3.0)
+    """
+    Synopsis: Estimates 2D KDE for a specific time slice with extrapolation.
+    Inputs:
+    - pts: Vector of (x, y) coordinates for all time points.
+    - time_idx: Vector of time indices corresponding to pts.
+    - target_ts: The specific time slice to estimate KDE for.
+    - grid_res: Resolution of the output grid (e.g., 100 for 100x100 grid).
+    - sd_extension_factor: Multiplier for standard deviation to define the bandwidth.
+    Outputs:
+    - Tuple (x_grid, y_grid, intensity) where intensity is a matrix.
+    """
+    # Filter points for the target time slice
+    filtered_pts = [p for (i, p) in enumerate(pts) if time_idx[i] == target_ts]
+    if isempty(filtered_pts)
+        error("No points found for the target time slice $target_ts")
     end
+    xs, ys = [p[1] for p in filtered_pts], [p[2] for p in filtered_pts]
+    # Calculate bandwidth based on standard deviation of points
+    bw_x = std(xs) * sd_extension_factor
+    bw_y = std(ys) * sd_extension_factor
+    # Define grid boundaries extending slightly beyond the data range
+    x_min, x_max = minimum(xs) - bw_x, maximum(xs) + bw_x
+    y_min, y_max = minimum(ys) - bw_y, maximum(ys) + bw_y
+    x_grid = collect(range(x_min, stop=x_max, length=grid_res))
+    y_grid = collect(range(y_min, stop=y_max, length=grid_res))
+    intensity = zeros(grid_res, grid_res)
+    # Gaussian KDE implementation
+    for i in 1:grid_res
+        for j in 1:grid_res
+            x_val, y_val = x_grid[i], y_grid[j]
+            for (px, py) in filtered_pts
+                dx = (x_val - px) / bw_x
+                dy = (y_val - py) / bw_y
+                intensity[i, j] += exp(-0.5 * (dx^2 + dy^2))
+            end
+        end
+    end
+    # Normalize intensity to sum to 1 (optional, depending on desired output)
+    intensity ./= sum(intensity)
     return x_grid, y_grid, intensity
 end
 
-function estimate_intensity_gp(pts; grid_res=50, l=2.0)
-    x_grid = range(0, 10, length=grid_res)
-    y_grid = range(0, 10, length=grid_res)
-    intensity = zeros(grid_res, grid_res)
-    for (i, x) in enumerate(x_grid), (j, y) in enumerate(y_grid)
-        p_g = (x, y)
-        dists = [sqrt(sum((p_g .- p).^2)) for p in pts]
-        val = sum((1 .+ sqrt(3) .* dists ./ l) .* exp.(-sqrt(3) .* dists ./ l))
-        intensity[i,j] = val
-    end
-    return x_grid, y_grid, intensity
-end
 
-function generate_grid_centroids(pts, n_centroids)
-    if n_centroids == 0 return [] end
-    min_x, max_x = minimum(p[1] for p in pts), maximum(p[1] for p in pts)
-    min_y, max_y = minimum(p[2] for p in pts), maximum(p[2] for p in pts)
-    domain_width, domain_height = max_x - min_x, max_y - min_y
-    aspect_ratio = (domain_height == 0) ? 1.0 : domain_width / domain_height
-    rows = max(1, round(Int, sqrt(n_centroids / aspect_ratio)))
-    cols = max(1, round(Int, n_centroids / rows))
-    while rows * cols < n_centroids
-        if rows * aspect_ratio < cols rows += 1 else cols += 1 end
-    end
-    x_grid = LinRange(min_x, max_x, cols); y_grid = LinRange(min_y, max_y, rows)
-    grid_centers = [(x, y) for x in x_grid for y in y_grid]
-    closest_pts_indices = Set{Int}()
-    for gc in grid_centers[1:min(length(grid_centers), n_centroids)]
-        dists = [sum((gc .- p).^2) for p in pts]
-        idx = argmin(dists)
-        push!(closest_pts_indices, idx)
-    end
-    return [pts[i] for i in collect(closest_pts_indices)]
-end
+function calculate_metrics(spatial_res, pts)
+    roll(v, k) = v[mod1.(1:length(v), length(v) .- k)]
 
-function compute_hybrid_density_cvt(pts, x_g, y_g, dens, initial_centroids; iters=15)
-    centroids = deepcopy(initial_centroids)
-    n_seeds = length(centroids)
-    if n_seeds == 0 return [], zeros(Int, length(pts)) end
-    assignments = zeros(Int, length(pts))
-    for _ in 1:iters
-        for i in 1:length(pts)
-            assignments[i] = argmin([sum((pts[i] .- s).^2) for s in centroids])
+    n_units = length(spatial_res.centroids)
+    counts = [count(==(i), spatial_res.assignments) for i in 1:n_units]
+
+    areas = Float64[]
+    for poly in spatial_res.polygons
+        # Filter out NaN separators and ensure we only have unique vertices for the shoelace
+        valid_pts = [p for p in poly if !isnan(p[1])]
+
+        # Remove the last point if it's a duplicate of the first (common in ring formats)
+        if length(valid_pts) > 1 && valid_pts[1] == valid_pts[end]
+            pop!(valid_pts)
         end
-        for j in 1:n_seeds
-            idx = findall(==(j), assignments)
-            if !isempty(idx)
-                sub_pts = pts[idx]
-                weights = [dens[clamp(argmin(abs.(x_g .- p[1])), 1, length(x_g)), clamp(argmin(abs.(y_g .- p[2])), 1, length(y_g))] for p in sub_pts]
-                sum_w = sum(weights)
-                if sum_w > 0
-                    centroids[j] = (sum([p[1]*w for (p,w) in zip(sub_pts, weights)])/sum_w, sum([p[2]*w for (p,w) in zip(sub_pts, weights)])/sum_w)
-                end
-            end
-        end
-    end
-    return centroids, assignments
-end
 
-function assign_spatial_units_merge_voronoi(pts::Vector{Tuple{Float64, Float64}}, n_time::Int;
-                                            buffer=nothing, time_idx::Vector{Int}, min_time_slices::Int=1,
-                                            min_area_constraint::Float64=0.0, max_area_constraint::Float64=Inf,
-                                            min_total_arealunits::Union{Int, Nothing}=nothing,
-                                            max_total_arealunits::Union{Int, Nothing}=nothing,
-                                            tol=1e-4)
-    n_pts = length(pts)
-    x_g, y_g, dens = estimate_intensity_kde_optimized(pts)
-
-    tri_full = triangulate(pts)
-    hull = convex_hull(tri_full)
-    hull_indices = DelaunayTriangulation.get_vertices(hull)
-    raw_hull = pts[hull_indices]
-    if isnothing(buffer) buffer = median([sqrt(sum((pts[i] .- pts[j]).^2)) for i in 1:n_pts for j in (i+1):n_pts]) * 0.25 end
-    cx, cy = mean(p[1] for p in raw_hull), mean(p[2] for p in raw_hull)
-    boundary_hull_final = map(raw_hull) do p
-        dx, dy = p[1]-cx, p[2]-cy; mag = sqrt(dx^2+dy^2)
-        (p[1]+(dx/mag)*buffer, p[2]+(dy/mag)*buffer)
-    end
-    push!(boundary_hull_final, boundary_hull_final[1])
-
-    areal_units_points = Dict(i => [i] for i in 1:n_pts)
-    centroids_map = Dict(i => pts[i] for i in 1:n_pts)
-    target_n_units = isnothing(max_total_arealunits) ? 1 : max_total_arealunits
-    current_n = n_pts
-    prev_mean, prev_var = NaN, NaN
-
-    println("Merge Voronoi (Density-Prioritized): Starting with $current_n units.")
-
-    while current_n > target_n_units
-        ids = sort(collect(keys(centroids_map)))
-        pt_counts = [length(areal_units_points[id]) for id in ids]
-        curr_mean, curr_var = mean(pt_counts), var(pt_counts)
-        if !isnan(prev_mean) && abs(curr_mean - prev_mean)/prev_mean < tol && abs(curr_var - prev_var)/prev_var < tol
-            break
-        end
-        prev_mean, prev_var = curr_mean, curr_var
-
-        adj = Set{Tuple{Int,Int}}()
-        if length(ids) >= 3
-            tri = triangulate([centroids_map[id] for id in ids])
-            for edge in each_edge(tri)
-                u, v = edge
-                if u > 0 && v > 0 push!(adj, ids[u] < ids[v] ? (ids[u], ids[v]) : (ids[v], ids[u])) end
-            end
+        if length(valid_pts) > 2
+            x = [p[1] for p in valid_pts]
+            y = [p[2] for p in valid_pts]
+            # Shoelace formula
+            a = 0.5 * abs(dot(x, roll(y, 1)) - dot(y, roll(x, 1)))
+            push!(areas, max(a, 1e-9))
         else
-            for i in 1:length(ids), j in (i+1):length(ids) push!(adj, (ids[i], ids[j])) end
-        end
-
-        function get_unit_density(id)
-            p_indices = areal_units_points[id]
-            return mean([dens[clamp(argmin(abs.(x_g .- pts[idx][1])), 1, length(x_g)), clamp(argmin(abs.(y_g .- pts[idx][2])), 1, length(y_g))] for idx in p_indices])
-        end
-
-        pairs = sort(collect(adj), by=pair -> get_unit_density(pair[1]) + get_unit_density(pair[2]))
-        merged_in_pass = false
-
-        for (u_id, v_id) in pairs
-            if !haskey(areal_units_points, u_id) || !haskey(areal_units_points, v_id) continue end
-            comb_pts = vcat(areal_units_points[u_id], areal_units_points[v_id])
-            if length(comb_pts) <= max_area_constraint
-                new_id = maximum(keys(areal_units_points)) + 1
-                areal_units_points[new_id] = comb_pts
-                centroids_map[new_id] = (mean(pts[i][1] for i in comb_pts), mean(pts[i][2] for i in comb_pts))
-                delete!(areal_units_points, u_id); delete!(areal_units_points, v_id)
-                delete!(centroids_map, u_id); delete!(centroids_map, v_id)
-                current_n -= 1; merged_in_pass = true
-                if current_n <= target_n_units break end
-            end
-        end
-        if !merged_in_pass break end
-    end
-
-    final_ids = sort(collect(keys(areal_units_points))); n_final = length(final_ids)
-    output_centroids = [centroids_map[id] for id in final_ids]
-
-    # FIXED: Re-assign all original points to the nearest final centroid
-    output_assign = zeros(Int, n_pts)
-    for i in 1:n_pts
-        output_assign[i] = argmin([sum((pts[i] .- c).^2) for c in output_centroids])
-    end
-
-    output_W = spzeros(n_final, n_final)
-    if n_final >= 3
-        tri_f = triangulate(output_centroids)
-        for e in each_edge(tri_f)
-            u, v = e; if u > 0 && v > 0 && u <= n_final && v <= n_final output_W[u,v] = 1.0; output_W[v,u] = 1.0 end
+            push!(areas, 1e-9)
         end
     end
-    return output_centroids, output_assign, Symmetric(output_W), repeat(output_assign, n_time), boundary_hull_final
+
+    densities = counts ./ areas
+    return (
+        mean_density = mean(densities),
+        sd_density = std(densities),
+        cv_density = std(densities) / mean(densities)
+    )
 end
 
-function plot_spatial_graph(pts, assignments, centroids, W; title="Spatial Partition", show_boundaries=true, boundary_hull=nothing)
-    p = scatter([pt[1] for pt in pts], [pt[2] for pt in pts], marker_z=assignments, color=:viridis, alpha=0.4, label="Data Points", title=title, aspect_ratio=:equal, markersize=3)
-    if show_boundaries && !isnothing(boundary_hull) && length(centroids) >= 3
-        tri = triangulate(centroids); vorn = voronoi(tri)
-        min_x, max_x = minimum(pt[1] for pt in boundary_hull), maximum(pt[1] for pt in boundary_hull)
-        min_y, max_y = minimum(pt[2] for pt in boundary_hull), maximum(pt[2] for pt in boundary_hull)
-        plot!(p, [c[1] for c in boundary_hull], [c[2] for c in boundary_hull], color=:blue, lw=2, label="Global Boundary")
-        for i in each_polygon_index(vorn)
-            coords = get_polygon_coordinates(vorn, i, (min_x, max_x, min_y, max_y))
-            plot!(p, [c[1] for c in coords], [c[2] for c in coords], color=:black, alpha=0.3, label="", lw=0.8)
-        end
+ 
+
+function get_spatial_graph(spatial_res)
+    """
+    Synopsis: Converts partitioning results into a formal SimpleGraph.
+    Inputs:
+    - spatial_res: NamedTuple from assign_spatial_units.
+    Outputs:
+    - A SimpleGraph object.
+    """
+    n = length(spatial_res.centroids)
+    g = SimpleGraph(n)
+    centroid_map = Dict(c => i for (i, c) in enumerate(spatial_res.centroids))
+    for edge in spatial_res.adjacency_edges
+        u_idx, v_idx = get(centroid_map, edge[1], 0), get(centroid_map, edge[2], 0)
+        if u_idx > 0 && v_idx > 0 add_edge!(g, u_idx, v_idx) end
     end
-    for i in 1:length(centroids), j in (i+1):length(centroids)
-        if W[i,j] > 0 plot!(p, [centroids[i][1], centroids[j][1]], [centroids[i][2], centroids[j][2]], color=:red, alpha=0.6, lw=1.5, label="") end
-    end
-    scatter!(p, [c[1] for c in centroids], [c[2] for c in centroids], marker=:star, color=:red, markersize=8, label="Centroids")
-    return p
-end
-
-struct QuadtreeNode
-    boundary::Tuple{Float64, Float64, Float64, Float64} # min_x, max_x, min_y, max_y
-    points::Vector{Tuple{Float64, Float64}}
-    point_indices::Vector{Int}
-    children::Vector{QuadtreeNode}
-    is_leaf::Bool
-end
-
-function area(boundary)
-    return (boundary[2] - boundary[1]) * (boundary[4] - boundary[3])
-end
-
-function build_quadtree(pts, time_idx, capacity, min_time_slices, min_area, max_area; depth=0, max_depth=10)
-    min_x = minimum(p[1] for p in pts); max_x = maximum(p[1] for p in pts)
-    min_y = minimum(p[2] for p in pts); max_y = maximum(p[2] for p in pts)
-    initial_boundary = (min_x, max_x, min_y, max_y)
-    return _build_quadtree_recursive(pts, collect(1:length(pts)), initial_boundary, capacity, depth, max_depth)
-end
-
-function _build_quadtree_recursive(pts, indices, boundary, capacity, depth, max_depth)
-    if length(indices) <= capacity || depth >= max_depth
-        return QuadtreeNode(boundary, [pts[i] for i in indices], indices, QuadtreeNode[], true)
-    end
-
-    mid_x = (boundary[1] + boundary[2]) / 2
-    mid_y = (boundary[3] + boundary[4]) / 2
-
-    child_boundaries = [
-        (boundary[1], mid_x, boundary[3], mid_y), (mid_x, boundary[2], boundary[3], mid_y),
-        (boundary[1], mid_x, mid_y, boundary[4]), (mid_x, boundary[2], mid_y, boundary[4])
-    ]
-
-    children = QuadtreeNode[]
-    for cb in child_boundaries
-        child_indices = filter(i -> pts[i][1] >= cb[1] && pts[i][1] <= cb[2] && pts[i][2] >= cb[3] && pts[i][2] <= cb[4], indices)
-        push!(children, _build_quadtree_recursive(pts, child_indices, cb, capacity, depth + 1, max_depth))
-    end
-
-    return QuadtreeNode(boundary, [pts[i] for i in indices], indices, children, false)
-end
-
-function get_leaf_nodes(node::QuadtreeNode)
-    if node.is_leaf return [node] end
-    return vcat([get_leaf_nodes(c) for c in node.children]...)
-end
-
-
-function assign_spatial_units_quadtree(pts::Vector{Tuple{Float64, Float64}}, n_time::Int; capacity::Int=5, buffer=nothing, time_idx::Vector{Int}, min_time_slices::Int=1, min_area_constraint::Float64, max_area_constraint::Float64)
-    n = length(pts)
-
-    # Internal Hull Computation with Dynamic Buffer
-    tri_full = triangulate(pts)
-    hull = convex_hull(tri_full)
-    hull_indices = DelaunayTriangulation.get_vertices(hull)
-    raw_hull = pts[hull_indices]
-
-    if isnothing(buffer)
-        dists = Float64[]
-        for i in 1:min(n, 100), j in (i+1):min(n, 100)
-            push!(dists, sqrt(sum((pts[i] .- pts[j]).^2)))
-        end
-        buffer = isempty(dists) ? 0.5 : median(dists) * 0.25
-    end
-
-    # Apply buffer by expanding from hull centroid
-    cx = mean(p[1] for p in raw_hull)
-    cy = mean(p[2] for p in raw_hull)
-    boundary_hull = map(raw_hull) do p
-        dx = p[1] - cx; dy = p[2] - cy
-        mag = sqrt(dx^2 + dy^2)
-        (p[1] + (dx/mag)*buffer, p[2] + (dy/mag)*buffer)
-    end
-    push!(boundary_hull, boundary_hull[1]) # Close loop
-
-    # Build Quadtree - now passing time_idx and min_time_slices and area constraints
-    quadtree = build_quadtree(pts, time_idx, capacity, min_time_slices, min_area_constraint, max_area_constraint)
-    all_leaf_nodes = get_leaf_nodes(quadtree)
-
-    # Filter out empty leaf nodes and those violating min_time_slices or area constraints
-    valid_leaf_nodes_filtered = QuadtreeNode[]
-
-    for node in all_leaf_nodes
-        num_points_in_node = length(node.points)
-        # Corrected: If a node has points, it has n_time unique time slices
-        current_time_slices = isempty(node.point_indices) ? 0 : n_time
-        node_area = area(node.boundary)
-
-        if num_points_in_node > 0 &&
-           (min_area_constraint == 0.0 || node_area >= min_area_constraint) &&
-           (max_area_constraint == Inf || node_area <= max_area_constraint) &&
-           (min_time_slices == 0 || current_time_slices >= min_time_slices)
-            push!(valid_leaf_nodes_filtered, node)
-        end
-    end
-
-    if isempty(valid_leaf_nodes_filtered)
-        println("Warning: All Quadtree units violate constraints or are empty. Returning a single unit.")
-        centroids = [(mean(p[1] for p in pts), mean(p[2] for p in pts))]
-        assignments = ones(Int, n)
-        n_arealunits = 1
-        area_idx = repeat(assignments, n_time)
-        W = spzeros(n_arealunits, n_arealunits)
-        return centroids, assignments, Symmetric(W), area_idx, boundary_hull
-    end
-
-    # n_arealunits
-    n_arealunits = length(valid_leaf_nodes_filtered)
-    centroids = Vector{Tuple{Float64, Float64}}(undef, n_arealunits)
-
-    for (new_idx, node) in enumerate(valid_leaf_nodes_filtered)
-        centroids[new_idx] = (mean(p[1] for p in node.points), mean(p[2] for p in node.points))
-    end
-
-    # FIXED: Re-assign all points to the nearest final centroid to ensure valid Voronoi classification
-    assignments = zeros(Int, n)
-    for i in 1:n
-        assignments[i] = argmin([sum((pts[i] .- c).^2) for c in centroids])
-    end
-
-    area_idx = repeat(assignments, n_time)
-    W = spzeros(n_arealunits, n_arealunits)
-
-    # Create adjacency matrix based on Delaunay triangulation of centroids
-    if n_arealunits >= 3
-        tri = triangulate(centroids)
-        for edge in each_edge(tri)
-            u, v = edge
-            if u > 0 && v > 0 && u <= n_arealunits && v <= n_arealunits
-                W[u, v] = 1.0; W[v, u] = 1.0
-            end
-        end
-    end
-
-    return centroids, assignments, Symmetric(W), area_idx, boundary_hull
-end
-
-function assign_spatial_units(pts, area_method, n_time; kwargs...)
-    # 1. Parameter Extraction
-    time_idx = get(kwargs, :time_idx, nothing)
-    buffer = get(kwargs, :buffer, nothing)
-    capacity = get(kwargs, :capacity, 5)
-    min_area_constraint = Float64(get(kwargs, :min_area_constraint, 0.0))
-    max_area_constraint = Float64(get(kwargs, :max_area_constraint, Inf))
-    min_total_units = get(kwargs, :min_total_arealunits, 3)
-    max_total_units = get(kwargs, :max_total_arealunits, floor(Int, sqrt(length(pts))))
-    tol = get(kwargs, :tol, 0.1)
-
-    current_target = max_total_units
-    prev_mean, prev_var = NaN, NaN
-    best_result = nothing
-
-    println("Starting convergence search for method: $area_method")
-
-    while current_target >= min_total_units
-        local c, assign, W, a_idx, hull
-
-        if area_method == :quadtree
-            adj_capacity = max(capacity, floor(Int, length(pts)/current_target))
-            c, assign, W, a_idx, hull = assign_spatial_units_quadtree(pts, n_time;
-                capacity=adj_capacity, time_idx=time_idx,
-                min_area_constraint=min_area_constraint, max_area_constraint=max_area_constraint)
-
-        elseif area_method == :avt # Renamed from :merge_voronoi
-            c, assign, W, a_idx, hull = assign_spatial_units_merge_voronoi(pts, n_time;
-                max_total_arealunits=current_target, time_idx=time_idx, buffer=buffer,
-                min_area_constraint=min_area_constraint, max_area_constraint=max_area_constraint,
-                tol=tol)
-
-        else
-            tri_full = triangulate(pts); hull_v = convex_hull(tri_full)
-            raw_hull = pts[DelaunayTriangulation.get_vertices(hull_v)]
-            cx, cy = mean(p[1] for p in raw_hull), mean(p[2] for p in raw_hull)
-            buf_val = isnothing(buffer) ? 0.5 : buffer
-            hull = map(p -> (p[1]+(p[1]-cx)/sqrt((p[1]-cx)^2+(p[2]-cy)^2)*buf_val, p[2]+(p[2]-cy)/sqrt((p[1]-cx)^2+(p[2]-cy)^2)*buf_val), raw_hull)
-            push!(hull, hull[1])
-
-            init_c = generate_grid_centroids(pts, current_target)
-
-            if area_method == :triangulation
-                c, assign = init_c, [argmin([sum((p .- s).^2) for s in init_c]) for p in pts]
-            elseif area_method == :cvt
-                # Merged granular_cvt into standard cvt
-                c, assign = compute_hybrid_density_cvt(pts, 1:10, 1:10, ones(10,10), init_c)
-            elseif area_method == :cvt_poisson
-                xg, yg, dens = estimate_intensity_kde_optimized(pts)
-                c, assign = compute_hybrid_density_cvt(pts, xg, yg, dens, init_c)
-            elseif area_method == :cvt_gp
-                xg, yg, dens = estimate_intensity_gp(pts)
-                c, assign = compute_hybrid_density_cvt(pts, xg, yg, dens, init_c)
-            else
-                error("Unknown method: $area_method")
-            end
-
-            n_f = length(c); W = spzeros(n_f, n_f)
-            if n_f >= 3
-                tr = triangulate(c)
-                for e in each_edge(tr)
-                    u,v = e; if u > 0 && v > 0 && u <= n_f && v <= n_f W[u,v]=1.0; W[v,u]=1.0 end
-                end
-            end
-            a_idx = repeat(assign, n_time)
-        end
-
-        counts = [count(==(i), assign) for i in 1:length(c)]
-        curr_mean, curr_var = mean(counts), var(counts)
-
-        if !isnan(prev_mean) && abs(curr_mean - prev_mean)/prev_mean < tol && abs(curr_var - prev_var)/prev_var < tol
-            println("Asymptotic convergence reached at $current_target units.")
-            break
-        end
-
-        best_result = (c, assign, Symmetric(W), a_idx, hull)
-        prev_mean, prev_var = curr_mean, curr_var
-        current_target -= 1
-    end
-
-    return best_result
+    return g
 end

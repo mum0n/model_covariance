@@ -319,7 +319,24 @@ end
 
 
 
- 
+
+function summarize_array(samples::AbstractArray; alpha=0.05)
+    # Assumes last dimension is samples
+    dims = size(samples)
+    n_dims = length(dims)
+    
+    m = mean(samples, dims=n_dims)
+    med = median(samples, dims=n_dims)
+    l = mapslices(x -> quantile(x, alpha/2), samples, dims=n_dims)
+    u = mapslices(x -> quantile(x, 1 - alpha/2), samples, dims=n_dims)
+    
+    # Squeeze the sample dimension for easier use
+    return (mean = dropdims(m, dims=n_dims), 
+            median = dropdims(med, dims=n_dims), 
+            lower = dropdims(l, dims=n_dims), 
+            upper = dropdims(u, dims=n_dims))
+end
+
 # --- 1. Custom PC Priors ---
 struct PCPriorSigma <: ContinuousUnivariateDistribution
     U::Float64
@@ -334,6 +351,10 @@ function Distributions.logpdf(d::PCPriorSigma, x::Real)
     x > 0 ? log(d.lambda) - d.lambda * x : -Inf
 end
 
+Distributions.rand(rng::AbstractRNG, d::PCPriorSigma) = rand(rng, Exponential(1 / d.lambda))
+Distributions.minimum(d::PCPriorSigma) = 0.0
+Distributions.maximum(d::PCPriorSigma) = Inf
+Bijectors.bijector(d::PCPriorSigma) = Bijectors.exp
 
 # --- 2. Precision Matrix Construction ---
 function build_laplacian_precision(adj_matrix)
@@ -383,581 +404,800 @@ function logpdf_gmrf(x, Q)
     F = cholesky(Symmetric(Q_stable))
     return 0.5 * (logdet(F) - dot(x, Q, x) - length(x) * log(2 * pi))
 end
+function reconstruct_posteriors(model::DynamicPPL.Model, chain::MCMCChains.Chains, pts, area_idx, time_idx, W_sym; cov_indices=nothing, class1=nothing, class2=nothing)
+    N_obs = size(pts,1); N_areas = size(W_sym, 1); N_time = maximum(time_idx)
+    family = detect_model_family(model)
+    N_samples = size(chain, 1)
+    names_ch = names(chain)
 
+    # 1. Spatial Effects
+    spatial_samples = zeros(N_areas, N_samples)
+    if "s_eff[1]" in names_ch
+        for i in 1:N_areas; spatial_samples[i, :] = vec(chain["s_eff[$i]"].data); end
+    elseif all(x -> x in names_ch, ["sigma_sp", "phi_sp"])
+        sig = vec(chain[:sigma_sp].data); phi = vec(chain[:phi_sp].data)
+        u_icar = hcat([vec(chain["u_icar[$i]"].data) for i in 1:N_areas]...)
+        u_iid = hcat([vec(chain["u_iid[$i]"].data) for i in 1:N_areas]...)
+        spatial_samples = (sig .* (sqrt.(phi) .* u_icar .+ sqrt.(1 .- phi) .* u_iid))'
+    end
 
+    # 2. Temporal Effects (GMRF or RFF)
+    temporal_samples = zeros(N_time, N_samples)
+    if "f_time[1]" in names_ch
+        for i in 1:N_time; temporal_samples[i, :] = vec(chain["f_time[$i]"].data); end
+    else
+        for i in 1:N_time
+            val = zeros(N_samples)
+            if "f_trend[$i]" in names_ch; val .+= vec(chain["f_trend[$i]"].data); end
+            if "f_seas[$i]" in names_ch; val .+= vec(chain["f_seas[$i]"].data); end
+            temporal_samples[i, :] = val
+        end
+    end
+
+    # 3. Categorical/Class Effects
+    beta_cov_summaries = []
+    beta_cov_raw = []
+    for k in 1:4
+        k_names = filter(n -> startswith(string(n), "beta_cov[$k]["), names_ch)
+        if !isempty(k_names)
+            mat = hcat([vec(chain[n].data) for n in k_names]...) # N_samples x N_levels
+            push!(beta_cov_raw, mat)
+            # Summarize (Levels x 1 x Samples)
+            push!(beta_cov_summaries, summarize_array(reshape(mat', size(mat,2), 1, N_samples)))
+        end
+    end
+
+    b1_summary = nothing
+    b1_raw = nothing
+    if "b_class1[1]" in names_ch
+        b1_raw = hcat([vec(chain["b_class1[$i]"].data) for i in 1:maximum(class1)]...)
+        b1_summary = summarize_array(reshape(b1_raw', size(b1_raw,2), 1, N_samples))
+    end
+
+    b2_summary = nothing
+    b2_raw = nothing
+    if "b_class2[1]" in names_ch
+        b2_raw = hcat([vec(chain["b_class2[$i]"].data) for i in 1:maximum(class2)]...)
+        b2_summary = summarize_array(reshape(b2_raw', size(b2_raw,2), 1, N_samples))
+    end
+
+    # 4. Parameters for noise
+    sig_y = "sigma_y" in names_ch ? vec(chain[:sigma_y].data) : zeros(N_samples)
+    r_nb = "r_nb" in names_ch ? vec(chain[:r_nb].data) : fill(2.0, N_samples)
+    phi_zi = "phi_zi" in names_ch ? vec(chain[:phi_zi].data) : zeros(N_samples)
+
+    # 5. Core Reconstruction
+    st_samples = zeros(N_areas, N_time, N_samples)
+    st_noisy_samples = zeros(N_areas, N_time, N_samples)
+    pred_samples = zeros(N_obs, N_samples)
+
+    for s in 1:N_samples
+        for a in 1:N_areas, t in 1:N_time
+            eta = spatial_samples[a, s] + temporal_samples[t, s]
+            st_samples[a, t, s] = eta
+            if family == :gaussian; st_noisy_samples[a, t, s] = eta + randn() * sig_y[s]
+            elseif family == :lognormal; st_noisy_samples[a, t, s] = rand(LogNormal(eta, sig_y[s]))
+            elseif family == :binomial; st_noisy_samples[a, t, s] = rand(Binomial(1, logistic(eta)))
+            elseif family == :poisson; st_noisy_samples[a, t, s] = rand(Poisson(exp(eta)))
+            elseif family == :negbinomial; st_noisy_samples[a, t, s] = rand(NegativeBinomial2(exp(eta), r_nb[s]))
+            elseif family == :zip; st_noisy_samples[a, t, s] = rand() < phi_zi[s] ? 0.0 : rand(Poisson(exp(eta)))
+            elseif family == :zinb; st_noisy_samples[a, t, s] = rand() < phi_zi[s] ? 0.0 : rand(NegativeBinomial2(exp(eta), r_nb[s]))
+            else st_noisy_samples[a, t, s] = eta
+            end
+        end
+
+        for i in 1:N_obs
+            eta_i = st_samples[area_idx[i], time_idx[i], s]
+            if !isempty(beta_cov_raw)
+                for k in 1:length(beta_cov_raw)
+                    eta_i += beta_cov_raw[k][s, cov_indices[i, k]]
+                end
+            end
+            if !isnothing(b1_raw); eta_i += b1_raw[s, class1[i]]; end
+            if !isnothing(b2_raw); eta_i += b2_raw[s, class2[i]]; end
+            
+            pred_samples[i, s] = family == :binomial ? logistic(eta_i) : (family in [:negbinomial, :zinb, :zip, :poisson, :lognormal] ? exp(eta_i) : eta_i)
+        end
+    end
+
+    return (spatial = summarize_array(reshape(spatial_samples, N_areas, 1, N_samples)),
+            temporal = summarize_array(reshape(temporal_samples, N_time, 1, N_samples)),
+            beta_cov = beta_cov_summaries,
+            b_class1 = b1_summary,
+            b_class2 = b2_summary,
+            st_mat_denoised = summarize_array(st_samples),
+            st_mat_noisy = summarize_array(st_noisy_samples),
+            predictions = summarize_array(reshape(pred_samples, N_obs, 1, N_samples)),
+            family = family)
+end
+function detect_model_family(model::DynamicPPL.Model)
+    # 1. Check model name as a first hint
+    name = lowercase(string(model.f))
+    
+    # 2. Introspect variables defined in the model context
+    # This allows for more robust detection if the user renames their model functions
+    ctx = DynamicPPL.VarInfo(model)
+    v_names = string.(keys(ctx.metadata))
+    
+    if any(occursin.("sigma_y", v_names)) || occursin("gaussian", name)
+        return :gaussian
+    elseif any(occursin.("r_nb", v_names)) || occursin("negativebinomial", name)
+        return :negbinomial
+    elseif any(occursin.("phi_zi", v_names))
+        return occursin("poisson", name) ? :zip : :zinb
+    elseif occursin("lognormal", name)
+        return :lognormal
+    elseif occursin("binomial", name)
+        return :binomial
+    elseif occursin("poisson", name)
+        return :poisson
+    else
+        return :gaussian # Default
+    end
+end
 function plot_model_fit(chain, y_sim, time_idx, area_idx)
-    # Extract latent parameter means
-    n_areas = maximum(area_idx)
-    n_time = maximum(time_idx)
-
-    # Convert entire chain to a matrix for easier indexing
-    vals = chain.value
-    p_names = names(chain, :parameters)
-
-    println("Detected Parameter Names (first 10): ", p_names[1:min(10, end)])
-
-    # Helper to get index safely
-    get_idx(name) = findfirst(==(Symbol(name)), p_names)
-
-    # Helper to get mean/std of a parameter by name with a safety fallback
-    function get_p_val(name, func)
-        idx = get_idx(name)
-        if idx === nothing
-            # Try alternative naming common in some MCMC versions (e.g. dot instead of brackets)
-            alt_name = replace(name, "[" => ".", "]" => "")
-            idx = get_idx(alt_name)
-        end
-        return idx !== nothing ? func(vals[:, idx, :]) : 0.0
+    # Simplified fit check: Mean of y_sim vs Mean of posterior predictions
+    # Note: Requires reconstruct_posteriors to have run
+    # Here we just calculate a quick RMSE based on the denoised mu
+    
+    # Reconstruct inside for convenience if not passed
+    N_obs = length(y_sim)
+    mu_post = zeros(N_obs)
+    
+    # Check if we have a mu parameter in the chain
+    if "mu[1]" in names(chain)
+        mu_post = [mean(chain["mu[$i]"]) for i in 1:N_obs]
+    else
+        # Fallback to reconstructing if possible (placeholder logic)
+        println("Parameter 'mu' not found in chain for direct plotting.")
+        return nothing
     end
 
-    u_icar_mean = [get_p_val("u_icar[" * string(i) * "]", mean) for i in 1:n_areas]
-    u_iid_mean = [get_p_val("u_iid[" * string(i) * "]", mean) for i in 1:n_areas]
-
-    phi_sp_mean = get_p_val("phi_sp", mean)
-    sigma_sp_mean = get_p_val("sigma_sp", mean)
-
-    s_mean = sigma_sp_mean .* (sqrt(phi_sp_mean) .* u_icar_mean .+ sqrt(1 - phi_sp_mean) .* u_iid_mean)
-
-    # Extract f_time
-    t_mean = [get_p_val("f_time[" * string(i) * "]", mean) for i in 1:n_time]
-    t_std = [get_p_val("f_time[" * string(i) * "]", std) for i in 1:n_time]
-
-    # Reconstruct the linear predictor
-    y_hat = t_mean[time_idx] .+ s_mean[area_idx]
-
-    p1 = scatter(y_sim, y_hat, alpha=0.3, label="Obs vs Pred",
-                 xlabel="Simulated Y", ylabel="Predicted Y", title="Global Fit Overview")
-    plot!(line=(0,1), color=:red, label="Identity")
-
-    # Plot temporal trend
-    p2 = plot(t_mean, ribbon=t_std, label="Post. Mean f_time",
-              xlabel="Time", title="Temporal Component Recovery")
-
-    display(plot(p1, p2, layout=(1,2), size=(900, 400)))
-    return y_hat
+    plt = scatter(y_sim, mu_post, alpha=0.3, label="Observed vs Predicted",
+                  xlabel="Observed", ylabel="Predicted", title="Model Fit Check")
+    plot!(plt, [minimum(y_sim), maximum(y_sim)], [minimum(y_sim), maximum(y_sim)], 
+          lc=:red, ls=:dash, label="Identity")
+    
+    display(plt)
+    return plt
 end
+function posterior_predictive_check(model::DynamicPPL.Model, stats, y_obs)
+    # 1. Automatically detect family from model if not explicitly in stats
+    family = haskey(stats, :family) ? stats.family : detect_model_family(model)
+    # Ensure y_pred is a 1D vector for calculation compatibility
+    y_pred = vec(stats.predictions.mean)
 
-# New function to plot spatial effects for a given time slice
-function plot_spatial_time_slice(chain, pts, time_slice, area_idx, time_idx; title_prefix="Spatial Effect")
-    # Extract latent parameter means from the chain
-    n_areas = maximum(area_idx)
-    p_names = names(chain, :parameters)
-    vals = chain.value
+    # 2. Basic Metrics
+    rmse = sqrt(mean((y_obs .- y_pred).^2))
 
-    # Helper to get mean of a parameter by name
-    function get_p_val_mean(name)
-        idx = findfirst(==(Symbol(name)), p_names)
-        if idx === nothing
-            alt_name = replace(name, "[" => ".", "]" => "")
-            idx = findfirst(==(Symbol(alt_name)), p_names)
-        end
-        return idx !== nothing ? mean(vals[:, idx, :]) : 0.0
-    end
+    # Correlation metrics with p-values from HypothesisTests
+    pearson_val = 0.0; pearson_p = 1.0
+    kendall_val = 0.0; kendall_p = 1.0
 
-    u_icar_mean = [get_p_val_mean("u_icar[" * string(i) * "]") for i in 1:n_areas]
-    u_iid_mean = [get_p_val_mean("u_iid[" * string(i) * "]") for i in 1:n_areas]
-    phi_sp_mean = get_p_val_mean("phi_sp")
-    sigma_sp_mean = get_p_val_mean("sigma_sp")
+    if length(unique(y_pred)) > 1 && length(unique(y_obs)) > 1
+        try
+            # Use explicit module referencing for reliability
+            p_test = HypothesisTests.CorrelationTest(y_obs, y_pred)
+            pearson_val = p_test.r
+            pearson_p = HypothesisTests.pvalue(p_test)
 
-    # Calculate the mean spatial effect for each areal unit
-    s_mean = sigma_sp_mean .* (sqrt(phi_sp_mean) .* u_icar_mean .+ sqrt(1 - phi_sp_mean) .* u_iid_mean)
-
-    # Retrieve global variables for centroids, area_assignments, W_sym (from FoV6J_mGrv8Q)
-    global centroids, area_assignments, W_sym
-
-    # Create a grid for interpolation
-    grid_res = 100 # Resolution of the grid
-    x_grid = range(0, 10, length=grid_res)
-    y_grid = range(0, 10, length=grid_res)
-    interpolated_s = zeros(grid_res, grid_res)
-
-    # Simple nearest-neighbor interpolation from centroids to grid
-    for i in 1:grid_res, j in 1:grid_res
-        gp = (x_grid[i], y_grid[j])
-        closest_centroid_idx = argmin([sum((gp .- c).^2) for c in centroids])
-        interpolated_s[i, j] = s_mean[closest_centroid_idx]
-    end
-
-    # Create the heatmap/isopleth plot
-    p = heatmap(x_grid, y_grid, interpolated_s', # Transpose for correct orientation
-                color = :viridis,
-                title = "$(title_prefix) (Isopleth, Time Slice: $(time_slice))",
-                xlabel = "X-coordinate",
-                ylabel = "Y-coordinate",
-                aspect_ratio = :equal,
-                colorbar_title = "Spatial Effect Value")
-
-    # Overlay centroids
-    scatter!(p, [c[1] for c in centroids], [c[2] for c in centroids],
-             marker = :star,
-             marker_z = s_mean, # Color centroids by their spatial effect
-             color = :red, markersize = 8, label = "Centroids",
-             colorbar_title = "") # Prevent double colorbar title
-
-    # Overlay polygon boundaries
-    tri = triangulate(centroids)
-    vorn = voronoi(tri)
-    for i in each_polygon_index(vorn)
-        # Ensure the coordinates are within the plot limits (0,10) for x and y
-        coords = get_polygon_coordinates(vorn, i, (0.0, 10.0, 0.0, 10.0))
-        plot!(p, [c[1] for c in coords], [c[2] for c in coords],
-              color=:black, alpha=0.5, label="", lw=1.0)
-    end
-
-    # display(p)
-    return p
-end
-
-
-
-
-# -------------
-
-
-@model function model_v1_carstm_basic(y, time_idx, area_idx, cov_matrix_indices, adj_matrix)
-    N_obs, N_areas, N_time, N_groups = length(y), size(adj_matrix, 1), maximum(time_idx), 13
-
-    # 1. Spatial and RW2 structures
-    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
-    Q_rw2 = scale_precision!(build_rw2_precision(N_groups))
-
-    # 2. Priors (Surrogates for PC-priors)
-    λ = -log(0.01) / 1.0
-    σ_y ~ Exponential(1/λ)
-
-    σ_ar1_t ~ Exponential(1/λ)
-    ρ_ar1_t ~ Uniform(0, 1)
-
-    σ_cyc ~ Exponential(1/λ)
-    ρ_cyc ~ Uniform(0, 1)
-
-    σ_rw2 ~ filldist(Exponential(1/λ), 4)
-
-    σ_sp ~ Exponential(1/λ)
-    ϕ_sp ~ Beta(1, 1)
-
-    σ_st ~ Exponential(1/λ)
-    ϕ_st ~ Beta(1, 1)
-    ρ_st ~ Uniform(0, 1)
-
-    # 3. Latent Effects
-    f_time ~ MvNormal(zeros(N_time), I)
-    Turing.@addlogprob! logpdf_gmrf(f_time, build_ar1_precision(N_time, ρ_ar1_t, 1/σ_ar1_t^2))
-
-    f_cyc ~ MvNormal(zeros(N_time), I)
-    Turing.@addlogprob! logpdf_gmrf(f_cyc, build_cyclic_ar1_precision(N_time, ρ_cyc, 1/σ_cyc^2))
-
-    β = [Vector{Real}(undef, N_groups) for _ in 1:4]
-    for k in 1:4
-        β[k] ~ MvNormal(zeros(N_groups), I)
-        Turing.@addlogprob! logpdf_gmrf(β[k], (1/σ_rw2[k]^2) * Q_rw2)
-    end
-
-    # BYM2 Spatial
-    u_icar ~ MvNormal(zeros(N_areas), I)
-    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
-
-    u_iid ~ MvNormal(zeros(N_areas), I)
-    s_eff = σ_sp .* (sqrt(ϕ_sp) .* u_icar .+ sqrt(1 - ϕ_sp) .* u_iid)
-
-    # Spatio-Temporal Interaction
-    st_ic = Vector{Vector{Real}}(undef, N_time)
-    st_ii = Vector{Vector{Real}}(undef, N_time)
-    st_effs = Vector{Vector{Real}}(undef, N_time)
-
-    for t in 1:N_time
-        st_ic[t] ~ MvNormal(zeros(N_areas), I)
-        Turing.@addlogprob! logpdf_gmrf(st_ic[t], Q_spatial)
-        st_ii[t] ~ MvNormal(zeros(N_areas), I)
-        st_effs[t] = σ_st .* (sqrt(ϕ_st) .* st_ic[t] .+ sqrt(1 - ϕ_st) .* st_ii[t])
-        if t > 1
-            st_effs[t] = st_effs[t] .+ (ρ_st .* st_effs[t-1])
+            # Replaced Spearman with Kendall's Tau
+            k_test = HypothesisTests.KendallTauTest(y_obs, y_pred)
+            kendall_val = k_test.tau
+            kendall_p = HypothesisTests.pvalue(k_test)
+        catch e
+            @warn "Hypothesis tests failed. Ensure HypothesisTests is correctly loaded."
         end
     end
 
-    # 4. Predictor
-    mu = f_time[time_idx] .+ f_cyc[time_idx] .+ s_eff[area_idx]
+    println("--- PPC for Family: $family ---")
+    println("RMSE: ", round(rmse, digits=4))
+    println("Pearson R: ", round(pearson_val, digits=4), " (p=", round(pearson_p, digits=4), ")")
+    println("Kendall τ: ", round(kendall_val, digits=4), " (p=", round(kendall_p, digits=4), ")")
 
-    for k in 1:4
-        mu = mu .+ β[k][cov_matrix_indices[:, k]]
+    # 3. Density Visualization
+    plt_density = Plots.density(y_obs, label="Observed", lw=2, color=:black)
+    Plots.density!(plt_density, y_pred, label="Predicted (Denoised)", lw=2, color=:blue, ls=:dash)
+    title!(plt_density, "PPC: Posterior Predictive Density ($family)")
+    xlabel!(plt_density, "Value")
+    ylabel!(plt_density, "Density")
+
+    # 4. Scatterplot of Observed vs. Predicted
+    plt_scatter = Plots.scatter(y_obs, y_pred, alpha=0.3, label="Observed vs Predicted",
+                          xlabel="Observed", ylabel="Predicted", title="PPC: Model Fit Scatter ($family)")
+    Plots.plot!(plt_scatter, [minimum(y_obs), maximum(y_obs)], [minimum(y_obs), maximum(y_obs)],
+          lc=:red, ls=:dash, label="Identity")
+
+    return (rmse=rmse, pearson=(val=pearson_val, p=pearson_p), kendall=(val=kendall_val, p=kendall_p), plot_density=plt_density, plot_scatter=plt_scatter)
+end
+function plot_posterior_results(stats, pts, centroids, W; time_slice=nothing, effect=:spatial, cov_idx=1)
+    grid_res = 100; x_g = range(0, 10, length=grid_res); y_g = range(0, 10, length=grid_res)
+    find_idx(xi, yi) = argmin([sqrt((xi-p[1])^2 + (yi-p[2])^2) for p in centroids])
+
+    if effect in [:spatial, :st_predictions_denoised, :st_predictions_noisy]
+        z = if effect == :spatial
+            [stats.spatial.mean[find_idx(xi, yi)] for xi in x_g, yi in y_g]
+        elseif effect == :st_predictions_denoised && !isnothing(time_slice)
+            [stats.st_mat_denoised.mean[find_idx(xi, yi), time_slice] for xi in x_g, yi in y_g]
+        elseif effect == :st_predictions_noisy && !isnothing(time_slice)
+            [stats.st_mat_noisy.mean[find_idx(xi, yi), time_slice] for xi in x_g, yi in y_g]
+        else
+            error("Effect $effect not supported or missing time_slice")
+        end
+        plt = heatmap(x_g, y_g, z', title="$effect (T=$(time_slice))", color=:RdYlBu, aspect_ratio=:equal)
+        return plt
+    elseif effect == :beta_cov
+        # Plotting categorical levels for a specific covariate
+        b_stats = stats.beta_cov[cov_idx]
+        n_levels = size(b_stats.mean, 1)
+        plt = bar(1:n_levels, b_stats.mean[:,1], yerror=(b_stats.mean[:,1] .- b_stats.lower[:,1], b_stats.upper[:,1] .- b_stats.mean[:,1]),
+                  title="Covariate $cov_idx Effects", xlabel="Level", ylabel="Effect Size", legend=false)
+        return plt
+    elseif effect == :b_class1 || effect == :b_class2
+        b_stats = effect == :b_class1 ? stats.b_class1 : stats.b_class2
+        if isnothing(b_stats); error("Effect $effect not found in stats"); end
+        n_levels = size(b_stats.mean, 1)
+        plt = bar(1:n_levels, b_stats.mean[:,1], yerror=(b_stats.mean[:,1] .- b_stats.lower[:,1], b_stats.upper[:,1] .- b_stats.mean[:,1]),
+                  title="$effect Levels", xlabel="Class Index", ylabel="Effect Size", legend=false)
+        return plt
+    else
+        error("Effect $effect not recognized.")
     end
+end
+function plot_posterior_vs_prior(model::DynamicPPL.Model, chain::MCMCChains.Chains, param_sym::Symbol; n_prior_samples=1000, title="Posterior vs Prior")
+    # 1. Extract posterior samples using .data for AxisArray compatibility
+    post_samples = vec(chain[param_sym].data)
 
-    for i in 1:N_obs
-        mu[i] += st_effs[time_idx[i]][area_idx[i]]
-    end
+    # 2. Automated Prior Sampling via Turing
+    prior_chain = sample(model, Prior(), n_prior_samples, progress=false)
+    prior_samples = vec(prior_chain[param_sym].data)
 
-    y ~ MvNormal(mu, σ_y^2 * I)
+    # 3. Visualization
+    plt = Plots.density(post_samples, label="Posterior: $param_sym", lw=3, color=:blue, fill=(0, 0.2, :blue))
+    Plots.density!(plt, prior_samples, label="Prior (sampled)", lw=2, ls=:dash, color=:red)
+
+    title!(plt, title)
+    xlabel!(plt, "Value")
+    ylabel!(plt, "Density")
+
+    return plt
+end
+function calculate_st_intervals(stats; alpha=0.05)
+    # This function assumes stats contains the required matrices
+    # In a full Bayesian implementation, this would iterate over multiple samples,
+    # but here we provide the structure based on the current stats object.
+    
+    N_areas, N_time = size(stats.st_mat_denoised)
+    
+    # If stats only contains point estimates, we return those.
+    # For true credible intervals, we would need the full sample 3D-array.
+    
+    lower_q = alpha / 2
+    upper_q = 1 - alpha / 2
+    
+    println("Note: Credible intervals for ST effects currently return point estimates.")
+    println("To calculate full Bayesian CIs, pass the full sample array from the chain.")
+    
+    return (mean = stats.st_mat_denoised, 
+            lower = stats.st_mat_denoised, 
+            upper = stats.st_mat_denoised)
+end
+using Turing, MCMCChains, Statistics, LogExpFunctions, StatsFuns, HypothesisTests, DataFrames, Plots
+
+# --- 1. MODEL UTILITIES ---
+
+function NegativeBinomial2(μ, r)
+    p = r / (r + μ)
+    return NegativeBinomial(r, p)
 end
 
+function calculate_waic(model::DynamicPPL.Model, chain::MCMCChains.Chains)
+    try
+        # Extract pointwise log-likelihoods using the official API
+        pointwise_ll = Turing.pointwise_loglikelihoods(model, chain)
 
-# --------------
+        # Get keys safely - handles LazyBundles and standard Dicts
+        ks = collect(keys(pointwise_ll))
 
+        if isempty(ks)
+            return Inf
+        end
 
+        # Initialize the likelihood matrix with the first parameter key
+        # Casting to Float64 ensures stability for sum and logsumexp
+        log_lik_mat = Float64.(copy(pointwise_ll[ks[1]]))
 
-# Helper to generate RFF basis for a Squared Exponential (Trend) kernel
+        # Accumulate log-likelihoods if multiple variables are observed
+        for i in 2:length(ks)
+            log_lik_mat .+= pointwise_ll[ks[i]]
+        end
+
+        n_samples, n_obs = size(log_lik_mat)
+
+        # lppd: log pointwise predictive density
+        lppd = sum(logsumexp(log_lik_mat[:, i]) - log(n_samples) for i in 1:n_obs)
+
+        # p_waic: effective number of parameters
+        p_waic = sum(var(log_lik_mat, dims=1))
+
+        return -2 * (lppd - p_waic)
+    catch e
+        @warn "WAIC calculation failed: $e"
+        return Inf
+    end
+end
+
+function get_rff_deep2D_basis(X, m, lengthscale)
+    N, D = size(X)
+    Random.seed!(42)
+    Omega_samples = randn(m, D) ./ lengthscale
+    Phi_phases = rand(m) .* 2π
+    return sqrt(2/m) .* cos.(X * Omega_samples' .+ Phi_phases')
+end
+
 function get_rff_trend_basis(t, m, lengthscale)
-    # t: time vector, m: number of features
     N = length(t)
-    Random.seed!(123)
-    ω = randn(m) ./ lengthscale
-    φ = rand(m) .* 2π
-
-    # Projection matrix (N x m)
-    Z = sqrt(2/m) .* cos.(t * ω' .+ φ')
+    Random.seed!(42)
+    Omega_samples = randn(m) ./ lengthscale
+    Phi_phases = rand(m) .* 2π
+    Z = zeros(N, m)
+    for j in 1:m
+        Z[:, j] = sqrt(2/m) .* cos.(Omega_samples[j] .* t .+ Phi_phases[j])
+    end
     return Z
 end
 
-# Helper to generate RFF basis for a Periodic (Seasonal) kernel
-function get_rff_seasonal_basis(t, m, period, lengthscale)
+function get_rff_seasonal_basis(t, m, freq, lengthscale)
     N = length(t)
-    Random.seed!(456)
-    # For periodic kernels, we can use a simpler harmonic set or sample
-    # frequencies concentrated around 2π/period
-    ω = (2π / period) .* (1:m)
-
-    Z_cos = cos.(t * ω')
-    Z_sin = sin.(t * ω')
-
-    return hcat(Z_cos, Z_sin) ./ sqrt(m)
+    Z = zeros(N, 2*m)
+    for j in 1:m
+        omega_j = 2π * j * freq
+        Z[:, 2j-1] = cos.(omega_j .* t)
+        Z[:, 2j] = sin.(omega_j .* t)
+    end
+    return Z
 end
 
-@model function model_v2_carstm_rff(y, time_idx, area_idx, cov_matrix_indices, adj_matrix; m_trend=10, m_seas=5)
-    N_obs = length(y)
-    N_areas = size(adj_matrix, 1)
-    N_time = maximum(time_idx)
-    N_groups = 13
 
-    # --- 1. Precompute Basis Matrices ---
-    # We use a normalized time vector [0, 1]
+
+
+### Model V1 Audit: Advanced CARSTM (GMRF + AR1 + Interaction)
+@model function model_v1_gaussian(y, time_idx, area_idx, cov_matrix_indices, adj_matrix; offset=zeros(length(y)), weights=ones(length(y)))
+    N_obs, N_areas, N_time = length(y), size(adj_matrix, 1), maximum(time_idx)
+
+    # 1. Precision Matrices
+    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
+    Q_rw2 = scale_precision!(build_rw2_precision(13)) # Smoothing for categorical levels
+
+    # 2. Priors
+    sigma_y ~ Exponential(1.0)
+    sigma_sp ~ Exponential(1.0)
+    phi_sp ~ Beta(1, 1)
+    sigma_tm ~ Exponential(1.0)
+    rho_tm ~ Beta(2, 2) # AR1 correlation parameter
+    sigma_int ~ Exponential(0.5) # Interaction scale
+    sigma_rw2 ~ filldist(Exponential(1.0), 4)
+
+    # 3. Spatial Effect (BYM2)
+    u_icar ~ MvNormal(zeros(N_areas), I)
+    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
+    u_iid ~ MvNormal(zeros(N_areas), I)
+    s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
+
+    # 4. Temporal Effect (AR1)
+    Q_ar1 = build_ar1_precision(N_time, rho_tm, 1.0)
+    f_tm_raw ~ MvNormal(zeros(N_time), I)
+    Turing.@addlogprob! logpdf_gmrf(f_tm_raw, Q_ar1)
+    f_time = f_tm_raw .* sigma_tm
+
+    # 5. Space-Time Interaction (Type IV approximation)
+    st_int_raw ~ MvNormal(zeros(N_areas * N_time), I)
+    st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
+
+    # 6. Smooth Categorical Covariates (RW2)
+    beta_cov = [Vector{Real}(undef, 13) for _ in 1:4]
+    for k in 1:4
+        beta_cov[k] ~ MvNormal(zeros(13), I)
+        Turing.@addlogprob! logpdf_gmrf(beta_cov[k], (1/sigma_rw2[k]^2) * Q_rw2)
+    end
+
+    for i in 1:N_obs
+        a, t = area_idx[i], time_idx[i]
+        mu = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t]
+        for k in 1:4
+            mu += beta_cov[k][cov_matrix_indices[i, k]]
+        end
+        # Weighted Likelihood
+        Turing.@addlogprob! weights[i] * logpdf(Normal(mu, sigma_y), y[i])
+    end
+end
+### Model V2 Audit: RFF CARSTM (Integrated Covariates & Interaction)
+@model function model_v2_carstm_rff(y, time_idx, area_idx, cov_matrix_indices, adj_matrix; m_trend=10, m_seas=5, offset=zeros(length(y)), weights=ones(length(y)))
+    N_obs, N_areas, N_time = length(y), size(adj_matrix, 1), maximum(time_idx)
     t_vec = collect(1:N_time) ./ N_time
+
+    # 1. Temporal basis functions
     Z_trend = get_rff_trend_basis(t_vec, m_trend, 0.5)
     Z_seas = get_rff_seasonal_basis(t_vec, m_seas, 1.0/N_time, 0.1)
 
-    # --- 2. Spatial & RW2 Structures ---
+    # 2. Precision Matrices
     Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
-    Q_rw2 = scale_precision!(build_rw2_precision(N_groups))
+    Q_rw2 = scale_precision!(build_rw2_precision(13))
 
-    # --- 3. Priors ---
-    λ = -log(0.01) / 1.0
-    σ_y ~ Exponential(1/λ)
-
-    # RFF Coefficients weights
+    # 3. Priors
+    sigma_y ~ Exponential(1.0)
     w_trend ~ MvNormal(zeros(m_trend), I)
     w_seas ~ MvNormal(zeros(size(Z_seas, 2)), I)
-
-    σ_trend ~ Exponential(1/λ)
-    σ_seas ~ Exponential(1/λ)
-
-    # RW2 Covariates
-    σ_rw2 ~ filldist(Exponential(1/λ), 4)
-    β = [Vector{Real}(undef, N_groups) for _ in 1:4]
-    for k in 1:4
-        β[k] ~ MvNormal(zeros(N_groups), I)
-        Turing.@addlogprob! logpdf_gmrf(β[k], (1/σ_rw2[k]^2) * Q_rw2)
-    end
-
-    # BYM2 Spatial
-    σ_sp ~ Exponential(1/λ)
-    ϕ_sp ~ Beta(1, 1)
-    u_icar ~ MvNormal(zeros(N_areas), I)
-    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
-    u_iid ~ MvNormal(zeros(N_areas), I)
-    s_eff = σ_sp .* (sqrt(ϕ_sp) .* u_icar .+ sqrt(1 - ϕ_sp) .* u_iid)
-
-    # --- 4. Predictor Assembly ---
-    f_trend = Z_trend * w_trend .* σ_trend
-    f_seas = Z_seas * w_seas .* σ_seas
-
-    mu = f_trend[time_idx] .+ f_seas[time_idx] .+ s_eff[area_idx]
-
-    for k in 1:4
-        mu = mu .+ β[k][cov_matrix_indices[:, k]]
-    end
-
-    y ~ MvNormal(mu, σ_y^2 * I)
-end
-
-
-
-# -----------------
-
-
-@model function model_v3_binomial(y, trials, time_idx, area_idx, cov_matrix_indices, adj_matrix, class1_idx, class2_idx)
-    N_obs = length(y)
-    N_areas = size(adj_matrix, 1)
-    N_time = maximum(time_idx)
-    N_groups = 13
-
-    # 1. Spatial and RW2 structures
-    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
-    Q_rw2 = scale_precision!(build_rw2_precision(N_groups))
-
-    # 2. Priors
-    λ = -log(0.01) / 1.0
-
-    # Fixed Effects
-    β_class1 ~ MvNormal(zeros(13), 10.0 * I)
-    β_class2 ~ MvNormal(zeros(2), 10.0 * I)
-
-    σ_ar1_t ~ Exponential(1/λ)
-    ρ_ar1_t ~ Uniform(0, 1)
-
-    σ_cyc ~ Exponential(1/λ)
-    ρ_cyc ~ Uniform(0, 1)
-
-    σ_rw2 ~ filldist(Exponential(1/λ), 4)
-
-    σ_sp ~ Exponential(1/λ)
-    ϕ_sp ~ Beta(1, 1)
-
-    # 3. Latent Effects
-    f_time ~ MvNormal(zeros(N_time), I)
-    Turing.@addlogprob! logpdf_gmrf(f_time, build_ar1_precision(N_time, ρ_ar1_t, 1/σ_ar1_t^2))
-
-    f_cyc ~ MvNormal(zeros(N_time), I)
-    Turing.@addlogprob! logpdf_gmrf(f_cyc, build_cyclic_ar1_precision(N_time, ρ_cyc, 1/σ_cyc^2))
-
-    β_rw = [Vector{Real}(undef, N_groups) for _ in 1:4]
-    for k in 1:4
-        β_rw[k] ~ MvNormal(zeros(N_groups), I)
-        Turing.@addlogprob! logpdf_gmrf(β_rw[k], (1/σ_rw2[k]^2) * Q_rw2)
-    end
-
-    # BYM2 Spatial
-    u_icar ~ MvNormal(zeros(N_areas), I)
-    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
-    u_iid ~ MvNormal(zeros(N_areas), I)
-    s_eff = σ_sp .* (sqrt(ϕ_sp) .* u_icar .+ sqrt(1 - ϕ_sp) .* u_iid)
-
-    # 4. Predictor Assembly
-    mu = f_time[time_idx] .+ f_cyc[time_idx] .+ s_eff[area_idx] .+
-         β_class1[class1_idx] .+ β_class2[class2_idx]
-
-    for k in 1:4
-        mu = mu .+ β_rw[k][cov_matrix_indices[:, k]]
-    end
-
-    # Refactored likelihood to avoid tilde_observe!! error
-    for i in 1:N_obs
-        y[i] ~ BinomialLogit(trials[i], mu[i])
-    end
-end
-
-
-# -----------------
-
-
-
-@model function model_v4_weighted_binary(y, trials, weights, time_idx, area_idx, cov_matrix_indices, adj_matrix, class1_idx, class2_idx)
-    N_obs = length(y)
-    N_areas = size(adj_matrix, 1)
-    N_time = maximum(time_idx)
-    N_groups = 13
-
-    # 1. Spatial and RW2 structures
-    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
-    Q_rw2 = scale_precision!(build_rw2_precision(N_groups))
-
-    # 2. Priors
-    λ = -log(0.01) / 1.0
-    beta_class1 ~ MvNormal(zeros(13), 10.0 * I)
-    beta_class2 ~ MvNormal(zeros(2), 10.0 * I)
-    sigma_ar1_t ~ Exponential(1/λ)
-    rho_ar1_t ~ Uniform(0, 1)
-    sigma_cyc ~ Exponential(1/λ)
-    rho_cyc ~ Uniform(0, 1)
-    sigma_rw2 ~ filldist(Exponential(1/λ), 4)
-    sigma_sp ~ Exponential(1/λ)
+    sigma_trend ~ Exponential(1.0)
+    sigma_seas ~ Exponential(1.0)
+    sigma_rw2 ~ filldist(Exponential(1.0), 4)
+    sigma_sp ~ Exponential(1.0)
     phi_sp ~ Beta(1, 1)
+    sigma_int ~ Exponential(0.5)
 
-    # 3. Latent Effects
-    f_time ~ MvNormal(zeros(N_time), I)
-    Turing.@addlogprob! logpdf_gmrf(f_time, build_ar1_precision(N_time, rho_ar1_t, 1/sigma_ar1_t^2))
-
-    f_cyc ~ MvNormal(zeros(N_time), I)
-    Turing.@addlogprob! logpdf_gmrf(f_cyc, build_cyclic_ar1_precision(N_time, rho_cyc, 1/sigma_cyc^2))
-
-    beta_rw = [Vector{Real}(undef, N_groups) for _ in 1:4]
+    # 4. Categorical Covariates (RW2 Prior)
+    beta_cov = [Vector{Real}(undef, 13) for _ in 1:4]
     for k in 1:4
-        beta_rw[k] ~ MvNormal(zeros(N_groups), I)
-        Turing.@addlogprob! logpdf_gmrf(beta_rw[k], (1/sigma_rw2[k]^2) * Q_rw2)
+        beta_cov[k] ~ MvNormal(zeros(13), I)
+        Turing.@addlogprob! logpdf_gmrf(beta_cov[k], (1/sigma_rw2[k]^2) * Q_rw2)
     end
+
+    # 5. Spatial BYM2 components
+    u_icar ~ MvNormal(zeros(N_areas), I)
+    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
+    u_iid ~ MvNormal(zeros(N_areas), I)
+    s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
+
+    # 6. Interaction Effect
+    st_int_raw ~ MvNormal(zeros(N_areas * N_time), I)
+    st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
+
+    # 7. Reconstruct effects
+    f_trend = Z_trend * (w_trend .* sigma_trend)
+    f_seas = Z_seas * (w_seas .* sigma_seas)
+
+    for i in 1:N_obs
+        a, t = area_idx[i], time_idx[i]
+        mu = offset[i] + f_trend[t] + f_seas[t] + s_eff[a] + st_interaction[a, t]
+        for k in 1:4
+            mu += beta_cov[k][cov_matrix_indices[i, k]]
+        end
+        # Weighted Likelihood
+        Turing.@addlogprob! weights[i] * logpdf(Normal(mu, sigma_y), y[i])
+    end
+end
+### Model V3 Audit: LogNormal CARSTM (Weighted)
+@model function model_v3_lognormal(y, time_idx, area_idx, cov_matrix_indices, adj_matrix; offset=zeros(length(y)), weights=ones(length(y)))
+    N_obs, N_areas, N_time = length(y), size(adj_matrix, 1), maximum(time_idx)
+    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
+    Q_rw2 = scale_precision!(build_rw2_precision(13))
+
+    # Priors
+    sigma_y ~ Exponential(1.0)
+    sigma_sp ~ Exponential(1.0)
+    phi_sp ~ Beta(1, 1)
+    sigma_tm ~ Exponential(1.0)
+    rho_tm ~ Beta(2, 2)
+    sigma_int ~ Exponential(0.5)
+    sigma_rw2 ~ filldist(Exponential(1.0), 4)
+
+    # Spatial Effect (BYM2)
+    u_icar ~ MvNormal(zeros(N_areas), I)
+    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
+    u_iid ~ MvNormal(zeros(N_areas), I)
+    s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
+
+    # Temporal Effect (AR1)
+    Q_ar1 = build_ar1_precision(N_time, rho_tm, 1.0)
+    f_tm_raw ~ MvNormal(zeros(N_time), I)
+    Turing.@addlogprob! logpdf_gmrf(f_tm_raw, Q_ar1)
+    f_time = f_tm_raw .* sigma_tm
+
+    # Interaction
+    st_int_raw ~ MvNormal(zeros(N_areas * N_time), I)
+    st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
+
+    # Smooth Categorical Covariates (RW2)
+    beta_cov = [Vector{Real}(undef, 13) for _ in 1:4]
+    for k in 1:4
+        beta_cov[k] ~ MvNormal(zeros(13), I)
+        Turing.@addlogprob! logpdf_gmrf(beta_cov[k], (1/sigma_rw2[k]^2) * Q_rw2)
+    end
+
+    for i in 1:N_obs
+        a, t = area_idx[i], time_idx[i]
+        mu = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t]
+        for k in 1:4
+            mu += beta_cov[k][cov_matrix_indices[i, k]]
+        end
+        # Weighted Log-Likelihood
+        Turing.@addlogprob! weights[i] * logpdf(LogNormal(mu, sigma_y), y[i])
+    end
+end
+### Model V4 Audit: Binomial CARSTM (Weighted)
+@model function model_v4_binomial(y, time_idx, area_idx, cov_matrix_indices, adj_matrix, n_trials, class1, class2; offset=zeros(length(y)), weights=ones(length(y)))
+    N_obs, N_areas, N_time = length(y), size(adj_matrix, 1), maximum(time_idx)
+
+    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
+    Q_rw2 = scale_precision!(build_rw2_precision(13))
+
+    sigma_sp ~ Exponential(1.0)
+    phi_sp ~ Beta(1, 1)
+    sigma_tm ~ Exponential(1.0)
+    rho_tm ~ Beta(2, 2)
+    sigma_int ~ Exponential(0.5)
+    sigma_rw2 ~ filldist(Exponential(1.0), 4)
+
+    # Spatial BYM2
+    u_icar ~ MvNormal(zeros(N_areas), I)
+    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
+    u_iid ~ MvNormal(zeros(N_areas), I)
+    s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
+
+    # Temporal AR1
+    Q_ar1 = build_ar1_precision(N_time, rho_tm, 1.0)
+    f_tm_raw ~ MvNormal(zeros(N_time), I)
+    Turing.@addlogprob! logpdf_gmrf(f_tm_raw, Q_ar1)
+    f_time = f_tm_raw .* sigma_tm
+
+    # Interaction
+    st_int_raw ~ MvNormal(zeros(N_areas * N_time), I)
+    st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
+
+    # Smooth Categorical Covariates (RW2)
+    beta_cov = [Vector{Real}(undef, 13) for _ in 1:4]
+    for k in 1:4
+        beta_cov[k] ~ MvNormal(zeros(13), I)
+        Turing.@addlogprob! logpdf_gmrf(beta_cov[k], (1/sigma_rw2[k]^2) * Q_rw2)
+    end
+
+    for i in 1:N_obs
+        a, t = area_idx[i], time_idx[i]
+        eta = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t]
+        for k in 1:4
+            eta += beta_cov[k][cov_matrix_indices[i, k]]
+        end
+        # Weighted Likelihood
+        Turing.@addlogprob! weights[i] * logpdf(BinomialLogit(n_trials[i], eta), y[i])
+    end
+end
+### Model V5: (ZI)P CARSTM
+@model function model_v5_poisson(y, time_idx, area_idx, cov_matrix_indices, adj_matrix, class1, class2; weights=ones(length(y)), offset=zeros(length(y)), use_zi=true)
+    N_obs, N_areas, N_time = length(y), size(adj_matrix, 1), maximum(time_idx)
+    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
+    Q_rw2 = scale_precision!(build_rw2_precision(13))
+
+    sigma_sp ~ Exponential(1.0)
+    phi_sp ~ Beta(1, 1)
+    sigma_tm ~ Exponential(1.0)
+    rho_tm ~ Beta(2, 2)
+    sigma_int ~ Exponential(0.5)
+    sigma_rw2 ~ filldist(Exponential(1.0), 4)
+
+    # Spatial
+    u_icar ~ MvNormal(zeros(N_areas), I)
+    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
+    u_iid ~ MvNormal(zeros(N_areas), I)
+    s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
+
+    # Temporal
+    Q_ar1 = build_ar1_precision(N_time, rho_tm, 1.0)
+    f_tm_raw ~ MvNormal(zeros(N_time), I)
+    Turing.@addlogprob! logpdf_gmrf(f_tm_raw, Q_ar1)
+    f_time = f_tm_raw .* sigma_tm
+
+    # Interaction
+    st_int_raw ~ MvNormal(zeros(N_areas * N_time), I)
+    st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
+
+    # Smooth Categorical Covariates (RW2)
+    beta_cov = [Vector{Real}(undef, 13) for _ in 1:4]
+    for k in 1:4
+        beta_cov[k] ~ MvNormal(zeros(13), I)
+        Turing.@addlogprob! logpdf_gmrf(beta_cov[k], (1/sigma_rw2[k]^2) * Q_rw2)
+    end
+
+    if use_zi; phi_zi ~ Beta(1, 1); end
+
+    for i in 1:N_obs
+        a, t = area_idx[i], time_idx[i]
+        eta = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t]
+        for k in 1:4
+            eta += beta_cov[k][cov_matrix_indices[i, k]]
+        end
+        lambda_i = exp(eta)
+        dist_poi = Poisson(lambda_i)
+
+        if use_zi
+            ll = y[i] == 0 ? log(phi_zi + (1 - phi_zi) * exp(-lambda_i)) : log(1 - phi_zi) + logpdf(dist_poi, y[i])
+        else
+            ll = logpdf(dist_poi, y[i])
+        end
+        Turing.@addlogprob! weights[i] * ll
+    end
+end
+### Model V6: (ZI)NB CARSTM
+@model function model_v6_negativebinomial(y, time_idx, area_idx, cov_matrix_indices, adj_matrix, class1, class2; weights=ones(length(y)), offset=zeros(length(y)), use_zi=true)
+    N_obs, N_areas, N_time = length(y), size(adj_matrix, 1), maximum(time_idx)
+    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
+    Q_rw2 = scale_precision!(build_rw2_precision(13))
+
+    sigma_sp ~ Exponential(1.0)
+    phi_sp ~ Beta(1, 1)
+    sigma_tm ~ Exponential(1.0)
+    rho_tm ~ Beta(2, 2)
+    sigma_int ~ Exponential(0.5)
+    sigma_rw2 ~ filldist(Exponential(1.0), 4)
+
+    # Spatial
+    u_icar ~ MvNormal(zeros(N_areas), I)
+    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
+    u_iid ~ MvNormal(zeros(N_areas), I)
+    s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
+
+    # Temporal
+    Q_ar1 = build_ar1_precision(N_time, rho_tm, 1.0)
+    f_tm_raw ~ MvNormal(zeros(N_time), I)
+    Turing.@addlogprob! logpdf_gmrf(f_tm_raw, Q_ar1)
+    f_time = f_tm_raw .* sigma_tm
+
+    # Interaction
+    st_int_raw ~ MvNormal(zeros(N_areas * N_time), I)
+    st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
+
+    # Smooth Categorical Covariates (RW2)
+    beta_cov = [Vector{Real}(undef, 13) for _ in 1:4]
+    for k in 1:4
+        beta_cov[k] ~ MvNormal(zeros(13), I)
+        Turing.@addlogprob! logpdf_gmrf(beta_cov[k], (1/sigma_rw2[k]^2) * Q_rw2)
+    end
+
+    if use_zi; phi_zi ~ Beta(1, 1); end
+    r_nb ~ Exponential(1.0)
+
+    for i in 1:N_obs
+        a, t = area_idx[i], time_idx[i]
+        eta = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t]
+        for k in 1:4
+            eta += beta_cov[k][cov_matrix_indices[i, k]]
+        end
+        mu = exp(eta)
+        dist_nb = NegativeBinomial2(mu, r_nb)
+
+        if use_zi
+            ll = y[i] == 0 ? log(phi_zi + (1 - phi_zi) * pdf(dist_nb, 0)) : log(1 - phi_zi) + logpdf(dist_nb, y[i])
+        else
+            ll = logpdf(dist_nb, y[i])
+        end
+        Turing.@addlogprob! weights[i] * ll
+    end
+end
+### Model V7: Deep Gaussian Process (RFF) CARSTM (Binomial)
+@model function model_v7_deep_gaussianprocess_binomial(y, trials, time_idx, area_idx, pts_raw, cov_matrix_indices, adj_matrix, class1, class2; weights=ones(length(y)), offset=zeros(length(y)), use_zi=false)
+    N_obs = length(y)
+    m_layer1, m_layer2 = 10, 5
+
+    # Precision for categorical covariates
+    Q_rw2 = scale_precision!(build_rw2_precision(13))
+    sigma_rw2 ~ filldist(Exponential(1.0), 4)
+
+    # Deep GP Layers
+    X = hcat([p[1] for p in pts_raw], [p[2] for p in pts_raw], Float64.(time_idx))
+    lengthscale1 ~ Gamma(2, 1)
+    basis1 = get_rff_deep2D_basis(X, m_layer1, lengthscale1)
+    w1 ~ MvNormal(zeros(m_layer1), I)
+    hidden_layer = basis1 * w1
+
+    lengthscale2 ~ Gamma(2, 1)
+    basis2 = get_rff_deep2D_basis(reshape(hidden_layer, :, 1), m_layer2, lengthscale2)
+    w2 ~ MvNormal(zeros(m_layer2), I)
+    eta_gp = basis2 * w2
+
+    # Smooth Categorical Covariates (RW2)
+    beta_cov = [Vector{Real}(undef, 13) for _ in 1:4]
+    for k in 1:4
+        beta_cov[k] ~ MvNormal(zeros(13), I)
+        Turing.@addlogprob! logpdf_gmrf(beta_cov[k], (1/sigma_rw2[k]^2) * Q_rw2)
+    end
+
+    if use_zi; phi_zi ~ Beta(1, 1); end
+
+    for i in 1:N_obs
+        eta = offset[i] + eta_gp[i]
+        for k in 1:4
+            eta += beta_cov[k][cov_matrix_indices[i, k]]
+        end
+        
+        dist_bin = BinomialLogit(trials[i], eta)
+        if use_zi
+            ll = y[i] == 0 ? log(phi_zi + (1 - phi_zi) * pdf(dist_bin, 0)) : log(1 - phi_zi) + logpdf(dist_bin, y[i])
+        else
+            ll = logpdf(dist_bin, y[i])
+        end
+        Turing.@addlogprob! weights[i] * ll
+    end
+end
+### Model V8: Deep Gaussian Process (RFF) CARSTM (Gaussian)
+@model function model_v8_deep_gaussianprocess_gaussian(y, time_idx, area_idx, pts_raw, cov_matrix_indices, adj_matrix, class1, class2; weights=ones(length(y)), offset=zeros(length(y)))
+    N_obs = length(y)
+    m_layer1, m_layer2 = 10, 5
+
+    # Precision for categorical covariates
+    Q_rw2 = scale_precision!(build_rw2_precision(13))
+    sigma_rw2 ~ filldist(Exponential(1.0), 4)
+
+    # Deep GP Layers via Random Fourier Features
+    X = hcat([p[1] for p in pts_raw], [p[2] for p in pts_raw], Float64.(time_idx))
+    lengthscale1 ~ Gamma(2, 1)
+    basis1 = get_rff_deep2D_basis(X, m_layer1, lengthscale1)
+    w1 ~ MvNormal(zeros(m_layer1), I)
+    hidden_layer = basis1 * w1
+
+    lengthscale2 ~ Gamma(2, 1)
+    basis2 = get_rff_deep2D_basis(reshape(hidden_layer, :, 1), m_layer2, lengthscale2)
+    w2 ~ MvNormal(zeros(m_layer2), I)
+    eta_gp = basis2 * w2
+
+    # Smooth Categorical Covariates (RW2)
+    beta_cov = [Vector{Real}(undef, 13) for _ in 1:4]
+    for k in 1:4
+        beta_cov[k] ~ MvNormal(zeros(13), I)
+        Turing.@addlogprob! logpdf_gmrf(beta_cov[k], (1/sigma_rw2[k]^2) * Q_rw2)
+    end
+
+    sigma_y ~ Exponential(1.0)
+
+    for i in 1:N_obs
+        mu = offset[i] + eta_gp[i]
+        for k in 1:4
+            mu += beta_cov[k][cov_matrix_indices[i, k]]
+        end
+        Turing.@addlogprob! weights[i] * logpdf(Normal(mu, sigma_y), y[i])
+    end
+end
+### Model V9 Audit: Continuous Covariate CARSTM (RFF-Matern)
+@model function model_v9_continuous_gaussian(y, time_idx, area_idx, continuous_covs, adj_matrix; m_feat=10, offset=zeros(length(y)), weights=ones(length(y)))
+    N_obs, N_areas, N_time = length(y), size(adj_matrix, 1), maximum(time_idx)
+    N_covs = size(continuous_covs, 2)
+
+    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
+
+    sigma_y ~ Exponential(1.0)
+    sigma_sp ~ Exponential(1.0)
+    phi_sp ~ Beta(1, 1)
+    sigma_tm ~ Exponential(1.0)
+    rho_tm ~ Beta(2, 2)
+    sigma_int ~ Exponential(0.5)
+
+    sigma_cov ~ filldist(Exponential(1.0), N_covs)
+    lengthscale_cov ~ filldist(Gamma(2, 1), N_covs)
 
     u_icar ~ MvNormal(zeros(N_areas), I)
     Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
     u_iid ~ MvNormal(zeros(N_areas), I)
     s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
 
-    # 4. Predictor
-    mu = f_time[time_idx] .+ f_cyc[time_idx] .+ s_eff[area_idx] .+
-         beta_class1[class1_idx] .+ beta_class2[class2_idx]
+    f_tm_raw ~ MvNormal(zeros(N_time), I)
+    Turing.@addlogprob! logpdf_gmrf(f_tm_raw, build_ar1_precision(N_time, rho_tm, 1.0))
+    f_time = f_tm_raw .* sigma_tm
 
-    for k in 1:4
-        mu = mu .+ beta_rw[k][cov_matrix_indices[:, k]]
+    st_int_raw ~ MvNormal(zeros(N_areas * N_time), I)
+    st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
+
+    # Fix: Sample a matrix of weights to avoid name collision in the loop
+    W_cov ~ MvNormal(zeros(N_covs * m_feat), I)
+    W_mat = reshape(W_cov, m_feat, N_covs)
+
+    f_cov_total = zeros(N_obs)
+    for k in 1:N_covs
+        Z_k = get_rff_trend_basis(continuous_covs[:, k], m_feat, lengthscale_cov[k])
+        f_cov_total += Z_k * (W_mat[:, k] .* sigma_cov[k])
     end
 
-    # 5. Weighted Likelihood
     for i in 1:N_obs
-        dist = BinomialLogit(trials[i], mu[i])
-        Turing.@addlogprob! weights[i] * logpdf(dist, y[i])
+        a, t = area_idx[i], time_idx[i]
+        mu = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t] + f_cov_total[i]
+        # Applying weights to the Gaussian log-likelihood
+        Turing.@addlogprob! weights[i] * logpdf(Normal(mu, sigma_y), y[i])
     end
 end
-
-
-
-# -----------
-
-
-# Demonstration of the two methods
-@model function weight_comparison(y, n, weights)
-    μ ~ Normal(0, 1)
-
-    # Method A: Log-Likelihood Weighting (V4/V5 Style)
-    # Correct for Importance/Survey weights
-    for i in 1:length(y)
-        Turing.@addlogprob! weights[i] * logpdf(BinomialLogit(n[i], μ), y[i])
-    end
-
-    # Method B: Trial Weighting (Alternative)
-    # This is essentially changing the sample size
-    # for i in 1:length(y)
-    #     y[i] ~ BinomialLogit(round(Int, n[i] * weights[i]), μ)
-    # end
-end
-
-
-
-# Helper to create an RFF mapping for multi-dimensional input
-function get_deep_rff_basis(X, m, lengthscale)
-    # X is (N_obs x D) matrix
-    N, D = size(X)
-    Random.seed!(789)
-
-    # Spectral frequencies for RBF kernel
-    Ω = randn(m, D) ./ lengthscale
-    Φ = rand(m) .* 2π
-
-    # Feature map: sqrt(2/m) * cos(X*Ω' + Φ)
-    Z = sqrt(2/m) .* cos.(X * Ω' .+ Φ')
-    return Z
-end
-
-@model function model_v5_deep_gp_carstm(y, trials, weights, time_idx, area_idx, pts, cov_indices, adj_matrix, class1_idx, class2_idx)
-    N_obs = length(y)
-    N_areas = size(adj_matrix, 1)
-    N_time = maximum(time_idx)
-
-    # Hyperparameters
-    λ = -log(0.01) / 1.0
-
-    # categorical Fixed Effects (similar to V3/V4)
-    beta_class1 ~ MvNormal(zeros(13), 10.0 * I)
-    beta_class2 ~ MvNormal(zeros(2), 10.0 * I)
-
-    # --- Deep GP Layer 1: Latent Manifold ---
-    t_norm = time_idx ./ N_time
-    s_coords = reduce(hcat, [collect(pts[i]) for i in area_idx])'
-    X_input = hcat(t_norm, s_coords)
-
-    m_layer1 = 10
-    Z1 = get_deep_rff_basis(X_input, m_layer1, 0.5)
-    w1 ~ MvNormal(zeros(m_layer1), I)
-    hidden_latent = Z1 * w1
-
-    # --- Deep GP Layer 2: Non-linear Predictor ---
-    m_layer2 = 15
-    Random.seed!(101)
-    Ω2 = randn(m_layer2, 1)
-    Φ2 = rand(m_layer2) * 2π
-
-    w2 ~ MvNormal(zeros(m_layer2), I)
-    σ_deep ~ Exponential(1/λ)
-
-    f_deep = σ_deep .* (sqrt(2/m_layer2) .* cos.(hidden_latent .* Ω2' .+ Φ2')) * w2
-
-    # --- Additive Structural Components ---
-    Q_spatial = scale_precision!(build_laplacian_precision(adj_matrix))
-    σ_sp ~ Exponential(1/λ)
-    u_icar ~ MvNormal(zeros(N_areas), I)
-    Turing.@addlogprob! logpdf_gmrf(u_icar, Q_spatial)
-
-    # --- Predictor Assembly ---
-    # Combine Deep GP, ICAR spatial, and Fixed Effects
-    mu = f_deep .+ (σ_sp .* u_icar[area_idx]) .+ beta_class1[class1_idx] .+ beta_class2[class2_idx]
-
-    # Weighted Likelihood
-    for i in 1:N_obs
-        dist = BinomialLogit(trials[i], mu[i])
-        Turing.@addlogprob! weights[i] * logpdf(dist, y[i])
-    end
-end
-
-
-function calculate_waic(model, samples)
-    # 1. Standardize input to a Matrix [Parameters x Iterations]
-    sample_matrix = if samples isa MCMCChains.Chains
-        Array(samples)'
-    else
-        samples
-    end
-    
-    n_params, n_iters = size(sample_matrix)
-    
-    # 2. Robust observation extraction
-    # Check for different possible names in the model arguments
-    y_data = if haskey(model.args, :y)
-        model.args.y
-    elseif haskey(model.args, :y_sim)
-        model.args.y_sim
-    elseif haskey(model.args, :y_binary)
-        model.args.y_binary
-    else
-        # Fallback to the first argument if keys don't match
-        model.args[1]
-    end
-    n_obs = length(y_data)
-    
-    # 3. Compute Pointwise Log-Likelihood Matrix [Iterations x Observations]
-    ll_matrix = zeros(n_iters, n_obs)
-    
-    for i in 1:n_iters
-        theta = sample_matrix[:, i]
-        try
-            # Distribute total log-likelihood across observations as a proxy
-            l = Turing.loglikelihood(model, theta)
-            ll_matrix[i, :] .= l / n_obs
-        catch
-            ll_matrix[i, :] .= -1e10 # Use a large negative number for failure
-        end
-    end
-    ll_matrix[.!isfinite.(ll_matrix)] .= -1e10
-
-    # 4. Numerically Stable WAIC Implementation
-    # lppd = sum_{i=1}^{N_obs} log( (1/S) * sum_{s=1}^S exp(log_lik_{s,i}) )
-    # We use the log-sum-exp trick to avoid overflow/Inf
-    lppd = 0.0
-    for j in 1:n_obs
-        col = ll_matrix[:, j]
-        max_ll = maximum(col)
-        # log(mean(exp(x))) = max_x + log(mean(exp(x - max_x)))
-        lppd += max_ll + log(mean(exp.(col .- max_ll)))
-    end
-    
-    # p_waic = sum_{i=1}^{N_obs} var_{s=1}^S (log_lik_{s,i})
-    p_waic = sum(var(ll_matrix, dims=1))
-    
-    waic_val = -2 * (lppd - p_waic)
-    
-    return waic_val
-end
-
-
-# Helper to calculate RMSE
-function calculate_rmse(y_true, y_pred)
-    return sqrt(mean((y_true .- y_pred).^2))
-end
-
-
-
-
-

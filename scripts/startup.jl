@@ -21,6 +21,13 @@ print( "Current directory is: ", current_directory, "\n\n" )
 
 pkgs = unique( [  
     "DrWatson", "Revise", "Requires", 
+    "Random", "Statistics", "LinearAlgebra", "DataFrames",
+    "StatsBase", "SparseArrays", "Plots",
+    "JLD2", "LibGEOS", "Graphs", "DelaunayTriangulation",
+    "Random", "Turing", "Distributions", "Statistics", "MCMCChains", "DataFrames",
+    "LinearAlgebra", "Clustering", "StatsBase", "LogExpFunctions",
+    "JLD2", "FFTW",  "SparseArrays", "StaticArrays", "FillArrays",
+    "Bijectors", "DynamicPPL", "AdvancedVI", "Optimisers", "PosteriorStats", "HypothesisTests",
     "CurlHTTP",
     "PrecompileTools", "PackageCompiler","Memoization", "BenchmarkTools", "OhMyREPL",
     "DataFrames", "CSV", "JLD2", "Tables",
@@ -36,12 +43,12 @@ pkgs = unique( [
     "Optim", "Flux",  
     "Peaks", "KernelDensity", "DSP", "Interpolations", 
     "ADTypes",  "ForwardDiff",  
-        "JLD2", "DelaunayTriangulation",
-        "PolygonOps", "GeoInterface", "StatsPlots",
-       "MCMCChains",  
-     "Clustering",  
-        "JLD2", "FFTW",  
-         "Bijectors", "DynamicPPL", "AdvancedVI", "Optimisers",
+    "JLD2", "DelaunayTriangulation",
+    "PolygonOps", "GeoInterface", "StatsPlots",
+    "MCMCChains",  
+    "Clustering",  
+    "JLD2", "FFTW",  "HypothesisTests",
+    "Bijectors", "DynamicPPL", "AdvancedVI", "Optimisers",
     "AdvancedVI",  "Turing", "Bijectors", "ArchGDAL",
     "KernelFunctions", "AbstractGPs",  "ApproximateGPs", "LogExpFunctions", "TemporalGPs"
 ] )
