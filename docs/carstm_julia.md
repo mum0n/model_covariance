@@ -33,18 +33,77 @@ make quarto FN=carstm_julia.md DOCTYPE=html PARAMS="-P todo:[nothing,add,more,he
 
 ## Abstract
 
-This document shows how to build a CARSTM regression, optionally with a
+This document provides a rigorous technical overview of the **CARSTM** (Conditional Autoregressive Spacetime Model) framework implemented in this Julia environment. CARSTM serves as a high-dimensional Bayesian hierarchical structure designed to decompose complex spatio-temporal phenomena into interpretable latent components: spatial clustering (BYM2), temporal autocorrelation (AR1/RFF), and non-linear interactions. 
+
+This document also shows how to build a CARSTM regression, optionally with a
 pPCA, using bottom temperature (Gaussian, space-time, with time as
 Fourier harmonics; (temporal processes)\[./temporal_processes.md\] ) and
 species composition (Multivariate Normal, latent with Householder
 transform, space-time; [spatial processes](./spatial_processes.md)) and snow crab (Hurdle,
-binomial and Poisson, space-time) in the Maritimes Region of Canada.
+binomial and Poisson, space-time) in the Maritimes Region of Canada. 
+
+Key advancements presented here include the integration of **Random Fourier Features (RFF)** to approximate Gaussian Processes, **Deep Gaussian Processes** for non-stationary surface estimation, and a **Mixed-Sampler Gibbs** inference strategy that optimizes sampling efficiency by pairing specific parameters with their mathematically optimal algorithms (e.g., ESS for Gaussian priors, NUTS for regression coefficients). This framework is designed for applications requiring high precision in ecological, epidemiological, or environmental data science.
+
+---
+
+## The Purpose and Rationale
 
 
+1.  **Define Flexible Spatial Units:** Allow for data-driven partitioning of spatial domains into meaningful units.
+2.  **Implement Diverse Spatio-Temporal Models:** Provide a suite of nine different CARSTM models capable of handling various data types (Gaussian, LogNormal, Binomial, Poisson, Negative Binomial) and incorporating different spatial (BYM2), temporal (AR1, RFF), and spatio-temporal interaction structures, as well as categorical and continuous covariates.
+3.  **Support Advanced Techniques:** Incorporate modern Bayesian statistical computing methods like PC priors, GMRF constructions, and Random Fourier Features for Gaussian Processes.
 
-## Areal units: partitioning of space
 
-Areal Unit Modelling (CARSTM), the choice of spatial partition directly impacts the identifiability of temporal and spatial latent effects. A well-constructed partition must balance geometric compactness with statistical information density.
+### The Spatio-Temporal Challenge
+Real-world data often exhibit dependencies across both space and time that violate the independence assumptions of standard GLMs. Traditional methods often treat space and time as separable; however, CARSTM explicitly models the **Space-Time Interaction (Type IV)**, allowing for the discovery of localized anomalies that evolve dynamically.
+
+### Why CARSTM?
+The 'Conditional' aspect refers to the Markovian property where the state of a spatial unit depends only on its immediate neighbors. This allows for the construction of **Sparse Precision Matrices**, transforming $O(N^3)$ Gaussian Process problems into computationally tractable $O(N)$ or $O(N \log N)$ GMRF problems.
+ 
+### Core Assumptions
+
+To ensure valid inference, the CARSTM framework relies on several core axioms:
+
+*   **Markov Property:** The spatial effect of a unit is independent of all non-neighbors given its immediate neighbors, enabling sparse precision matrix $Q$. **Conditional Spatial Independence (Markov Property)** assumes that the latent spatial effect $\phi_i$ of a unit is independent of all other units given its immediate neighbors $\mathcal{N}(i)$. This allows the joint distribution of the spatial field to be represented as a **Gaussian Markov Random Field (GMRF)** with a sparse precision matrix $Q$, where $Q_{ij} \neq 0$ only if $i$ and $j$ are neighbors.
+
+*   **Additivity:** The log-linear predictor $\eta$ is a linear combination of separable spatial, temporal, and interaction components. This **Additivity of Latent Components** means the log-linear predictor $\eta$ is assumed to be a linear combination of separable effects: $\eta = \alpha + \text{Space} + \text{Time} + \text{Interaction} + \text{Covariates}$. This implies that while the components can interact (Type IV), their prior structures are defined independently.
+
+*   **Stationarity:** Temporal processes (AR1/RFF) assume constant mean and variance over the standardized $[0, 1]$ interval. **Stationarity of the Temporal Process** is assumed in models using **AR1**, that is, with a constant correlation $\rho$. In **RFF** variants, the kernel (e.g., Matern or Squared Exponential) is assumed to be stationary, meaning the correlation between two time points depends only on their distance, not their absolute position.
+ However, this is relaxed with Deep GP models.
+
+*   **Rank-Deficiency:** Intrinsic priors (ICAR, RW2) are singular and require sum-to-zero constraints ($\sum u_i = 0$) for parameter identifiability against the global intercept. **Intrinsic Rank-Deficiency (RW2 and ICAR)** means smoothing priors like the **Second-Order Random Walk (RW2)** and the **Intrinsic CAR (ICAR)** are assumed to be 'intrinsic,' meaning their precision matrices are singular (rank-deficient). We assume a sum-to-zero constraint ($\sum u_i = 0$) to ensure the intercept and the structured effects are identifiable.
+
+Impact of the Sum-to-Zero Constraint on Identifiability: 
+
+  - The Rank-Deficiency Problem: Priors like the **ICAR** (spatial) and **RW2** (temporal/smoothing) define the distribution of *differences* between adjacent points rather than their absolute levels. Consequently, the precision matrix $Q$ for these priors is singular (it has a rank deficiency of at least 1). 
+
+  - **The Null Space:** For a spatial ICAR model, adding any constant $c$ to the entire vector $\mathbf{u}$ (i.e., $\mathbf{u} + c\mathbf{1}$) results in the same prior log-density.
+
+  - **The Mathematical Consequence:** Without a constraint, the model cannot distinguish between the **global intercept** ($\alpha$) and the **mean level** of the spatial field. This leads to an improper posterior where the intercept could drift to $+\infty$ while the spatial field drifts to $-\infty$.
+
+  - Ensuring Identifiability: By enforcing $\sum u_i = 0$, we effectively 'pin' the latent field to a mean of zero. This ensures:
+    *   **Unique Estimates:** The global intercept $\alpha$ captures the overall mean of the response.
+    *   **Interpretation:** The spatial vector $\mathbf{u}$ captures only the *deviations* from that mean due to geography.
+    *   **Sampler Stability:** MCMC samplers (like NUTS or ESS) will fail to converge if this constraint is missing, as they will attempt to explore the infinite 'ridge' of equally likely values in the likelihood surface.
+
+  - Implementation: Here, we handle this through **soft constraints** (adding a tight normal penalty to the sum) or by **re-centering** the vector within the model block, which shifts the mass back to the identifiable region of the parameter space. There are two primary ways to enforce the $\sum u_i = 0$ constraint: 
+    *  **Soft Constraint (Penalty Method):** We treat the sum as an observed variable with a very tight prior around zero.
+    *  **Explicit Re-centering (Mean-Shift):** We subtract the empirical mean from the vector during every iteration.
+
+
+* **Bochner’s Theorem for RFF:** For the Random Fourier Feature approximation, it is assumed that the chosen kernel is continuous and positive definite, allowing it to be represented as the Fourier transform of a non-negative spectral density. We sample from this density (typically a Normal distribution) to approximate the infinite-dimensional 
+
+### References
+
+*   **Besag, J. (1974):** Spatial interaction and the statistical analysis of lattice systems.
+*   **Rue, H., & Held, L. (2005):** Gaussian Markov Random Fields: Theory and Applications.
+*   **Sørbye, S. H., & Rue, H. (2014):** Scaling intrinsic Gaussian Markov random field priors.
+*   **Rahimi, A., & Recht, B. (2007):** Random features for large-scale kernel machines.
+*   **Hoffman, M. D., & Gelman, A. (2014):** The No-U-Turn Sampler (NUTS).
+
+### Areal units: partitioning of space
+
+The choice of spatial partition directly impacts the identifiability of temporal and spatial latent effects. A well-constructed partition must balance geometric compactness with statistical information density.
 
 Multiple methods exist for partitioning spatial data. A few of the simpler ones are examined.
 
@@ -54,41 +113,637 @@ Specific criteria:
   - **Temporal Coverage**: The minimum number of unique time points present in any single tile.
 
 
+The issues we are looking for:
+
+Identifiability issues** in hierarchical models (like ICAR or CARSTM) are important .
+  - regions with no data make estimating local parameters like temporal persistence ($\rho$) a challenge
+  - Poisson Weighted CVT: "shrink" tiles where data is abundant and "stretch" them where data is scarce. Every areal unit is informative.
+
+
+#### Spatial Partitioning Methodology
+
+The `assign_spatial_units` function allows for several algorithmic approaches to discretize the spatial domain:
+
+1.  **Binary Vector Tree (BVT):** A recursive splitting method that divides the space along the axis of maximum variance. It is computationally efficient and useful for ensuring roughly equal point counts in each unit.
+2.  **Quadrant Voronoi Tessellation (QVT):** A quadtree-like approach that recursively divides the domain into four quadrants. Best for capturing multi-scale spatial density variations.
+3.  **Agglomerative Voronoi Tessellation (AVT):** Starts with an over-partitioned space and iteratively merges the smallest units until a minimum point threshold is met. This is the most robust method for preventing units with insufficient data slices.
+4.  **Centroidal Voronoi Tessellation (CVT):** Uses Lloyd's algorithm to iteratively move centroids to the geometric center of their Voronoi cells, resulting in a highly regularized grid that adapts to the data density.
+
+Each of these methods permits additional constraints in the form of number and density, etc.
+
+
+
+### Basis  
+
+Delaunay Triangulation and Voronoi Tesselation
+
+Given a set of centroids $S = \{s_1, s_2, ..., s_n\}$, a Voronoi cell $V_i$ is defined as the set of all points $x$ in the domain such that the distance to $s_i$ is less than or equal to any other centroid $s_j$:
+$V_i = \{x \in \mathcal{D} \mid \|x - s_i\| \leq \|x - s_j\|, \forall j \neq i\}$  
+
+**Algorithm:** Uses `DelaunayTriangulation.jl` to compute the dual graph, followed by clipping against the domain boundary using `LibGEOS.jl`.
+
+
+
+- Place $k$ seeds across the domain.
+- Define boundaries using Delaunay Triangulation and Voronoi tesselation.
+- No adaptation to the underlying point process intensity. Seed Placement: needs to be defined.
+- High variance of points per unit, meaning some units might be very dense while others are sparse.
+- Geometric Regularity: While it produces compact, convex cells, their distribution can be uneven due to the random seed placement.
+
+References
+
+* **Okabe, A., et al. (2000):** Spatial Tessellations: Concepts and Applications of Voronoi Diagrams.
+* See information in https://en.wikipedia.org/wiki/Delaunay_triangulation
+
+
+### Seed or centroid placement
+
+The number and location of such starting points is influential for methods that start with many possibilities and then decrease the number. We use KDE to assist in initiating from an slighly informative basis. Alternatively, random or regular grid placement can also be used.
+
+
+
+
+#### Centroidal Voronoi Tessellation (CVT)
+
+CVT is a spatial partitioning method that creates a mesh by aligning seeds with the centers of their respective regions. It transforms a standard Voronoi diagram into a stable, balanced structure where every "cell" is at its geometric or density-weighted equilibrium. This is achieved with Lloyd’s Algorithm:
+
+-  Partition: Generate Voronoi regions based on current seed locations (usually some regular grid)
+-  Shift: Move each seed to the center of mass of its region.
+-  Converge: Repeat until the system minimizes the "quantization error" (energy functional):
+-  Purpose: for a uniform grid where geography is the priority. 
+-  
+    $$\mathcal{H}(S, V) = \sum_{j=1}^k \int_{V_j} \rho(x) ||x - s_j||^2 \, dx$$
+    
+    *(Note: In Standard CVT, the density $\rho(x)$ is treated as a constant 1).*
+
+- Geometric Uniformity. Tiles of roughly equal size/shape, "honeycomb" mesh (often hexagonal).
+- Unweighted: Treats all geographic space as equally important
+- Minimizes spatial autocorrelation variance **within** units.
+
+
+#### Adaptive CVT
+
+- Adaptive Resolution. Adjusts tile size based on data distribution. 
+- Density-Weighted - Seeds migrate toward dense data clusters. 
+- Smaller, denser tiles in high-activity areas; larger tiles in sparse areas. 
+- Balances information content; prevents "data-poor" units in sparse areas. 
+- Local Split Control - Targeted subdivision/splits in specific tiles based on local metrics, providing high-resolution detail only where it is required.
+- Purpose: data density varies significantly and partitions need to adapt to data
+
+- Density-Weighted Centroid. Seeds migrate toward areas with more data points based on an intensity function $\lambda(x)$, typically estimated via Kernel Density Estimation (KDE).
+
+- The position of each seed $s_j$ is calculated as:
+
+$$s_j = \frac{\int_{V_j} x \lambda(x) \, dx}{\int_{V_j} \lambda(x) \, dx}$$
+
+- This ensures the expected number of points per tile remains roughly constant across the entire map, regardless of whether a region is crowded or sparse.
+- Prevents "Data Starvation": In standard methods, sparse regions often get stuck with "empty" tiles. This method expands tile size in sparse areas and shrinks it in dense areas, ensuring every tile has sufficient observations to identify temporal trends (e.g., $AR(1)$ processes).
+- Minimizes Boundary Artifacts: Standard tiles often "split" a high-density cluster in half. The Hybrid CVT migrates seeds to the modes (peaks) of density, ensuring a single data feature stays within a single tile.
+- Improves Model Convergence: By balancing the number of observations ($n_j$) across tiles, it stabilizes the precision matrix for spatial models (like ICAR/CAR) and ensures MCMC chains converge faster.
+
+- KDE Estimation: Map the data intensity $\lambda(s)$ across the domain.
+- Seeds at the highest density peaks.
+- **Algorithm:** Weighted Lloyd's Algorithm  
+  1. Estimate a continuous intensity surface $\lambda(s)$ using KDE (Poisson) or Gaussian Process (GP) regression.
+  2. Calculate the **Density-Weighted Centroid** for each unit $V_j$:
+   $$s_j = \frac{\int_{V_j} x \lambda(x) dx}{\int_{V_j} \lambda(x) dx}$$
+  1. This forces seeds toward data-rich regions, resulting in smaller tiles in high-density areas.
+
+- Produces "statistically significant" tiles. It ensures that no tile is a "data desert," which directly leads to higher reliability in spatio-temporal modeling.
+
+
+- CVT minimizes the functional $F(s, V) = \sum_{i=1}^n \int_{V_i} \rho(x) \|x - s_i\|^2 dx$, where **$\rho(x)$ is the Kernel Density Estimation (KDE)**.
+
+- **Pros:** Produces the most regular/compact shapes; naturally adapts to point density (low CV of density).
+- **Cons:** Computationally expensive (iterative); does not guarantee a minimum number of points per unit.
+
+#### 2. Binary Vector Tree (BVT)
+BVT is a hierarchical partitioning method that recursively splits the point set along the axis of maximum variance.
+- **Pros:** Extremely fast; ensures very balanced point counts across all units.
+- **Cons:** Resulting shapes can be very elongated (high aspect ratio); does not follow local spatial clusters as closely as Voronoi methods.
+
+#### 3. Quadrant Voronoi Tessellation (QVT)
+QVT recursively divides the domain into four quadrants based on local means.
+- **Pros:** Efficiently captures multi-scale clustering; very intuitive spatial hierarchy.
+- **Cons:** Can produce very small/empty units in sparse areas unless strictly constrained.
+- A top-down approach in which each internal node has exactly four children. Quadtrees are most often used to partition a two-dimensional space by recursively subdividing it into four quadrants or regions. The Quadtree is built recursively such that If a node has fewer points than its capacity, it becomes a leaf node. If a node has more points than its capacity, it subdivides itself into four child nodes (quadrants).
+Points from the parent node are then redistributed into the appropriate child nodes.
+- **Algorithm:** Recursive Spatial Decomposition  
+  1. Start with a bounding box containing all points.
+  2. Recursively divide the box into four equal quadrants if the number of points exceeds the `capacity`.
+  3. **Post-Processing:** Filter leaf nodes based on `min_area` and `min_time_slices`.
+  4. **Classification:** Re-assign all original points to the centroid of the nearest valid leaf node.
+
+
+#### 4. Agglomerative Voronoi Tessellation (AVT)
+AVT is an iterative method used to enforce minimum sample size constraints (`min_pts`).
+- **Pros:** Guaranteed compliance with `min_pts` for statistical power; preserves topological adjacency.
+- **Cons:** Can result in highly irregular shapes as units are merged; computationally intensive due to re-triangulation.
+- **Algorithm:** Agglomerative Dissolution  
+  1. Initialize each data point as its own Voronoi cell.
+  2. Construct an adjacency graph via Delaunay triangulation.
+  3. **Prioritized Merging:** Calculate the cumulative Poisson intensity for each adjacent pair. Sort pairs by combined density.
+  4. Dissolve the edge between the two units with the **lowest** combined intensity first.
+  5. Stop when the target number of units is reached or the point-count variance stabilizes (asymptotic convergence).
+
+
+#### Summary of Findings
+
+
+Based on the benchmarking results and spatial visualizations, we evaluated four distinct partitioning strategies:
+
+1.  **Centroidal Voronoi Tessellation (CVT):** Consistently achieved the lowest **Coefficient of Variation (CV)** in point density. By iteratively minimizing the variance of point-to-centroid distances, it creates the most spatially "fair" and compact units. This is the gold standard for projects requiring uniform statistical power across units.
+2.  **Binary Vector Tree (BVT):** Demonstrated the highest computational speed. By splitting strictly on median coordinates, it guarantees almost perfectly balanced point counts, making it ideal for large-scale data pre-processing where processing time and count-balancing outweigh shape regularity.
+3.  **Quadrant Voronoi Tessellation (QVT):** Excels at identifying multi-scale spatial clusters. Its recursive 4-way split naturally matches the hierarchical nature of spatial data (e.g., urban vs. rural density transitions).
+4.  **Agglomerative Voronoi Tessellation (AVT):** The only method that provides a hard guarantee on the `min_pts` constraint. While it may produce less regular shapes during the merging phase, it ensures that every resulting unit meets the sample size requirements for downstream statistical modeling.
+
+Ultimately, the criteria for selection of areal units are based upon considerations of:
+  
+
+- **Geometric vs. Statistical Adaptation**: 
+   - **`cvt`**  prioritize geometric regularlity and compactness. This is excellent for simple spatial models but can lead to 'sparse' units in low-density areas.
+   - **`avt`** adaptively shrink tiles in high-density regions. This ensures that even the smallest units have enough points for stable estimation of local effects.
+
+- **Information Balance & Convergence**: 
+   - The **`avt`** method achieved the lowest variance in point counts. This 'information balance' is a critical prerequisite for the CARSTM model's precision matrix to be well-conditioned.
+   - The asymptotic convergence at 19 units for the density-aware methods suggests that 19 is the 'natural' granularity for this specific point process dataset.
+
+- **Temporal Identifiability**: 
+   - All methods successfully maintained full temporal coverage (15 slices) across all units. This confirms that the partitioning logic, combined with the point-count constraints, ensures that the longitudinal (AR1) component of the CARSTM model is identifiable in every areal unit.
+
+- **Edge Handling**: 
+   - The automated `boundary_hull` calculation (with dynamic buffering) correctly prevents 'infinite' Voronoi cells at the domain edges, which previously caused artifacts in the adjacency graph (W matrix).
+
+
+Recommendations:
+
+- **For General Spatial Analysis:** Use **CVT** with a KDE-informed initial seed. It provides the most visually and mathematically robust areal units for mapping and regionalization.
+- **For Small Sample Sizes:** Always apply **AVT** as a post-processing step to ensure that no unit is too sparse to produce reliable estimates.
+- **For Real-time/Large Data:** Use **BVT** if the dataset contains millions of points and the primary goal is rapid parallelization of the workload across balanced partitions.
+- **For Hierarchical Modeling:** Use **QVT** to capture the nested structure of local and regional spatial effects.
+
+#### References
+* **Lloyd, S.** (1982). *Least squares quantization in PCM*. IEEE Transactions on Information Theory, 28(2), 129-137.
+* **Du, Q., Faber, V., & Gunzburger, M.** (1999). *Centroidal Voronoi Tessellations*. SIAM Review, 41(4), 637-676.
+* **Okabe, A. et al.** (2000). *Spatial Tessellations*. John Wiley & Sons.
+* **Samet, H.** (2006). *Foundations of Multidimensional and Metric Data Structures*. Morgan Kaufmann.
+
+  
+
+
+### GMRF Components
+
+The core of the spatial models relies on the **Besag-York-Mollié (BYM2)** specification. We utilize `build_laplacian_precision` and `scale_precision!` to ensure that the structured spatial component has a unit marginal variance. This scaling (Sørbye & Rue, 2014) is critical for prior interpretability, ensuring that the `phi` parameter truly represents the proportion of variance explained by spatial structure.
+
+GMRFs focus upon the precision matrix ($Q$) as this speeds up computations (by not having to invert the covariance matrix).
+
+Many developments have helped enable this approach, especially through INLA (Rue & Held, 2005).
+
+#### Standard AR1 
+
+
+A standard stationary AR(1) process is defined by: $x_t = \rho x_{t-1} + \epsilon_t, \quad \epsilon_t \sim N(0, \sigma^2)$. For a **cyclic** sequence of length $n$ ($x_0 = x_n$), the joint density $P(\mathbf{x})$ follows:
+$$\text{Log} P(\mathbf{x}) \propto -\frac{1}{2\sigma^2(1-\rho^2)} \sum_{i=1}^{n} (x_i - \rho x_{i-1})^2$$
+Expanding $(x_i - \rho x_{i-1})^2 = x_i^2 - 2\rho x_i x_{i-1} + \rho^2 x_{i-1}^2$. Summing over $i$:
+- **Diagonal ($Q_{ii}$):** Every $x_i$ appears once as $x_i^2$ and once as $\rho^2 x_i^2$, resulting in $1+\rho^2$.
+- **Off-Diagonal ($Q_{i, i\pm1}$):** Adjacent pairs receive $-\rho$.
+- **Boundary ($Q_{1,n}$):** The cyclic constraint links $x_1$ and $x_n$ with $-\rho$.
+
+With "open" boundaries at $t=1$ and $t=n$:
+
+- **Boundary Condition:** The first element $x_1$ has no predecessor, so its marginal variance is $\sigma^2/(1-\rho^2)$, implying $Q_{11} = 1$. The last element $x_n$ only appears once as a square and once as a lagged term, but since there is no $x_{n+1}$, its diagonal is also $1$ (or effectively $1+\rho^2$ minus the missing link).
+- **Structure:** $Q$ is tridiagonal. This is the standard prior for temporal autocorrelation in time-series data.
+
+Unlike the cyclic version, the standard AR1 precision matrix accounts for the "open" boundaries at $t=1$ and $t=n$.
+- **Boundary Condition:** The first element $x_1$ has no predecessor, so its marginal variance is $\sigma^2/(1-\rho^2)$, implying $Q_{11} = 1$. The last element $x_n$ only appears once as a square and once as a lagged term, but since there is no $x_{n+1}$, its diagonal is also $1$ (or effectively $1+\rho^2$ minus the missing link).
+- **Structure:** $Q$ is tridiagonal. This is the standard prior for temporal autocorrelation in time-series data.
+
+
+See example: build_ar1_precision()
+
+#### AR(1) Process with Periodic Boundary Conditions
+
+For a **First-Order Autoregressive (AR1) process** with **periodic boundary conditions**. This transforms a standard linear AR(1) sequence into a **Cyclic GMRF**.
+
+The first-order AR(1) process is defined by:
+
+$x_t = \rho x_{t-1} + \epsilon_t, \quad \epsilon_t \sim N(0, \sigma^2)$. 
+
+For a **cyclic** sequence of length $n$ ($x_0 = x_n$), the joint density $P(\mathbf{x})$ follows:
+
+$$\text{Log} P(\mathbf{x}) \propto -\frac{1}{2\sigma^2(1-\rho^2)} \sum_{i=1}^{n} (x_i - \rho x_{i-1})^2$$
+
+Expanding $(x_i - \rho x_{i-1})^2 = x_i^2 - 2\rho x_i x_{i-1} + \rho^2 x_{i-1}^2$. 
+
+Summing over $i$:
+
+- **Diagonal ($Q_{ii}$):** Every $x_i$ appears once as $x_i^2$ and once as $\rho^2 x_i^2$, resulting in $1+\rho^2$.
+- **Off-Diagonal ($Q_{i, i\pm1}$):** Adjacent pairs receive $-\rho$.
+- **Boundary ($Q_{1,n}$):** The cyclic constraint links $x_1$ and $x_n$ with $-\rho$.
+
+
+The `build_cyclic_ar1_precision` function constructs the precision matrix ($Q$) for a **First-Order Autoregressive (AR1) process** with **periodic boundary conditions**. This transforms a standard linear AR(1) sequence into a **Cyclic GMRF**.
+
+See example: build_cyclic_ar1_precision()
+
+
+####  Second-Order Random Walk (RW2)
+
+The RW2 is a smoothing prior used for categorical levels or non-parametric trends. It penalizes the second-order differences:
+$$\text{Penalty} \propto \sum (x_i - 2x_{i+1} + x_{i+2})^2$$
+- **Precision Matrix:** $Q = D^T D$, where $D$ is the second-difference operator matrix. 
+- **Justification:** It acts as a stochastic spline. It is an **intrinsic GMRF (IGMRF)** of rank $n-2$, meaning it is singular (improper) and requires a sum-to-zero constraint for identifiability.
+
+`build_rw2_precision()` (Second-Order Random Walk) 
+
+
+#### Scaled Precision 
+
+In a BYM2 model, the marginal variance of a spatial effect depends on the graph structure (Sørbye & Rue). The geometric mean of the generalized variances of the IGMRF is used to scale the precision matrix $Q$ such that the structured spatial component has an approximate marginal variance of 1. This allows the `phi` parameter in BYM2 to represent the actual proportion of variance explained by space, making priors on `sigma` interpretable across different geographies.
+
+`scale_precision!()` (Sørbye & Rue Scaling)
+In BYM2 and GMRF models, the marginal variance of a spatial effect depends on the graph structure. `scale_precision!` calculates the geometric mean of the generalized variances of the IGMRF.
+- **Purpose:** It scales $Q$ such that the structured spatial component has an approximate marginal variance of 1. This allows the `phi` parameter in BYM2 to represent the actual proportion of variance explained by space, making priors on `sigma` interpretable across different geographies.
+ 
+#### Log-likelihood from a precision matrix
+
+Calculating the log-likelihood of a state vector $\mathbf{x}$ given a sparse precision matrix $Q$:
+
+$$\log p(\mathbf{x}|Q) = \frac{1}{2}\log(|Q|) - \frac{1}{2}\mathbf{x}^T Q \mathbf{x} - \frac{n}{2}\log(2\pi)$$
+
+by using a Cholesky decomposition ($Q = LL^T$), efficiently compute the log-determinant as $2 \sum \log(L_{ii})$ and the quadratic form as $||L^T \mathbf{x}||^2$.
+
+`logpdf_gmrf()`
+This calculates the log-likelihood of a state vector $\mathbf{x}$ given a sparse precision matrix $Q$:
+$$\log p(\mathbf{x}|Q) = \frac{1}{2}\log(|Q|) - \frac{1}{2}\mathbf{x}^T Q \mathbf{x} - \frac{n}{2}\log(2\pi)$$
+- **Implementation:** Uses a Cholesky decomposition ($Q = LL^T$) to efficiently compute the log-determinant as $2 \sum \log(L_{ii})$ and the quadratic form as $||L^T \mathbf{x}||^2$.
+
+  
+#### References
+* **Rue, H., & Held, L. (2005).** *Gaussian Markov Random Fields: Theory and Applications*. CRC Press.
+* **Sørbye, S. H., & Rue, H. (2014).** "Scaling intrinsic Gaussian Markov random field priors in spatial statistics."
+* **Lindgren, F., et al. (2011).** "An explicit link between Gaussian fields and GMRFs, the SPDE approach." *JRSS-B*.
+ 
+
+
+
+### Smoothing via RW2
+Categorical covariates are smoothed using a **Second-Order Random Walk (RW2)**. This acts as a stochastic spline, penalizing the second-order differences between adjacent levels, effectively allowing for non-linear effects in ordered categorical data (e.g., age groups or income brackets).
+
+---
+
+### Model Taxonomy and Implementation
+
+The notebook contains ten distinct model variants, categorized by likelihood family and latent structure. They are examples of implementation that are reasonably well optimized:
+
+
+| Model | Likelihood Family | Key Feature | Best Use Case |
+| :--- | :--- | :--- | :--- |
+| **v1** | Gaussian | AR1 + BYM2 | Standard continuous data with linear temporal trends. |
+| **v2** | Gaussian | RFF + BYM2 | Continuous data with multi-scale seasonality or complex cycles. |
+| **v3** | LogNormal | AR1 + BYM2 | Strictly positive, right-skewed data (e.g., rainfall, income). |
+| **v4** | Binomial | AR1 + BYM2 | Proportions, binary trials, or prevalence data. |
+| **v5** | Poisson | AR1 + BYM2 | Count data (optional Zero-Inflation for sparse counts). |
+| **v6** | Neg-Binomial | AR1 + BYM2 | Over-dispersed count data where Variance > Mean. |
+| **v7** | Binomial | Deep GP (RFF) | Proportions with highly non-linear, non-stationary space-time surfaces. |
+| **v8** | Gaussian | Deep GP (RFF) | Gold standard for high-dimensional, non-stationary continuous phenomena. |
+| **v9** | Gaussian | Continuous RFF | Models with non-linear effects for continuous covariates (Matern-like). |
+| **v10**| Gaussian | 3-Layer Deep GP | Experimental: Maximum flexibility for extreme 
+
+
+#### Gaussian Variants (v1, v2, v8, v9, v10)
+*   **v1 (Foundational):** Uses AR1 for time and BYM2 for space. Recommended for well-behaved continuous data.
+*   **v2 (RFF-Gaussian):** Replaces AR1 with Random Fourier Features. This is superior for capturing multi-scale seasonality and long-term trends simultaneously.
+*   **v8/v10 (Deep GP):** Uses hierarchical RFF layers to model the latent field. This is the 'gold standard' for high-dimensional non-stationarity.
+
+#### Count and Discrete Variants (v4, v5, v6, v7)
+*   **v4 (Binomial):** Designed for proportions and binary trial data.
+*   **v5/v6 (Poisson/NegBin):** Optimized for count data with optional **Zero-Inflation (ZI)**. The Negative Binomial variant (v6) is specifically recommended when over-dispersion is present ($Var > Mean$).
+
+---
+
+
+### Random Fourier Features (RFF) 
+  
+Random Fourier Features provide a way to approximate a kernel function $k(\mathbf{x}, \mathbf{x}')$ with a low-dimensional feature mapping $\phi(\mathbf{x})$. This transforms a Gaussian Process (GP) problem into a linear Bayesian regression problem, which is computationally much more efficient ($O(nm^2)$ vs $O(n^3)$).
+
+#### Bochner's Theorem
+Bochner's Theorem states that a continuous, stationary kernel $k(\mathbf{x} - \mathbf{x}')$ is positive definite if and only if it is the Fourier transform of a non-negative measure $p(\mathbf{\omega})$:
+$$k(\mathbf{x} - \mathbf{x}') = \int_{\mathbb{R}^d} p(\mathbf{\omega}) e^{i\mathbf{\omega}^T(\mathbf{x} - \mathbf{x}')} d\mathbf{\omega} = E_{\mathbf{\omega}}[e^{i\mathbf{\omega}^T\mathbf{x}} (e^{i\mathbf{\omega}^T\mathbf{x}'})^*]$$
+
+#### The RFF Approximation
+
+Random Fourier Features provide a way to approximate a kernel function $k(\mathbf{x}, \mathbf{x}')$ with a low-dimensional feature mapping $\phi(\mathbf{x})$. This transforms a Gaussian Process (GP) problem into a linear Bayesian regression problem, which is computationally much more efficient ($O(nm^2)$ vs $O(n^3)$).
+
+#### Bochner's Theorem
+Bochner's Theorem states that a continuous, stationary kernel $k(\mathbf{x} - \mathbf{x}')$ is positive definite if and only if it is the Fourier transform of a non-negative measure $p(\mathbf{\omega})$:
+$$k(\mathbf{x} - \mathbf{x}') = \int_{\mathbb{R}^d} p(\mathbf{\omega}) e^{i\mathbf{\omega}^T(\mathbf{x} - \mathbf{x}')} d\mathbf{\omega} = E_{\mathbf{\omega}}[e^{i\mathbf{\omega}^T\mathbf{x}} (e^{i\mathbf{\omega}^T\mathbf{x}'})^*]$$
+
+#### The RFF Approximation
+By Monte Carlo sampling $\mathbf{\omega}_1, \dots, \mathbf{\omega}_m$ from the spectral density $p(\mathbf{\omega})$ (which is a Gaussian distribution for the Squared Exponential kernel), we can approximate the expectation:
+$$\phi(\mathbf{x}) = \sqrt{\frac{2}{m}} [\cos(\mathbf{\omega}_1^T\mathbf{x} + b_1), \dots, \cos(\mathbf{\omega}_m^T\mathbf{x} + b_m)]^T$$
+where $b_i \sim \text{Uniform}(0, 2\pi)$. The inner product $\phi(\mathbf{x})^T \phi(\mathbf{x}')$ then converges to $k(\mathbf{x}, \mathbf{x}')$ as $m \to \infty$.
+
+By Monte Carlo sampling $\mathbf{\omega}_1, \dots, \mathbf{\omega}_m$ from the spectral density $p(\mathbf{\omega})$ (which is a Gaussian distribution for the Squared Exponential kernel), we can approximate the expectation:
+$$\phi(\mathbf{x}) = \sqrt{\frac{2}{m}} [\cos(\mathbf{\omega}_1^T\mathbf{x} + b_1), \dots, \cos(\mathbf{\omega}_m^T\mathbf{x} + b_m)]^T$$
+where $b_i \sim \text{Uniform}(0, 2\pi)$. The inner product $\phi(\mathbf{x})^T \phi(\mathbf{x}')$ then converges to $k(\mathbf{x}, \mathbf{x}')$ as $m \to \infty$.
+
+#### References
+* **Rahimi, A., & Recht, B. (2007).** "Random features for large-scale kernel machines." *NIPS*.
+
+ 
+### Deep Gaussian Processes
+
+A Deep GP is a hierarchical composition of GPs. In our implementation (`model_v7`/`model_v8`), we use the RFF approximation for each layer to maintain tractability.
+
+#### Hierarchical Structure
+For a two-layer model, the process is defined as:
+1.  **Layer 1:** $\mathbf{h} = f_1(\mathbf{x})$, where $f_1 \sim GP(0, k_1)$.
+2.  **Layer 2:** $y = f_2(\mathbf{h})$, where $f_2 \sim GP(0, k_2)$.
+
+#### Justification
+- **Non-Stationarity:** While each individual GP layer might use a stationary kernel (like RFF-Matern), the composition $f_2(f_1(\mathbf{x}))$ is highly non-stationary and non-Gaussian. This allows the model to adapt its lengthscale locally.
+- **Feature Extraction:** The first layer acts as a non-linear dimensionality reduction or warping of the input space $(x, y, t)$, allowing the second layer to discover complex spatio-temporal interactions that a single-layer GP could not capture.
+
+#### References
+* **Damianou, A., & Lawrence, N. (2013).** "Deep Gaussian Processes." *AISTATS*.
+* **Cutajar, K., et al. (2017).** "Random Feature Expansions for Deep Gaussian Processes." *ICML*.
+
+
+
+### Optimal Inference: The Mixed-Sampler Strategy (Gibbs Sampling)
+  
+Efficient inference for Conditional Autoregressive Spacetime Models (CARSTM) requires a **Mixed-Sampler Gibbs** approach. Because the parameter space includes high-dimensional latent fields, smooth categorical effects, and simple variance scalars, a single algorithm is rarely optimal for the entire model.
+
+### 1. Latent Gaussian Fields
+**Recommended: Elliptical Slice Sampling (ESS())**
+*   **Use Case:** `u_icar`, `u_iid`, `f_tm_raw`, `st_int_raw`.
+*   **Justification:** ESS is specifically designed for parameters with Gaussian priors. It requires **no tuning** (no step size or path length) and is extremely stable in the high-dimensional spaces typical of spatial and interaction effects.
+*   **Optimization:** Ensure variables are zero-centered in their priors. ESS is analytically exact for Gaussian priors and requires no manual tuning parameters.
+*   **Original Paper:** Murray, I., Adams, R. P., & MacKay, D. J. (2010). Elliptical slice sampling. *AISTATS*.
+*   **Context in CARSTM:** ESS is optimal for latent Gaussian fields (ICAR/AR1) because it leverages the properties of the multivariate normal prior. Unlike HMC, it requires no gradient information or step-size tuning, making it robust for high-dimensional spatial dependencies.
+
+
+### 2. Differentiable Regression Coefficients
+**Recommended: NUTS()**
+*   **Use Case:** `beta_cov`, fixed effects.
+*   **Justification:** The No-U-Turn Sampler excels at navigating complex posterior geometries of regression weights by adaptively finding the optimal path length, avoiding random walk behavior.
+*   **Original Paper:** Hoffman, M. D., & Gelman, A. (2014). The No-U-Turn sampler: adaptively setting path lengths in Hamiltonian Monte Carlo. *Journal of Machine Learning Research*.
+*   **DynamicHMC Implementation:** Betancourt, M. (2017). A conceptual introduction to Hamiltonian Monte Carlo. *arXiv preprint arXiv:1701.02434*.
+*   **Context in CARSTM:** Used for categorical regression coefficients (`beta_cov`). NUTS adaptively finds the optimal path length, avoiding the random walk behavior of MH while being more user-friendly than standard HMC.
+*   **`target_acceptance` (Default: 0.65)**: Increase to `0.8` or `0.9` if you see 'divergent transitions'. This forces the sampler to take smaller, more cautious steps.
+*   **`max_depth` (Default: 10)**: If the sampler hits the maximum depth (1024 steps), increase this. It allows the sampler to explore longer trajectories in complex posteriors.
+
+
+### 3. Discrete & Non-Differentiable Structures
+**Particle Gibbs (PG)** is a powerful algorithm for sampling from models with complex, non-differentiable, or discrete latent structures. In the CARSTM framework, PG is most beneficial for:
+**Recommended: Particle Gibbs (PG())**
+*   **Use Case:** Zero-inflation indicators (`phi_zi`), discrete latent states.
+*   **Justification:** PG uses a particle filter to sample from latent trajectories that are discrete or non-differentiable, allowing them to be integrated into the broader Gibbs framework.
+*   **Particle Count:** Usually `10` to `50`. Increasing particles improves the approximation of the latent state but increases computational cost linearly. `PG(40)` is a robust production default.
+*   **Zero-Inflation components**: Handling the discrete latent state $z_i \in \{0, 1\}$ in ZIP or ZINB models.
+*   **Discrete Latent Regimes**: If the spatiotemporal interaction follows a hidden Markov structure.
+*   **Non-linear State-Space trajectories**: When the temporal process $\rho$ is part of a non-Gaussian state-space representation.
+* PG is often paired with HMC/NUTS for the continuous parameters while it handles the 'difficult' discrete or highly non-linear parts.
+*   **Original Paper:** Andrieu, C., Doucet, A., & Holenstein, R. (2010). Particle markov chain monte carlo methods. *Journal of the Royal Statistical Society: Series B (Statistical Methodology)*.
+*   **Context in CARSTM:** Critical for non-differentiable or discrete parameters, such as zero-inflation indicators in Poisson or Negative Binomial variants, as it uses sequential Monte Carlo to update latent paths.
+
+ 
+### 4. HMC (Standard Hamiltonian Monte Carlo) and HMC with Dual Averaging (HMCDA)
+*   **Reference:** Andrieu, C., & Thoms, J. (2008). A tutorial on adaptive MCMC. *Statistics and Computing*.
+*   **Context in CARSTM:** Provides stable sampling for latent fields with strict geometric constraints by using dual averaging to adapt the step size while maintaining a fixed trajectory length.
+* HMC:
+  *   **`epsilon` (Step Size)**: Too large causes instability; too small makes sampling slow. A good start is often `0.05` to `0.1`.
+  *   **`n_leapfrog` (Steps)**: Usually between `10` and `50`. The goal is to ensure the trajectory is long enough to reach a new area of the posterior but short enough to avoid looping back.
+* HMCDA:
+  *   **`trajectory_length`**: This is the total distance traveled ($ \epsilon \times n_{\text{leapfrog}} $). A value of `1.0` is a robust default for standardized models.
+  *   **`target_acceptance`**: Similar to NUTS, `0.65` is standard, while `0.8+` is safer for highly correlated parameters.
+
+ 
+
+### 5. Variance and Correlation Parameters
+**Recommended: Metropolis-Hastings (MH())**
+*   **Use Case:** `sigma_y`, `sigma_sp`, `phi_sp`, `rho_tm`.
+*   **Justification:** These are typically low-dimensional scalars. MH is computationally cheap and often converges faster for these parameters than gradient-based methods, which may struggle with the bounded nature of variances.
+*   **Proposal Distribution:** For variance parameters, provide an explicit proposal standard deviation if acceptance rates fall outside the 20-50% range. 
+*   *Example:* `MH(:sigma_y => Normal(0, 0.05))`.
+
+
+### 6. Mixed-Sampler Gibbs Framework
+*   **Reference:** Gelfand, A. E., & Smith, A. F. (1990). Sampling-based approaches to calculating marginal densities. *Journal of the American Statistical Association*.
+*   **Context in CARSTM:** The meta-strategy of combining specialized samplers (ESS for space, NUTS for fixed effects, MH for variance) is rooted in the conditional independence properties of the Gibbs sampler, allowing for highly efficient inference in hierarchical models.
+ 
+ 
+#### Sampler Theory
+*   **Murray, I., et al. (2010).** *Elliptical slice sampling.* AISTATS. (Foundational for high-dimensional Gaussian latents).
+*   **Hoffman, M. D., & Gelman, A. (2014).** *The No-U-Turn sampler.* JMLR. (Justification for adaptive HMC path lengths).
+*   **Andrieu, C., et al. (2010).** *Particle Markov chain Monte Carlo methods.* JRSS-B. (Derivation of Particle Gibbs for latent states).
+
+#### Spatiotemporal Modeling
+*   **Rue, H., & Held, L. (2005).** *Gaussian Markov Random Fields: Theory and Applications.* CRC Press.
+*   **Sørbye, S. H., & Rue, H. (2014).** *Scaling intrinsic Gaussian Markov random field priors in spatial statistics.* (Justification for BYM2 scaling used in `Q_sp`).
+*   **Rahimi, A., & Recht, B. (2007).** *Random features for large-scale kernel machines.* NIPS. (Theoretic basis for RFF approximations).
+
+---
+
+### Advanced Optimization: MAP and ADVI Tuning
+
+For production-grade point estimates and fast posterior approximations, we use the following optimized configurations:
+
+1. **MAP with L-BFGS**: This quasi-Newton method uses second-order curvature information to converge faster than standard gradient methods.
+2. **ADVI with Multi-Sample Gradients**: By increasing the samples per iteration, we reduce the variance of the stochastic gradient, ensuring the ELBO converges to a more stable local optimum.
+
+- increasing the number of samples used to estimate the ELBO gradient (e.g., ADVI(10, 1000)) significantly reduces noise and stabilizes convergence, especially when dealing with complex spatial interactions.  
+
+The Role of `n_samples` in `ADVI(n_samples, n_iterations)`:
+
+In Automatic Differentiation Variational Inference (ADVI), we aim to maximize the **Evidence Lower Bound (ELBO)**. Since the ELBO involves an expectation over the variational distribution $q(\theta)$, its gradient must be estimated stochastically.
+
+#### 1. Stochastic Gradient Estimation
+`n_samples` (the first argument) specifies how many samples are drawn from the variational posterior $q$ to calculate the empirical mean of the gradient at each optimization step. 
+
+*   **Low `n_samples` (e.g., 1):** The gradient estimate is highly computationally efficient but has **high variance**. This can lead to "chatter" where the optimization bounces around the optimum or fails to converge in complex landscapes.
+*   **High `n_samples` (e.g., 10-50):** The gradient estimate is much **smoother and more stable** (reduced variance). This is often necessary for Spatiotemporal models where the interaction between latent fields and categorical effects creates a very complex energy surface.
+
+#### 2. The Trade-off
+Increasing `n_samples` improves the accuracy of each step but increases the computational cost of each iteration linearly. 
+
+**Recommendation for CARSTM:**
+Start with `ADVI(1, 1000)` for quick smoke tests. If the ELBO plot looks extremely jagged or the results are inconsistent across runs, move to `ADVI(10, 2000)`. The extra samples help the optimizer "see through the noise" of high-dimensional spatial dependencies.
+
+
+### Recommended Optimizers for `optimize()`
+
+*   **`LBFGS()`**: Default choice for most differentiable models. Scalable and fast.
+*   **`Newton()`**: Use if you have a smaller number of parameters and want exact second-order convergence (requires Hessian).
+*   **`NelderMead()`**: Use only if the model is non-differentiable (e.g., contains discrete parameters), though it is much slower.
+
+
+### Alternative Approaches and Research Gaps
+
+While the CARSTM framework implemented here via `Turing.jl` is robust, it is important to consider alternative methodologies and acknowledge the current limitations of this implementation.
+
+
+#### Alternative Modeling Paradigms
+
+*   **Integrated Nested Laplace Approximations (INLA):** 
+    *   *Approach:* A deterministic alternative to MCMC for Latent Gaussian Models (LGMs).
+    *   *Comparison:* INLA is significantly faster than NUTS/ESS for large spatial grids but is less flexible for non-Gaussian latent components (e.g., Deep GPs) or custom likelihoods not pre-defined in the `R-INLA` or `inlabru` ecosystems.
+*   **Fixed Rank Kriging (FRK):**
+    *   *Approach:* Uses a fixed set of basis functions to reduce dimensionality.
+    *   *Comparison:* Similar to our RFF approach, but typically focuses on spatial covariance functions directly rather than the precision-matrix (GMRF) approach. It is often preferred for very smooth, large-scale geophysical processes.
+*   **Stochastic Partial Differential Equations (SPDE):**
+    *   *Approach:* Represents Matern GPs as solutions to linear SPDEs on triangular meshes.
+    *   *Comparison:* This is the 'gold standard' for continuous spatial surfaces. While our RFF approximates this, an explicit SPDE-GMRF link (Lindgren et al., 2011) provides more rigorous boundary condition handling.
+
+#### Identified Gaps and Future Work
+
+1.  **Scalability to 'Big' Space-Time Data:**
+    *   *Gap:* As the number of spatial units ($S$) and time points ($T$) grows, the interaction term ($S \times T$) creates a massive latent field. 
+    *   *Solution Path:* Future iterations should explore **Kronecker Product decomposition** of precision matrices to maintain $O(N)$ memory complexity.
+
+2.  **Non-Gaussian Interactions:**
+    *   *Gap:* Current Type IV interactions assume Gaussianity in the latent space. 
+    *   *Solution Path:* Implementing Copula-based interactions would allow for tail-dependence in extreme events (e.g., synchronized flood risks across regions).
+
+3.  **Automated Prior Sensitivity Analysis:**
+    *   *Gap:* Hierarchical models are sensitive to hyper-priors on variance components ($\sigma_{sp}, \sigma_{tm}$).
+    *   *Solution Path:* Integrating automated Robustness Checks (e.g., using `SimulationBasedCalibration.jl`) to ensure priors do not dominate the posterior in data-sparse regions.
+
+4.  **Dynamic Graph Structures:**
+    *   *Gap:* The spatial adjacency matrix $W$ is currently static.
+    *   *Solution Path:* For applications like epidemiology, allowing $W$ to evolve (Dynamic Network CAR) would capture changing connectivity due to infrastructure or policy shifts.
+
+5. Key Information & Decisions
+*   **Model Architecture:** The framework successfully integrates **BYM2 spatial effects**, **AR1 temporal processes**, **Random Fourier Features (RFF)** for seasonality, and **Type IV interactions** for space-time anomalies.
+*   **Identifiability Constraints:** To separate the latent field from the global intercept, we utilize **Explicit Re-centering** (mean subtraction) within the model block. This is preferred over soft penalty constraints for superior NUTS sampler stability.
+*   **Scaling and Priors:** Implementation of **Sørbye & Rue scaling** ensures that the spatial precision matrix is numerically conditioned, while **Penalized Complexity (PC) Priors** provide principled shrinkage for variance components.
+
+6. Computational Trade-offs
+*   **Gaussian CARSTM (GMRF-based):** High efficiency ($O(N)$ to $O(N \log N)$ complexity) due to sparse precision matrices. Ideal for large spatial grids but limited by assumptions of stationarity.
+*   **Deep GP (RFF-based):** Captures non-stationary and non-linear relationships by warping the input space. It incurs higher memory costs ($O(N \cdot m^2)$) and requires higher `target_acceptance` in NUTS to navigate the complex posterior landscape.
+
+7. Unresolved Tasks & Research Gaps
+*   **Scalability:** Implementation of **Kronecker Product decomposition** for interaction matrices to handle massive datasets without $O(N^2)$ memory growth.
+*   **Advanced Modeling:** Exploration of **Copula-based interactions** for non-Gaussian tail dependencies and **Dynamic Network CAR** for time-varying spatial connectivity (e.g., infrastructure changes).
+*   **Inference Calibration:** Systematic benchmarking of **ADVI** (Variational Inference) vs. **MCMC** to determine optimal iteration counts for varying levels of model complexity.
+
+### Recommendations 
+
+#### Data Preparation
+*   **Time Standardization:** Raw time indices should be mapped to $[0, 1]$ to prevent trigonometric overflow in RFF basis generation.
+*   **Graph Connectivity:** Always use `ensure_connected!` on your spatial graph. Disconnected components in a GMRF can lead to singular precision matrices and sampler failure.
+
+#### Prior Selection
+We implement **PC Priors (Penalized Complexity)** for standard deviations. These priors are designed to be 'informative' in their pull toward a simpler base model (e.g., zero variance) unless the data strongly suggest otherwise, preventing over-fitting in the interaction terms.
+
+---
+
+### Conclusions
+The CARSTM framework presented here represents a robust, scalable solution for spatio-temporal Bayesian inference. By combining the computational efficiency of GMRFs with the flexibility of Deep GPs and the stability of Mixed-Sampler Gibbs, this environment allows for the modeling of highly complex datasets that were previously computationally prohibitive.
+
+---
+
+### References
+*   **Rue & Held (2005):** Gaussian Markov Random Fields.
+*   **Hoffman & Gelman (2014):** The No-U-Turn Sampler.
+*   **Murray et al. (2010):** Elliptical Slice Sampling.
+*   **Rahimi & Recht (2007):** Random Features for Large-Scale Kernel Machines.
+*   **Sørbye & Rue (2014):** Scaling intrinsic GMRF priors.
+
+
+
+## CARSTM in Julia
+
+
+We use a wide array of Julia package involving statistics, machine learning, and spatial analysis:
+
+*   **General Purpose:** `Random`, `Statistics`, `LinearAlgebra`, `DataFrames`, `StatsBase`, `JLD2`
+*   **Spatial Analysis:** `LibGEOS`, `Graphs`, `DelaunayTriangulation` (for Voronoi tessellation)
+*   **Machine Learning/Bayesian Modeling:** `Distributions`, `MCMCChains`, `SparseArrays`, `StaticArrays`, `FillArrays`, `Bijectors`, `DynamicPPL`, `AdvancedVI`, `Optimisers`, `PosteriorStats`, `Turing` (the primary Bayesian modeling framework)
+*   **Plotting:** `Plots`, `StatsPlots`
+*   **Numerical/Optimization:** `FFTW` (Fast Fourier Transforms, likely for spectral analysis or signal processing in temporal models).
+
+
+
+### Functional Breakdown
+
+The functions are organized into several logical blocks:
+
+#### 1. Spatial Unit Partitioning and Graph Construction
+
+*   `expand_hull_v0`, `get_coords_from_geom_v0`, `expand_hull`, `get_coords_from_geom`: These functions are for geometric manipulation using `LibGEOS`. They compute convex hulls and extract coordinates from various `LibGEOS` geometry types. The `_v0` versions appear to be initial attempts, while the later ones are more refined, especially in handling coordinate extraction. The use of `LibGEOS` implies precise geometric operations.
+*   `get_bvt_centroids`, `get_qvt_centroids`, `get_avt_centroids`: These implement different spatial partitioning algorithms (Binary Vector Tree, Quadrant Voronoi Tessellation, Agglomerative Voronoi Tessellation) to define spatial units based on point density and distribution. This is a crucial step for defining the 'areas' in CARSTM models.
+*   `assign_spatial_units`: A high-level wrapper that orchestrates the spatial partitioning process. It takes raw points, a chosen method (e.g., `:cvt`, `:bvt`, `:qvt`, `:avt`), and various parameters like target/max units, minimum time slices, and buffering distance. It also returns a spatial graph (`SimpleGraph`). This is a complex function integrating several sub-processes.
+*   `get_voronoi_polygons_and_edges`: Generates Voronoi polygons based on centroids and clips them to the convex hull. Crucially, it also identifies adjacency edges between polygons, which are essential for constructing spatial adjacency matrices (`W_sym`). It includes robust checks for adjacency using buffering.
+*   `check_connectivity`, `ensure_connected!`: These functions deal with ensuring the generated spatial graph is connected. `ensure_connected!` modifies the graph in-place by adding edges between nearest neighbors of disconnected components, which is important for GMRF-based spatial models.
+*   `plot_spatial_graph`: Visualizes the spatial units, centroids, points, and adjacency graph using `Plots.jl`. This is a utility for inspecting the spatial partitioning results.
+
+#### 2. Data Generation and Initial Exploration
+
+*   `generate_sim_data`: Creates synthetic spatio-temporal data, including `(x,y)` coordinates, `time_idx`, `y_sim` (continuous), `y_binary`, `weights`, `trials`, and `cov_indices`. This function is fundamental for demonstrating and testing the CARSTM models without real-world data.
+*   `estimate_local_kde_with_extrapolation`, `plot_kde_simple`: Implement and visualize Kernel Density Estimation (KDE) for spatial intensity. This helps understand point density, which is often a factor in spatial partitioning.
+*   `calculate_metrics`: Computes density metrics (mean, SD, CV) for the partitioned spatial units. This is useful for evaluating the quality of the spatial partitioning (e.g., homogeneity of unit sizes/densities).
+
+#### 3. Bayesian Model Utilities
+
+*   `init_params_extract`, `init_params_copy`: Facilitate parameter initialization for Turing models, either by extracting means from a previous chain or loading from a file. This is a practical utility for improving MCMC sampling efficiency, especially when warm-starting.
+*   `PCPriorSigma`: A custom `ContinuousUnivariateDistribution` for PC (Penalized Complexity) priors on standard deviations, allowing for more flexible prior specification in the Bayesian models.
+*   `build_laplacian_precision`, `scale_precision!`, `build_rw2_precision`, `build_ar1_precision`, `build_cyclic_ar1_precision`: These are critical functions for constructing precision matrices for various Gaussian Markov Random Field (GMRF) components (e.g., BYM2 spatial effects, RW2 for smooth categorical effects, AR1 for temporal effects). `scale_precision!` is particularly important for identifiability and numerical stability.
+*   `logpdf_gmrf`: Calculates the log-probability density for a GMRF given its precision matrix and a vector of values. This is used extensively within the Turing models for custom likelihood contributions.
+*   `summarize_array`: A generic function to summarize MCMC samples (mean, median, credible intervals) across the last dimension.
+*   `reconstruct_posteriors`: A comprehensive function to process MCMC chains and reconstruct meaningful posterior estimates for spatial, temporal, categorical, and interaction effects, as well as predictions. It handles different model families (Gaussian, Poisson, Binomial, etc.) and integrates various effect types. This is a very complex function that makes the raw MCMC output interpretable.
+*   `detect_model_family`: Infers the likelihood family from the Turing model's function name, used by `reconstruct_posteriors`.
+*   `plot_model_fit`, `posterior_predictive_check`: Functions to evaluate model fit visually and quantitatively (RMSE, Pearson, Kendall Tau). `posterior_predictive_check` uses `HypothesisTests` for statistical rigor.
+*   `plot_posterior_results`: Visualizes specific model effects (spatial maps, categorical effects) from the `reconstruct_posteriors` output. This is a crucial diagnostic tool.
+*   `plot_posterior_vs_prior`: Compares posterior and prior densities for a given parameter, helping to assess the impact of the data on prior beliefs.
+*   `calculate_st_intervals`: A placeholder for calculating credible intervals for spatio-temporal effects.
+*   `NegativeBinomial2`: A re-parametrization of the Negative Binomial distribution, commonly used in ecological/count data modeling.
+*   `calculate_waic`: Computes the Watanabe-Akaike Information Criterion, a widely used metric for Bayesian model comparison, leveraging `Turing.pointwise_loglikelihoods`.
+*   `get_rff_deep2D_basis`, `get_rff_trend_basis`, `get_rff_seasonal_basis`: Implement Random Fourier Features (RFF) for approximating Gaussian Processes in various dimensions (2D spatial/temporal, 1D trend, 1D seasonal). These are used in the more advanced RFF-based models.
+
+#### 4. Turing Models (CARSTM Implementations)
+
+Nine `Turing.@model` definitions are present, each representing a specific CARSTM variant:
+
+*   **`pca_carstm` & `carstm_pca`**: These models explore latent factor analysis (PCA via Householder transforms) combined with CARSTM effects. `pca_carstm` applies PCA first, then CARSTM on factor scores, while `carstm_pca` attempts the reverse (though noted as incomplete/slow). They deal with multivariate data.
+*   **`carstm_temperature`**: A specific application model using ICAR (spatial) and Fourier (temporal) processes, likely for continuous temperature data.
+*   **`model_v1_gaussian`**: A foundational CARSTM with Gaussian likelihood, integrating BYM2 spatial, AR1 temporal, and a Type IV space-time interaction, along with RW2-smoothed categorical covariates. This represents a robust spatio-temporal modeling framework.
+*   **`model_v2_carstm_rff`**: Similar to V1 but replaces explicit AR1 temporal and spatial structures with Random Fourier Features for temporal trends and seasonality, suggesting a more flexible (and potentially computationally intensive) approach.
+*   **`model_v3_lognormal`**: Adapts the V1 structure for LogNormal likelihood, suitable for positive, right-skewed data.
+*   **`model_v4_binomial`**: Adapts the V1 structure for Binomial likelihood (logit link), suitable for binary or proportion data.
+*   **`model_v5_poisson`**: Adapts the V1 structure for Poisson likelihood (log link), with an option for Zero-Inflated Poisson (`use_zi`), suitable for count data.
+*   **`model_v6_negativebinomial`**: Adapts the V1 structure for Negative Binomial likelihood (log link), also with an option for Zero-Inflated Negative Binomial (`use_zi`), providing more flexibility for over-dispersed count data than Poisson.
+*   **`model_v7_deep_gaussianprocess_binomial` & `model_v8_deep_gaussianprocess_gaussian`**: These are advanced models incorporating deep Gaussian Processes (approximated with RFFs) to capture complex non-linear spatio-temporal relationships, combined with RW2-smoothed categorical covariates. They represent a significant jump in model complexity.
+*   **`model_v9_continuous_gaussian`**: Extends the V1 framework to include continuous covariates modeled using RFFs (Matern-like kernels), providing another layer of flexibility for handling various covariate types.
+ 
 
 ### Start environment
 
+**WARNING**: if this is the first run, this can take up to 1 hour to install and precompile libraries and their dependencies
+
 ```{julia}
-
-# WARNING: if this is the first run, this can take up to 1 hour to install and precompile libraries and their dependencies
-
-
-using Pkg
-
-
-### For Areal Units
-
+ 
+# For Areal Units
 pkgs_au = ["Random", "Statistics", "LinearAlgebra", "DataFrames",
        "StatsBase", "SparseArrays", "Plots", "StatsPlots", 
         "JLD2", "LibGEOS", "Graphs", "DelaunayTriangulation" ]
+ 
 
-Pkg.add(pkgs_au)
-Pkg.precompile()
-
-for pk in pkgs_au
-  @eval using $(Symbol(pk))
-end
-
-
-
-### For CARSTM 
-
-pkgs = ["Random",   "Distributions", "Statistics", "MCMCChains", "DataFrames",
+# For CARSTM 
+pkgs_carstm = ["Random",   "Distributions", "Statistics", "MCMCChains", "DataFrames",
         "LinearAlgebra", "Clustering", "StatsBase", "HypothesisTests",
         "JLD2", "FFTW",  "SparseArrays", "StaticArrays", "FillArrays",
          "Bijectors", "DynamicPPL", "AdvancedVI", "Optimisers", "PosteriorStats",  "Turing" ]
  
+
+pkgs = unique( vcat( pkgs_au, pkgs_carstm ))
+
+using Pkg
 Pkg.add(pkgs)
 Pkg.precompile()
+# Pkg.instantiate()
+# Pkg.gc()
 
 for pk in pkgs
   @eval using $(Symbol(pk))
@@ -205,191 +860,21 @@ display(DataFrame(benchmark_results))
 ```
 
 
+ 
 
-The issues we are looking for:
-
-Identifiability issues** in hierarchical models (like ICAR or CARSTM) are important .
-  - regions with no data make estimating local parameters like temporal persistence ($\rho$) a challenge
-  - Poisson Weighted CVT: "shrink" tiles where data is abundant and "stretch" them where data is scarce. Every areal unit is informative.
-
-
-1. **Information Balance**: `avt` achieved the highest stability (lowest variance). This is critical for CARSTM models to prevent 'starving' certain spatial units of data, which can cause MCMC convergence issues.
-2. **Temporal Identifiability**: All methods maintained full temporal coverage (15 slices), meaning the longitudinal component of the model is identifiable in every unit.
-3. **Geometric vs. Statistical Adaptation**: Standard `triangulation` performs poorly because it doesn't adapt to point density, while the **CVT** and **Merge** variants successfully cluster units where data is most abundant, leading to more robust precision matrices for the GMRF components.
-
-
-Other observations:
-
-1. **Geometric vs. Statistical Adaptation**: 
-   - **`cvt`**  prioritize geometric regularlity and compactness. This is excellent for simple spatial models but can lead to 'sparse' units in low-density areas.
-   - **`avt`** adaptively shrink tiles in high-density regions. This ensures that even the smallest units have enough points for stable estimation of local effects.
-
-2. **Information Balance & Convergence**: 
-   - The **`avt`** method achieved the lowest variance in point counts. This 'information balance' is a critical prerequisite for the CARSTM model's precision matrix to be well-conditioned.
-   - The asymptotic convergence at 19 units for the density-aware methods suggests that 19 is the 'natural' granularity for this specific point process dataset.
-
-3. **Temporal Identifiability**: 
-   - All methods successfully maintained full temporal coverage (15 slices) across all units. This confirms that the partitioning logic, combined with the point-count constraints, ensures that the longitudinal (AR1) component of the CARSTM model is identifiable in every areal unit.
-
-4. **Edge Handling**: 
-   - The automated `boundary_hull` calculation (with dynamic buffering) correctly prevents 'infinite' Voronoi cells at the domain edges, which previously caused artifacts in the adjacency graph (W matrix).
-
-
-### Basis: Delaunay Triangulation and Voronoi Tesselation
-
-Given a set of centroids $S = \{s_1, s_2, ..., s_n\}$, a Voronoi cell $V_i$ is defined as the set of all points $x$ in the domain such that the distance to $s_i$ is less than or equal to any other centroid $s_j$:
-$V_i = \{x \in \mathcal{D} \mid \|x - s_i\| \leq \|x - s_j\|, \forall j \neq i\}$  
-
-**Algorithm:** Uses `DelaunayTriangulation.jl` to compute the dual graph, followed by clipping against the domain boundary using `LibGEOS.jl`.
-
-
-See information in https://en.wikipedia.org/wiki/Delaunay_triangulation
-
-- Place $k$ seeds across the domain.
-- Define boundaries using Delaunay Triangulation and Voronoi tesselation.
-- No adaptation to the underlying point process intensity. Seed Placement: needs to be defined.
-- High variance of points per unit, meaning some units might be very dense while others are sparse.
-- Geometric Regularity: While it produces compact, convex cells, their distribution can be uneven due to the random seed placement.
-
-
-#### Centroidal Voronoi Tessellation (CVT)
-
-CVT is a spatial partitioning method that creates a mesh by aligning seeds with the centers of their respective regions. It transforms a standard Voronoi diagram into a stable, balanced structure where every "cell" is at its geometric or density-weighted equilibrium. This is achieved with Lloyd’s Algorithm:
-
--  Partition: Generate Voronoi regions based on current seed locations (usually some regular grid)
--  Shift: Move each seed to the center of mass of its region.
--  Converge: Repeat until the system minimizes the "quantization error" (energy functional):
--  Purpose: for a uniform grid where geography is the priority. 
--  
-    $$\mathcal{H}(S, V) = \sum_{j=1}^k \int_{V_j} \rho(x) ||x - s_j||^2 \, dx$$
-    
-    *(Note: In Standard CVT, the density $\rho(x)$ is treated as a constant 1).*
-
-- Geometric Uniformity. Tiles of roughly equal size/shape, "honeycomb" mesh (often hexagonal).
-- Unweighted: Treats all geographic space as equally important
-- Minimizes spatial autocorrelation variance **within** units.
-
-
-#### Adaptive CVT
-
-- Adaptive Resolution. Adjusts tile size based on data distribution. 
-- Density-Weighted - Seeds migrate toward dense data clusters. 
-- Smaller, denser tiles in high-activity areas; larger tiles in sparse areas. 
-- Balances information content; prevents "data-poor" units in sparse areas. 
-- Local Split Control - Targeted subdivision/splits in specific tiles based on local metrics, providing high-resolution detail only where it is required.
-- Purpose: data density varies significantly and partitions need to adapt to data
-
-- Density-Weighted Centroid. Seeds migrate toward areas with more data points based on an intensity function $\lambda(x)$, typically estimated via Kernel Density Estimation (KDE).
-
-- The position of each seed $s_j$ is calculated as:
-
-$$s_j = \frac{\int_{V_j} x \lambda(x) \, dx}{\int_{V_j} \lambda(x) \, dx}$$
-
-- This ensures the expected number of points per tile remains roughly constant across the entire map, regardless of whether a region is crowded or sparse.
-- Prevents "Data Starvation": In standard methods, sparse regions often get stuck with "empty" tiles. This method expands tile size in sparse areas and shrinks it in dense areas, ensuring every tile has sufficient observations to identify temporal trends (e.g., $AR(1)$ processes).
-- Minimizes Boundary Artifacts: Standard tiles often "split" a high-density cluster in half. The Hybrid CVT migrates seeds to the modes (peaks) of density, ensuring a single data feature stays within a single tile.
-- Improves Model Convergence: By balancing the number of observations ($n_j$) across tiles, it stabilizes the precision matrix for spatial models (like ICAR/CAR) and ensures MCMC chains converge faster.
-
-- KDE Estimation: Map the data intensity $\lambda(s)$ across the domain.
-- Seeds at the highest density peaks.
-- **Algorithm:** Weighted Lloyd's Algorithm  
-  1. Estimate a continuous intensity surface $\lambda(s)$ using KDE (Poisson) or Gaussian Process (GP) regression.
-  2. Calculate the **Density-Weighted Centroid** for each unit $V_j$:
-   $$s_j = \frac{\int_{V_j} x \lambda(x) dx}{\int_{V_j} \lambda(x) dx}$$
-  1. This forces seeds toward data-rich regions, resulting in smaller tiles in high-density areas.
-
-- Produces "statistically significant" tiles. It ensures that no tile is a "data desert," which directly leads to higher reliability in spatio-temporal modeling.
-
-
-- CVT minimizes the functional $F(s, V) = \sum_{i=1}^n \int_{V_i} \rho(x) \|x - s_i\|^2 dx$, where **$\rho(x)$ is the Kernel Density Estimation (KDE)**.
-
-- **Pros:** Produces the most regular/compact shapes; naturally adapts to point density (low CV of density).
-- **Cons:** Computationally expensive (iterative); does not guarantee a minimum number of points per unit.
-
-#### 2. Binary Vector Tree (BVT)
-BVT is a hierarchical partitioning method that recursively splits the point set along the axis of maximum variance.
-- **Pros:** Extremely fast; ensures very balanced point counts across all units.
-- **Cons:** Resulting shapes can be very elongated (high aspect ratio); does not follow local spatial clusters as closely as Voronoi methods.
-
-#### 3. Quadrant Voronoi Tessellation (QVT)
-QVT recursively divides the domain into four quadrants based on local means.
-- **Pros:** Efficiently captures multi-scale clustering; very intuitive spatial hierarchy.
-- **Cons:** Can produce very small/empty units in sparse areas unless strictly constrained.
-- A top-down approach in which each internal node has exactly four children. Quadtrees are most often used to partition a two-dimensional space by recursively subdividing it into four quadrants or regions. The Quadtree is built recursively such that If a node has fewer points than its capacity, it becomes a leaf node. If a node has more points than its capacity, it subdivides itself into four child nodes (quadrants).
-Points from the parent node are then redistributed into the appropriate child nodes.
-- **Algorithm:** Recursive Spatial Decomposition  
-  1. Start with a bounding box containing all points.
-  2. Recursively divide the box into four equal quadrants if the number of points exceeds the `capacity`.
-  3. **Post-Processing:** Filter leaf nodes based on `min_area` and `min_time_slices`.
-  4. **Classification:** Re-assign all original points to the centroid of the nearest valid leaf node.
-
-
-#### 4. Agglomerative Voronoi Tessellation (AVT)
-AVT is an iterative method used to enforce minimum sample size constraints (`min_pts`).
-- **Pros:** Guaranteed compliance with `min_pts` for statistical power; preserves topological adjacency.
-- **Cons:** Can result in highly irregular shapes as units are merged; computationally intensive due to re-triangulation.
-- **Algorithm:** Agglomerative Dissolution  
-  1. Initialize each data point as its own Voronoi cell.
-  2. Construct an adjacency graph via Delaunay triangulation.
-  3. **Prioritized Merging:** Calculate the cumulative Poisson intensity for each adjacent pair. Sort pairs by combined density.
-  4. Dissolve the edge between the two units with the **lowest** combined intensity first.
-  5. Stop when the target number of units is reached or the point-count variance stabilizes (asymptotic convergence).
-
-
-#### Summary of Findings
-
-Based on the benchmarking results and spatial visualizations, we evaluated four distinct partitioning strategies:
-
-1.  **Centroidal Voronoi Tessellation (CVT):** Consistently achieved the lowest **Coefficient of Variation (CV)** in point density. By iteratively minimizing the variance of point-to-centroid distances, it creates the most spatially "fair" and compact units. This is the gold standard for projects requiring uniform statistical power across units.
-2.  **Binary Vector Tree (BVT):** Demonstrated the highest computational speed. By splitting strictly on median coordinates, it guarantees almost perfectly balanced point counts, making it ideal for large-scale data pre-processing where processing time and count-balancing outweigh shape regularity.
-3.  **Quadrant Voronoi Tessellation (QVT):** Excels at identifying multi-scale spatial clusters. Its recursive 4-way split naturally matches the hierarchical nature of spatial data (e.g., urban vs. rural density transitions).
-4.  **Agglomerative Voronoi Tessellation (AVT):** The only method that provides a hard guarantee on the `min_pts` constraint. While it may produce less regular shapes during the merging phase, it ensures that every resulting unit meets the sample size requirements for downstream statistical modeling.
-
-
-Recommendations:
-
-- **For General Spatial Analysis:** Use **CVT** with a KDE-informed initial seed. It provides the most visually and mathematically robust areal units for mapping and regionalization.
-- **For Small Sample Sizes:** Always apply **AVT** as a post-processing step to ensure that no unit is too sparse to produce reliable estimates.
-- **For Real-time/Large Data:** Use **BVT** if the dataset contains millions of points and the primary goal is rapid parallelization of the workload across balanced partitions.
-- **For Hierarchical Modeling:** Use **QVT** to capture the nested structure of local and regional spatial effects.
-
-#### References
-* **Lloyd, S.** (1982). *Least squares quantization in PCM*. IEEE Transactions on Information Theory, 28(2), 129-137.
-* **Du, Q., Faber, V., & Gunzburger, M.** (1999). *Centroidal Voronoi Tessellations*. SIAM Review, 41(4), 637-676.
-* **Okabe, A. et al.** (2000). *Spatial Tessellations*. John Wiley & Sons.
-* **Samet, H.** (2006). *Foundations of Multidimensional and Metric Data Structures*. Morgan Kaufmann.
-
-  
-
-## CARSTM
 
 ## Example 0: Simulated data
 
 ```{julia}
 
-# Recreate Data 
+# Data 
 n_pts = 100
 n_time = 15
 
 (pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
   generate_sim_data(n_pts, n_time; rndseed=42)
 
-
-# Ensure cov_indices is correctly shaped as an N_obs x 4 matrix
-cov_indices_mat = hcat(cov_indices, cov_indices, cov_indices, cov_indices)
-
-trials_sim = ones(Int, length(y_binary)); # For binary outcome, 1 trial per observation
-class1_sim = rand(1:13, length(y_binary)); # A categorical variable with 13 levels
-class2_sim = rand(1:2, length(y_binary)) ; # A categorical variable with 2 levels
-weights_sim = ones(Float64, length(y_binary)); # Assign equal weight to all observations
-
-# Have a look at an example time slice
-
-target_ts = 5 
-filtered_pts_for_plot = pts[findall(==(target_ts), time_idx)]
-plt = plot_kde_simple( filtered_pts_for_plot; grid_res=100, sd_extension_factor=1.0 )
-display( plt )
-
+plot_kde_simple(pts, sd_extension_factor=1.0, title="Spatial Intensity (KDE)")
 
 # Define common constraints
 common_min_area_points = 2.0
@@ -411,305 +896,265 @@ actual_units=length(spatial_res.centroids)
 plt = plot_spatial_graph(pts, spatial_res; title="Method: $area_method", domain_boundary=spatial_res.hull_coords)
 
 display(plt)
+   
 
-area_idx = spatial_res.assignments ;
-W_sym = spatial_res.adjacency_edges ;
+# classify locations and adjacency
+g_v1 = get_spatial_graph(spatial_res)
+W_sym = Float64.( Graphs.adjacency_matrix(g_v1) )
 
-
-n_areas = maximum(area_idx)
-n_times = length( unique(time_idx ))
-n_groups = N_groups13
-
-plt = plot_spatial_graph(
-  pts, area_assignments, centroids, W_sym; 
-  title="Density-Prioritized Agglomerative Voronoi Tesselation (Inverse Quadtree)", 
-  show_boundaries=true, 
-  boundary_hull=hull_pts
-)
-  
-display(plt)
-
-
-# kde  view data density in space
-x_kde, y_kde, intensity_kde = estimate_intensity_kde_optimized(pts)
-plt_kde_intensity = heatmap(x_kde, y_kde, intensity_kde', title="KDE Estimated Spatial Density", color=:viridis, aspect_ratio=:equal, colorbar=true, xlabel="X-coordinate", ylabel="Y-coordinate")
-display(plt_kde_intensity)
-
-
-# Generate synthetic data for other models:  
-# trials_sim represents the number of trials for each observation.
-# For binary data, it's often 1 trial per observation.
-# For proportional data, it could be a larger integer.
-# class1_sim and class2_sim are categorical fixed effects.
-# cov_indices is a 2D matrix (N_obs x 4) as expected by the model.
-
-# cov_indices = rand(n_pts, 4)
-cov_indices = hcat( cov_indices, cov_indices, cov_indices, cov_indices )
-
-trials_sim = ones(Int, length(y_binary)) # For binary outcome, 1 trial per observation
-class1_sim = rand(1:13, length(y_binary)) # A categorical variable with 13 levels
-class2_sim = rand(1:2, length(y_binary))  # A categorical variable with 2 levels
-weights_sim = ones(Float64, length(y_binary)) # Assign equal weight to all observations
+area_idx = spatial_res.assignments ; 
 
 # Ensure cov_indices is correctly shaped as an N_obs x 4 matrix
 cov_indices_mat = hcat(cov_indices, cov_indices, cov_indices, cov_indices)
 
-time_slice = 5  # for plotting
- 
-
-# ----------
-# basic grmf
-# 1. Convert the spatial results into a numerical adjacency matrix
-
-g_v1 = get_spatial_graph(spatial_res)
-adj_matrix_numeric = Graphs.adjacency_matrix(g_v1)
-
-mod_v1 = model_v1_gaussian(y_sim, time_idx, area_idx, cov_indices_mat, adj_matrix_numeric)
-chain_v1 = sample(mod_v1, NUTS(), 100)
-
-
-plot_model_fit(chain_v1, y_sim, time_idx, area_idx)
-
-stats_v1 = reconstruct_posteriors(mod_v1, chain_v1, pts, area_idx, time_idx, W_sym; cov_indices=cov_indices_mat)
-
-summarystats( chain_v1 )
-calculate_waic(mod_v1, chain_v1)
- 
-  plt_test = plot_posterior_vs_prior(
-      mod_v1,
-      chain_v1,
-      :sigma_sp,
-      title="Model V1: Automated Prior Sensitivity (sigma_sp)"
-  )
-  
-  display(plt_test)
-  plot_model_fit(chain_v1, y_sim, time_idx, area_idx)
-  
-  # PPC Verification for Model V1 - Updated signature
-  ppc_v1 = posterior_predictive_check(mod_v1, stats_v1, y_sim)
-  display(ppc_v1.plot_density)
-  display(ppc_v1.plot_scatter)
-  
-  plt_spatial = plot_posterior_results(stats_v1, pts, centroids, W_sym; effect=:spatial)
-  display(plt_spatial)
-  
-  plt_pred_t5 = plot_posterior_results(stats_v1, pts, centroids, W_sym; time_slice=5, effect=:st_predictions_denoised)
-  display(plt_pred_t5)
-  
-  plt_prob = plot_posterior_results(stats_v1, pts, centroids, W_sym; time_slice=5, effect=:st_predictions_noisy)
-  display(plt_prob)
-  
+trials_sim = ones(Int, length(y_binary)); # For binary outcome, 1 trial per observation
+class1_sim = rand(1:13, length(y_binary)); # A categorical variable with 13 levels
+class2_sim = rand(1:2, length(y_binary)) ; # A categorical variable with 2 levels
+weights_sim = ones(Float64, length(y_binary)); # Assign equal weight to all observations
   
 
- 
-# ----------
-# RFF model with corrected predictor alignment
-mod_v2 = model_v2_carstm_rff(y_sim, time_idx, area_idx, cov_indices_mat, W_sym)
-chain_v2 = sample(mod_v2, MH(), 500)
+# Pre-compute static features outside of Turing models:
+using BenchmarkTools
 
+# Configuration
+n_bench_iters = 500
+bench_results = Dict{String, Float64}()
 
-stats_v2 = reconstruct_posteriors(mod_v2, chain_v2, pts, area_idx, time_idx, W_sym; cov_indices=cov_indices_mat)
-ppc_v2 = posterior_predictive_check(mod_v2, stats_v2, y_sim)
+# 1. Setup shared precomputations
+n_categories = 13
+MARGS = precompute_model_inputs(y_sim, pts, area_idx, time_idx, W_sym, n_categories)
+cont_covs_dummy = randn(length(y_sim), 2)
 
-display(ppc_v2.plot_density)
-display(ppc_v2.plot_scatter)
+# Ensure count data is strictly non-negative integers for count models
+y_counts = abs.(Int.(round.(MARGS.y)))
+precomp_counts = merge(MARGS, (y = y_counts,))
+using BenchmarkTools
 
-plt_prob = plot_posterior_results(stats_v2, pts, centroids, W_sym; time_slice=5, effect=:st_predictions_noisy)
-display(plt_prob)
+# Configuration
+n_bench_iters = 50
+bench_results = Dict{String, Float64}()
 
+# Ensure count data is strictly non-negative integers for count models
+y_counts = abs.(Int.(round.(MARGS.y)))
+precomp_counts = merge(MARGS, (y = y_counts,))
 
-# ----------
-# lognormal model
-# Ensure strictly positive data for LogNormal
-y_lognorm = exp.(y_sim .- mean(y_sim))
+println("Starting Suite Benchmark (MH, $n_bench_iters iterations)...\n")
 
-mod_v3_ln = model_v3_lognormal(y_lognorm, time_idx, area_idx, cov_indices_mat, W_sym)
-println("Sampling Model V3 (LogNormal)...")
-chain_v3_ln = sample(mod_v3_ln, MH(), 500)
-
-stats_v3_ln = reconstruct_posteriors(mod_v3_ln, chain_v3_ln, pts, area_idx, time_idx, W_sym; cov_indices=cov_indices_mat)
-ppc_v3_ln = posterior_predictive_check(mod_v3_ln, stats_v3_ln, y_lognorm)
-
-display(ppc_v3_ln.plot_density)
-display(ppc_v3_ln.plot_scatter)
-plt_prob = plot_posterior_results(stats_v3_ln, pts, centroids, W_sym; time_slice=5, effect=:st_predictions_noisy)
-display(plt_prob)
-
-
-
-# ----------
-# binary model
-mod_v4 = model_v4_binomial(
-    y_binary, trials_sim, weights_sim,
-    time_idx, area_idx, cov_indices,
-    W_sym, class1_sim, class2_sim
-)
-chain_v4 = sample(mod_v4, MH(), 500)
-
-
-stats_v4 = reconstruct_posteriors(mod_v4, chain_v4, pts, area_idx, time_idx, W_sym; cov_indices=cov_indices_mat)
-ppc_v4 = posterior_predictive_check(mod_v4, stats_v4, y_binary)
-
-display(ppc_v4.plot_density)
-display(ppc_v4.plot_scatter)
-plt_prob = plot_posterior_results(stats_v4, pts, centroids, W_sym; time_slice=5, effect=:st_predictions_noisy)
-display(plt_prob)
-
-
-
-# ------------
-#  Deep GP (binomial)
-mod_v5 = model_v5_deep_gp_carstm(
-  y_binary, trials_sim, weights_sim, time_idx, area_idx, pts,
-  cov_indices, W_sym, class1_sim, class2_sim
-)
-chain_v5 = sample(mod_v5, NUTS(), 100)
-
-
-stats_v5 = reconstruct_posteriors(mod_v5, chain_v5, pts, area_idx, time_idx, W_sym; cov_indices=cov_indices_mat)
-ppc_v5 = posterior_predictive_check(mod_v5, stats_v5, y_binary)
-
-display(ppc_v5.plot_density)
-display(ppc_v5.plot_scatter)
-plt_prob = plot_posterior_results(stats_v5, pts, centroids, W_sym; time_slice=5, effect=:st_predictions_noisy)
-display(plt_prob)
-
-
- 
-
-
-
-
-# ------------
-# Generate 2 continuous covariates
-N_obs_total = length(y_sim)
-cont_covs = randn(N_obs_total, 2)
-
-mod_v9 = model_v9_continuous_carstm(y_sim, time_idx, area_idx, cont_covs, W_sym; m_feat=10)
-println("Sampling Model V9 (Continuous RFF)... ")
-chain_v9 = sample(mod_v9, MH(), 500)
-
-stats_v9 = reconstruct_posteriors(mod_v9, chain_v9, pts, area_idx, time_idx, W_sym)
-ppc_v9 = posterior_predictive_check(mod_v9, stats_v9, y_sim)
-
-display(ppc_v9.plot_density)
-display(ppc_v9.plot_scatter)
-plt_prob = plot_posterior_results(stats_v1, pts, centroids, W_sym; time_slice=5, effect=:st_predictions_noisy)
-display(plt_prob)
-
-
-
-# ------------
-# Instantiate and run Model V6 test using the same simulation context
-mod_v6 = model_v6_weighted_nb(
-    y_counts,
-    weights_sim,
-    time_idx,
-    area_idx,
-    cov_indices_mat,
-    W_sym,
-    class1_sim,
-    class2_sim
-)
-chain_v6 = sample(mod_v6, MH(), 500)
-
-stats_v6 = reconstruct_posteriors(mod_v6, chain_v6, pts, area_idx, time_idx, W_sym; cov_indices=cov_indices_mat)
-ppc_v6 = posterior_predictive_check(mod_v6, stats_v6, y_counts)
-display(ppc_v6.plot_density)
-display(ppc_v6.plot_scatter)
-plt_prob = plot_posterior_results(stats_v6, pts, centroids, W_sym; time_slice=5, effect=:st_predictions_noisy)
-display(plt_prob)
-
-# ----------
-# Poisson
-
-mod_v7 = model_v7_weighted_pois(
-    y_counts,
-    weights_sim,
-    time_idx,
-    area_idx,
-    cov_indices_mat,
-    W_sym,
-    class1_sim,
-    class2_sim
+# Define the full model set with corrected data inputs for count families
+models_to_bench = Dict(
+    "v1_gaussian"         => () -> model_v1_gaussian(MARGS),
+    "v2_rff_gaussian"     => () -> model_v2_rff_gaussian(MARGS),
+    "v3_lognormal"        => () -> model_v3_lognormal(MARGS),
+    "v4_binomial"         => () -> model_v4_binomial(MARGS; trials=ones(Int, length(y_sim))),
+    "v5_poisson"          => () -> model_v5_poisson(precomp_counts),
+    "v6_negativebinomial" => () -> model_v6_negativebinomial(precomp_counts),
+    "v7_deep_gp_binomial" => () -> model_v7_deep_gp_binomial(MARGS; trials=ones(Int, length(y_sim))),
+    "v8_deep_gp_gaussian" => () -> model_v8_deep_gp_gaussian(MARGS),
+    "v9_continuous_gaussian" => () -> model_v9_continuous_gaussian(cont_covs_dummy, MARGS),
+    "v10_deep_gp_3layer"  => () -> model_v10_deep_gp_3layer_gaussian(MARGS)
 )
 
-println("Sampling Model V7 (Weighted ZIP)... ")
-chain_v7 = sample(mod_v7, MH(), 500)
+for m_key in sort(collect(keys(models_to_bench)))
+    print("Benchmarking $m_key... ")
+    try
+        m_instance = models_to_bench[m_key]()
+        t = @elapsed sample(m_instance, NUTS(), n_bench_iters; progress=false)
+        bench_results[m_key] = t
+        println("$(round(t, digits=2))s")
+    catch e
+        println("FAILED")
+        bench_results[m_key] = NaN
+    end
+end
 
-stats_v7 = reconstruct_posteriors(mod_v7, chain_v7, pts, area_idx, time_idx, W_sym; cov_indices=cov_indices_mat)
-ppc_v7 = posterior_predictive_check(mod_v7, stats_v7, y_counts)
+# --- Display Summary Table ---
+println("\n" * "="^35)
+println(rpad("Model", 25), " | ", "Time (s)")
+println("-"^35)
+for m_key in sort(collect(keys(bench_results)))
+    time_val = isnan(bench_results[m_key]) ? "Error" : string(round(bench_results[m_key], digits=2))
+    println(rpad(m_key, 25), " | ", time_val)
+end
+println("="^35)
 
-display(ppc_v7.plot_density)
-display(ppc_v7.plot_scatter)
 
-plt_prob_v7 = plot_posterior_results(stats_v7, pts, centroids, W_sym; time_slice=5, effect=:st_predictions_noisy)
-display(plt_prob_v7)
+
+# ---------- to view so plots:
+
+mod_fns =  collect(keys(model_registry))
+
+i = 1 # 1:9
+
+@load_carstm_state( mod_fns[i] )
+
+using Turing
+
+# 1. Instantiate Model v2
+mod_v2 = model_v2_rff_gaussian(MARGS)
+
+# 2. Define the Optimized Gibbs Sampler
+# We partition the parameters by their mathematical properties
+optimal_gibbs = Gibbs(
+    # Gaussian Latents: Use ESS for optimal movement without tuning
+    (:u_icar, :u_iid, :w_trend, :w_seas, :st_int_raw) => ESS(),
+
+    # Regression Coefficients: Use NUTS for adaptive gradient-based exploration
+    (:beta_cov) => NUTS(),
+
+    # Variance Components: Use MH for simple scalar parameters
+    (:sigma_y, :sigma_sp, :phi_sp, :sigma_trend, :sigma_seas, :sigma_int, :sigma_rw2) => MH()
+)
+
+# 3. Execute Production-Scale Sampling
+# Running a moderate chain for verification; scale iterations to 2000+ for production
+println("Starting Optimized Mixed-Sampler Gibbs for Model 2...")
+chain_v2_optimized = sample(mod_v2, optimal_gibbs, 10; progress=true)
+ 
+ 
+
+# --- MAP Optimization Benchmarking ---
+# Maximum A Posteriori (MAP) provides a point estimate by maximizing the posterior density.
+
+using Turing, Optim
+
+println("Running MAP Optimization for model_v1_gaussian...")
+
+# 1. Instantiate the model using the stable precomputations
+m_v1 = model_v1_gaussian(MARGS)
+
+# 2. Perform MAP optimization using the correct library path
+# Using Optim.optimize directly to avoid ambiguity and fix the module nesting error
+t_map = @elapsed begin
+    map_res_v1 = maximum_a_posteriori(m_v1 )
+end
+
+println("Optimization finished in $(round(t_map, digits=2)) seconds.")
+
+# 3. Display summary of estimates
+println("\n--- MAP Estimates for Model V1 ---")
+display(map_res_v1)
+
+
+chain = sample(m_v1, NUTS(), 1_000; initial_params=InitFromParams(map_res_v1))
+
+
+
+# ---------
+
+map_results = Dict{String, Any}()
+
+println("Starting Suite MAP Optimization...\n")
+
+for m_key in sort(collect(keys(models_to_bench)))
+    print("Optimizing $m_key (MAP)... ")
+    try
+        m_instance = models_to_bench[m_key]()
+        # Use LBFGS for numerical optimization of the log-joint
+        t = @elapsed begin
+            map_res = optimize(m_instance, MAP())
+        end
+        map_results[m_key] = (result = map_res, time = t)
+        println("$(round(t, digits=2))s")
+    catch e
+        println("FAILED")
+        map_results[m_key] = nothing
+    end
+end
+
+# --- Display MAP Summary ---
+println("\n" * "="^45)
+println(rpad("Model", 25), " | ", rpad("Time (s)", 10), " | ", "LP")
+println("-"^45)
+for m_key in sort(collect(keys(map_results)))
+    if !isnothing(map_results[m_key])
+        res = map_results[m_key]
+        lp = round(res.result.lp, digits=2)
+        println(rpad(m_key, 25), " | ", rpad(string(round(res.time, digits=2)), 10), " | ", lp)
+    else
+        println(rpad(m_key, 25), " | ", "Error")
+    end
+end
+println("="^45)
+
 
 
 # ----- 
 # Variational Inference
+ using Turing, AdvancedVI
 
-n_samples_posterior = 1000 # Number of samples to draw from the approximated posterior
-n_iters = 1000 # Number of iterations for VI optimization
+using AdvancedVI
 
-results = []
+# 1. Setup the ADVI algorithm
+# Using 1 sample for the gradient estimate and 1000 iterations
+advi = ADVI(1, 1000)
 
-# 1. Model V1: Basic CARSTM (GMRF)
-println("Benchmarking Model V1...")
-mod_v1 = model_v1_carstm_basic(y_sim, time_idx, area_idx, cov_indices, W_sym)
-vi_v1, vi_v1_info, vi_v1_state = vi(mod_v1, q_meanfield_gaussian(mod_v1), n_iters; show_progress=true);
-samples_v1 = rand(vi_v1, n_samples_posterior)
-waic_v1 = calculate_waic(mod_v1, samples_v1)
-push!(results, (model="V1_GMRF", waic=waic_v1))
+# 2. Run the optimization
+println("Starting ADVI for model_v1_gaussian...")
+t_vi = @elapsed begin
+    q_v1 = vi(m_v1, advi)
+end
 
-# 2. Model V2: RFF CARSTM
-println("Benchmarking Model V2...")
-mod_v2 = model_v2_carstm_rff(y_sim, time_idx, area_idx, cov_indices, W_sym)
-vi_v2, vi_v2_info, vi_v2_state = vi(mod_v2, q_meanfield_gaussian(mod_v2), n_iters; show_progress=true);
-samples_v2 = rand(vi_v2, n_samples_posterior)
-waic_v2 = calculate_waic(mod_v2, samples_v2)
-push!(results, (model="V2_RFF", waic=waic_v2))
-
-# 3. Model V3: Binomial
-println("Benchmarking Model V3...")
-mod_v3 = model_v3_binomial(y_binary, trials_sim, time_idx, area_idx, cov_indices, W_sym, class1_sim, class2_sim)
-vi_v3, vi_v3_info, vi_v3_state = vi(mod_v3, q_meanfield_gaussian(mod_v3), n_iters; show_progress=true);
-samples_v3 = rand(vi_v3, n_samples_posterior)
-waic_v3 = calculate_waic(mod_v3, samples_v3)
-push!(results, (model="V3_Binomial", waic=waic_v3))
-
-# 4. Model V4: Weighted Binomial
-println("Benchmarking Model V4...")
-mod_v4 = model_v4_weighted_binary(
-    y_binary, trials_sim, weights_sim,
-    time_idx, area_idx, cov_indices,
-    W_sym, class1_sim, class2_sim
-)
-vi_v4, vi_v4_info, vi_v4_state = vi(mod_v4, q_meanfield_gaussian(mod_v4), n_iters; show_progress=true);
-samples_v4 = rand(vi_v4, n_samples_posterior)
-waic_v4 = calculate_waic(mod_v4, samples_v4)
-push!(results, (model="V4_Weighted", waic=waic_v4))
-
-# 5. Model V5: Deep GP
-println("Benchmarking Model V5...")
-mod_v5 = model_v5_deep_gp_carstm(
-  y_binary, trials_sim, weights_sim, time_idx, area_idx, pts,
-  cov_indices, W_sym, class1_sim, class2_sim
-)
-vi_v5, vi_v5_info, vi_v5_state = vi(mod_v5, q_meanfield_gaussian(mod_v5), n_iters; show_progress=true);
-samples_v5 = rand(vi_v5, n_samples_posterior)
-waic_v5 = calculate_waic(mod_v5, samples_v5)
-
-push!(results, (model="V5_DeepGP", waic=waic_v5))
-
-# Display Results
-df_results = DataFrame(results)
-sort!(df_results, :waic)
-println("\n--- Model Comparison (Sorted by WAIC) ---")
-display(df_results)
+println("ADVI finished in $(round(t_vi, digits=2)) seconds.")
 
 
+using Optim
+
+# 1. Optimized MAP with L-BFGS
+# We pass specific Optim options to allow for better convergence monitoring
+println("Starting Optimized MAP (L-BFGS)...")
+map_res_optimized = optimize(m_v1, MAP(), LBFGS())
+
+# 2. Optimized ADVI (Multi-sample gradient)
+# ADVI(n_samples, n_iterations)
+# Increasing samples to 10 reduces noise in high-dimensional ST fields
+println("Starting Optimized ADVI (10 samples per grad)...")
+advi_optimized = ADVI(10, 1500)
+q_v1_opt = vi(m_v1, advi_optimized)
+
+println("Optimization Complete.")
+
+
+
+
+vi_results = Dict{String, Any}()
+n_vi_iters = 1000
+
+println("Starting Suite Variational Inference (ADVI)...")
+
+for m_key in sort(collect(keys(models_to_bench)))
+    print("Running VI for $m_key... ")
+    try
+        m_instance = models_to_bench[m_key]()
+
+        # Standard Mean-Field ADVI
+        advi = ADVI(1, n_vi_iters)
+
+        t = @elapsed begin
+            # Solve for the variational posterior
+            q = vi(m_instance, advi)
+        end
+
+        vi_results[m_key] = (dist = q, time = t)
+        println("$(round(t, digits=2))s")
+    catch e
+        println("FAILED: $e")
+        vi_results[m_key] = nothing
+    end
+end
+
+# --- Display VI Summary Table ---
+println("\n" * "="^45)
+println(rpad("Model", 25), " | ", rpad("Time (s)", 10))
+println("-"^45)
+for m_key in sort(collect(keys(vi_results)))
+    if !isnothing(vi_results[m_key])
+        res = vi_results[m_key]
+        println(rpad(m_key, 25), " | ", rpad(string(round(res.time, digits=2)), 10))
+    else
+        println(rpad(m_key, 25), " | ", "Error")
+    end
+end
+println("="^45)
 
 ```
 

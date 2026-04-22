@@ -454,11 +454,9 @@ function plot_spatial_graph(pts, spatial_res; title="Spatial Partitioning", doma
     Plots.scatter!(p, [pt[1] for pt in spatial_res.centroids], [pt[2] for pt in spatial_res.centroids], markersize=4, markercolor=:blue, markerstrokecolor=:white)
     return p
 end
-# Data Generation
-n_pts = 100
-n_time = 15
 
-# Modified generate_sim_data to align pts length with time_idx length
+
+
 function generate_sim_data(n_pts, n_time; rndseed=42 )
     Random.seed!(rndseed)
     unique_pts = [(rand() * 10, rand() * 10) for _ in 1:n_pts]
@@ -476,16 +474,15 @@ function generate_sim_data(n_pts, n_time; rndseed=42 )
     spatial_effect_long = repeat(spatial_effect, n_time)
 
     temporal_effect = sin.(time_idx)
-    y_sim  = spatial_effect_long + temporal_effect + randn(n_total) * 0.5
+    y_sim  = 1.5 .* spatial_effect_long + 1.0 .* temporal_effect + randn(n_total) * 0.5
     y_binary = y_sim  .> (mean(y_sim) + 0.5)
 
     return (pts=pts_full_dataset, y_sim=y_sim, y_binary=y_binary, time_idx=time_idx,
             weights=weights, trials=trials, cov_indices=cov_indices)
 end
 
-(pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
-  generate_sim_data(n_pts, n_time; rndseed=42);
-function estimate_local_kde_with_extrapolation(pts, time_idx, target_ts; grid_res=100, sd_extension_factor=3.0)
+
+function estimate_local_kde_with_extrapolation(pts, time_idx, target_ts; grid_res=600, sd_extension_factor=0.25)
     """
     Synopsis: Estimates 2D KDE for a specific time slice with extrapolation.
     Inputs:
