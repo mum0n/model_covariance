@@ -6,7 +6,7 @@ macro save_carstm_state(file_to_save_name_sym)
       @info "Saving CARSTM state to $(filename_val)..."
       # JLD2.@save expects variable names as symbols, not their values.
       # The variables themselves should be directly passed.
-      JLD2.@save "$(filename_val)" spatial_res mod chain pts y_sim y_binary time_idx weights trials cov_indices cov_indices_mat trials_sim class1_sim class2_sim weights_sim adj_matrix_numeric n_pts n_time area_method
+      JLD2.@save "$(filename_val)" areal_units mod chain pts y_sim y_binary time_idx weights trials cov_indices cov_indices_mat trials_sim class1_sim class2_sim weights_sim adj_matrix_numeric n_pts n_time area_method
       @info "CARSTM state saved successfully."
     catch e
       @error "Error saving CARSTM state: $e"
@@ -26,7 +26,7 @@ macro load_carstm_state(filename_sym)
       @info "Loading CARSTM state from $(filename_val)..."
       # JLD2.@load expects variable names as symbols, not their values.
       # The variables themselves should be directly passed.
-      JLD2.@load "$(filename_val)" spatial_res mod chain pts y_sim y_binary time_idx weights trials cov_indices cov_indices_mat trials_sim class1_sim class2_sim weights_sim adj_matrix_numeric n_pts n_time area_method
+      JLD2.@load "$(filename_val)" areal_units mod chain pts y_sim y_binary time_idx weights trials cov_indices cov_indices_mat trials_sim class1_sim class2_sim weights_sim adj_matrix_numeric n_pts n_time area_method
       @info "CARSTM state loaded successfully."
       # Variables are loaded directly into the calling scope by JLD2.@load
       # No explicit return value from the macro itself, as it injects variables
@@ -758,52 +758,95 @@ function posterior_predictive_check(model::DynamicPPL.Model, stats, y_obs)
     return (rmse=rmse, pearson=(val=pearson_val, p=pearson_p), kendall=(val=kendall_val, p=kendall_p), plot_density=plt_density, plot_scatter=plt_scatter)
 end
 
+function plot_posterior_results(stats, pts, spatial_res, W; time_slice=nothing, effect=:spatial, cov_idx=1, show_pts=false)
+    # Description: Comprehensive posterior visualization for CARSTM and Deep GP models.
 
-
-function plot_posterior_results(stats, pts, centroids, W; time_slice=nothing, effect=:spatial, cov_idx=1)
-    # Description: Visualizes specific model effects (spatial maps or categorical levels) as heatmaps or bar charts.
-    # Inputs:
-    #   - stats: NamedTuple from reconstruct_posteriors.
-    #   - centroids/W: Spatial structure definitions.
-    #   - time_slice: Index for ST slices.
-    #   - effect: :spatial, :st_predictions_denoised, :beta_cov, etc.
-    # Outputs:
-    #   - A Plots.Plot object.
-
-    grid_res = 100; x_g = range(0, 10, length=grid_res); y_g = range(0, 10, length=grid_res)
-    find_idx(xi, yi) = argmin([sqrt((xi-p[1])^2 + (yi-p[2])^2) for p in centroids])
-
-    if effect in [:spatial, :st_predictions_denoised, :st_predictions_noisy]
-        z = if effect == :spatial
-            [stats.spatial.mean[find_idx(xi, yi)] for xi in x_g, yi in y_g]
-        elseif effect == :st_predictions_denoised && !isnothing(time_slice)
-            [stats.st_mat_denoised.mean[find_idx(xi, yi), time_slice] for xi in x_g, yi in y_g]
-        elseif effect == :st_predictions_noisy && !isnothing(time_slice)
-            [stats.st_mat_noisy.mean[find_idx(xi, yi), time_slice] for xi in x_g, yi in y_g]
-        else
-            error("Effect $effect not supported or missing time_slice")
-        end
-        plt = heatmap(x_g, y_g, z', title="$effect (T=$(time_slice))", color=:RdYlBu, aspect_ratio=:equal)
-        return plt
-    elseif effect == :beta_cov
-        # Plotting categorical levels for a specific covariate
+    # 1. Handle Categorical/Class Bar Plots
+    if effect == :beta_cov
         b_stats = stats.beta_cov[cov_idx]
         n_levels = size(b_stats.mean, 1)
-        plt = bar(1:n_levels, b_stats.mean[:,1], yerror=(b_stats.mean[:,1] .- b_stats.lower[:,1], b_stats.upper[:,1] .- b_stats.mean[:,1]),
+        return StatsPlots.bar(1:n_levels, b_stats.mean[:,1], 
+                  yerror=(b_stats.mean[:,1] .- b_stats.lower[:,1], b_stats.upper[:,1] .- b_stats.mean[:,1]),
                   title="Covariate $cov_idx Effects", xlabel="Level", ylabel="Effect Size", legend=false)
-        return plt
+    
     elseif effect == :b_class1 || effect == :b_class2
         b_stats = effect == :b_class1 ? stats.b_class1 : stats.b_class2
         if isnothing(b_stats); error("Effect $effect not found in stats"); end
         n_levels = size(b_stats.mean, 1)
-        plt = bar(1:n_levels, b_stats.mean[:,1], yerror=(b_stats.mean[:,1] .- b_stats.lower[:,1], b_stats.upper[:,1] .- b_stats.mean[:,1]),
+        return StatsPlots.bar(1:n_levels, b_stats.mean[:,1], 
+                  yerror=(b_stats.mean[:,1] .- b_stats.lower[:,1], b_stats.upper[:,1] .- b_stats.mean[:,1]),
                   title="$effect Levels", xlabel="Class Index", ylabel="Effect Size", legend=false)
+
+    # 2. Handle Temporal Main Effects
+    elseif effect == :temporal
+        t_stats = stats.temporal
+        n_times = length(t_stats.mean)
+        return StatsPlots.plot(1:n_times, t_stats.mean, 
+                   ribbon=(t_stats.mean .- t_stats.lower, t_stats.upper .- t_stats.mean), 
+                   fillalpha=0.2, lw=2, title="Temporal Main Effect", xlabel="Time Index", ylabel="Effect (Latent Scale)", legend=false)
+
+    # 3. Handle Spatial, ST, and Deep GP Mean Fields
+    elseif effect in [:spatial, :st_predictions_denoised, :st_predictions_noisy, :residuals, :eta_gp, :hidden_layer]
+        plt = StatsPlots.plot(aspect_ratio=:equal, title="$effect (T=$(time_slice))", legend=true)
+
+        # Determine the values to map to colors
+        values = if effect == :spatial
+            stats.spatial.mean
+        elseif effect == :eta_gp
+            # Visualize the final latent field from Deep GP layers
+            haskey(stats, :eta_gp) ? stats.eta_gp.mean : error("eta_gp not found in stats")
+        elseif effect == :hidden_layer
+            # Visualize the hidden warping (Layer 1)
+            haskey(stats, :h1) ? stats.h1.mean : error("hidden layer h1 not found in stats")
+        elseif effect == :st_predictions_denoised && !isnothing(time_slice)
+            stats.st_mat_denoised.mean[:, time_slice]
+        elseif effect == :st_predictions_noisy && !isnothing(time_slice)
+            stats.st_mat_noisy.mean[:, time_slice]
+        elseif effect == :residuals
+            # Unit-level aggregate residual check using denoised mean field as base
+            stats.st_mat_noisy.mean[:, isnothing(time_slice) ? 1 : time_slice]
+        else
+            error("Effect $effect requires specific keys in stats or time_slice index")
+        end
+
+        for i in 1:length(spatial_res.polygons)
+            poly_coords = spatial_res.polygons[i]
+            if length(poly_coords) > 2
+                px = [pt[1] for pt in poly_coords if !isnan(pt[1])]
+                py = [pt[2] for pt in poly_coords if !isnan(pt[2])]
+                
+                if !isempty(px)
+                    if (px[1], py[1]) != (px[end], py[end])
+                        push!(px, px[1]); push!(py, py[1])
+                    end
+                    
+                    val = values[i]
+                    StatsPlots.plot!(plt, px, py, 
+                        seriestype=:shape, 
+                        fill_z=val, 
+                        c=:RdYlBu, 
+                        linecolor=:black, 
+                        linewidth=0.5, 
+                        fillalpha=0.8,
+                        legend=false
+                    )
+                end
+            end
+        end
+
+        if show_pts
+            StatsPlots.scatter!(plt, [p[1] for p in pts], [p[2] for p in pts], 
+                markersize=1, markercolor=:gray, alpha=0.2, label="Observations")
+        end
+
+        StatsPlots.scatter!(plt, [c[1] for c in spatial_res.centroids], [c[2] for c in spatial_res.centroids], 
+            markersize=2, markercolor=:white, markerstrokecolor=:black, alpha=0.5, label="Centroids")
+
         return plt
     else
         error("Effect $effect not recognized.")
     end
 end
-
 
 
 function plot_posterior_vs_prior(model::DynamicPPL.Model, chain::MCMCChains.Chains, param_sym::Symbol; n_prior_samples=1000, title="Posterior vs Prior")
@@ -1043,15 +1086,9 @@ function get_rff_seasonal_basis(t, m, freq, lengthscale)
 end
 
 
-function MARGSute_model_inputs(y, pts, area_idx, time_idx, W_sym, n_cat; m_trend=10, m_seas=5)
+function prepare_model_inputs(y, pts, area_idx, time_idx, W_sym, n_cat; m_trend=10, m_seas=5)
     """
-    Consolidates static MARGSutations for the CARSTM model suite with an emphasis on numerical conditioning.
-    
-    ### Technical Improvements for Stability:
-    1. **Time Standardization**: Maps raw time indices to a [0, 1] range. This prevents large arguments in trigonometric functions (Ω · t), reducing high-frequency oscillations that hinder MCMC sampling.
-    2. **Basis Function Generation**: Uses deterministic harmonics for seasonal components instead of random features. Fixed frequencies provide more stable cyclic patterns and prevent near-singular basis matrices.
-    3. **Numerical Precision**: Explicitly casts basis generation to Float64 and uses a fixed seed (Random.seed!(42)) to ensure reproducibility and prevent rounding error accumulation.
-    4. **Scaling Constraints**: Includes a sqrt(2/m) scaling factor for trend features to keep feature variance consistent, preventing the latent field from exploding and causing log-likelihood domain errors (NaN/-Inf).
+    Consolidates static precomputations for the CARSTM model suite with an emphasis on numerical conditioning.
     """
     # 1. Standardize Time to [0, 1] range to prevent large Omega*t products
     N_time = maximum(time_idx)
@@ -1064,13 +1101,24 @@ function MARGSute_model_inputs(y, pts, area_idx, time_idx, W_sym, n_cat; m_trend
     scaling_sp_const = exp(mean(log.(eigs_sp)))
     Q_spatial_scaled = sparse(Q_sp_raw ./ scaling_sp_const)
 
-    # 3. Stable RFF Generation
+    # 3. RW2 Scaling for categorical covariates
+    D_rw2_mat = spzeros(Float64, n_cat - 2, n_cat)
+    for i in 1:(n_cat - 2)
+        D_rw2_mat[i, i] = 1.0
+        D_rw2_mat[i, i+1] = -2.0
+        D_rw2_mat[i, i+2] = 1.0
+    end
+    Q_rw2_raw = D_rw2_mat' * D_rw2_mat
+    eigs_rw2 = filter(x -> x > 1e-6, eigvals(Matrix(Q_rw2_raw)))
+    scaling_rw2_const = exp(mean(log.(eigs_rw2)))
+    Q_rw2_scaled = sparse(Q_rw2_raw ./ scaling_rw2_const)
+
+    # 4. Stable RFF Generation
     Random.seed!(42)
     Om_tr = randn(Float64, m_trend) ./ 0.5
     Ph_tr = rand(Float64, m_trend) .* 2π
     Z_trend = sqrt(2/m_trend) .* cos.(t_vec * Om_tr' .+ Ph_tr')
 
-    # Seasonal harmonics (fixed frequencies are more stable than random for cycles)
     Z_seas = zeros(Float64, N_time, 2 * m_seas)
     for j in 1:m_seas
         om_j = 2π * j
@@ -1078,30 +1126,33 @@ function MARGSute_model_inputs(y, pts, area_idx, time_idx, W_sym, n_cat; m_trend
         Z_seas[:, 2j] = sin.(om_j .* t_vec)
     end
 
-    # 4. Indices and Data Mapping
+    # 5. Templates and Indices
     n_areas = size(W_sym, 1)
+    Q_ar1_template = spdiagm(0 => ones(N_time), 1 => fill(-1.0, N_time-1), -1 => fill(-1.0, N_time-1))
     interaction_idx = (time_idx .- 1) .* n_areas .+ area_idx
+    
     N_obs = length(y)
     cov_mapping = zeros(Int, N_obs, 4)
     for k in 1:4; cov_mapping[:, k] .= mod1.(1:N_obs, n_cat); end
 
     return (
         y = y, pts_raw = pts, area_idx = area_idx, time_idx = time_idx,
-        Q_sp = Q_spatial_scaled, Z_trend = Z_trend, Z_seas = Z_seas,
+        Q_sp = Q_spatial_scaled, Q_rw2 = Q_rw2_scaled, Q_ar1_template = Q_ar1_template,
+        Z_trend = Z_trend, Z_seas = Z_seas,
         interaction_idx = interaction_idx, cov_indices = cov_mapping,
-        n_cats = n_cat, Q_rw2 = MARGS_shared.Q_rw2,
+        n_cats = n_cat, scaling_sp_const = scaling_sp_const, scaling_rw2_const = scaling_rw2_const,
         weights = ones(N_obs), offset = zeros(N_obs)
     )
 end
 
 
 
-@model function model_v1_gaussian(MARGS, ::Type{T}=Float64; offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v1_gaussian(modinputs, ::Type{T}=Float64; offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v1 Optimized: Foundational Gaussian Spatiotemporal model.
     # Decomposes the response into spatial (BYM2), temporal (AR1), and interaction effects.
 
-    y = MARGS.y
-    N_obs, N_areas, N_time = length(y), size(MARGS.Q_sp, 1), maximum(MARGS.time_idx)
+    y = modinputs.y
+    N_obs, N_areas, N_time = length(y), size(modinputs.Q_sp, 1), maximum(modinputs.time_idx)
 
     # --- 1. Priors ---
     sigma_y ~ Exponential(1.0)
@@ -1111,13 +1162,13 @@ end
 
     # --- 2. Spatial Effect (BYM2) ---
     # Combines ICAR (structured) and IID (unstructured) components.
-    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, MARGS.Q_sp * u_icar)
+    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, modinputs.Q_sp * u_icar)
     u_iid ~ MvNormal(zeros(N_areas), I)
     s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
 
     # --- 3. Temporal Effect (AR1) ---
     # Models temporal autocorrelation using a first-order autoregressive process.
-    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (MARGS.Q_ar1_template + (rho_tm^2) * I)
+    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (modinputs.Q_ar1_template + (rho_tm^2) * I)
     f_tm_raw ~ MvNormal(zeros(N_time), I); Turing.@addlogprob! -0.5 * dot(f_tm_raw, Q_ar1 * f_tm_raw)
     f_time = f_tm_raw .* sigma_tm
 
@@ -1128,71 +1179,71 @@ end
 
     # --- 5. Categorical Covariates (RW2 Smoothing) ---
     # Applies second-order random walk smoothing across categorical levels.
-    beta_cov = [Vector{T}(undef, MARGS.n_cats) for _ in 1:4]
+    beta_cov = [Vector{T}(undef, modinputs.n_cats) for _ in 1:4]
     for k in 1:4
-        beta_cov[k] ~ MvNormal(zeros(MARGS.n_cats), I)
-        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (MARGS.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
+        beta_cov[k] ~ MvNormal(zeros(modinputs.n_cats), I)
+        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (modinputs.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
     end
 
     # --- 6. Likelihood ---
     for i in 1:N_obs
-        mu = offset[i] + s_eff[MARGS.area_idx[i]] + f_time[MARGS.time_idx[i]] + st_interaction[MARGS.area_idx[i], MARGS.time_idx[i]]
-        for k in 1:4; mu += beta_cov[k][MARGS.cov_indices[i, k]]; end
+        mu = offset[i] + s_eff[modinputs.area_idx[i]] + f_time[modinputs.time_idx[i]] + st_interaction[modinputs.area_idx[i], modinputs.time_idx[i]]
+        for k in 1:4; mu += beta_cov[k][modinputs.cov_indices[i, k]]; end
         Turing.@addlogprob! weights[i] * logpdf(Normal(mu, sigma_y), y[i])
     end
 end
 
 
-@model function model_v2_rff_gaussian(MARGS, ::Type{T}=Float64; offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v2_rff_gaussian(modinputs, ::Type{T}=Float64; offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v2 Optimized: Gaussian model replacing AR1 with Random Fourier Features (RFF).
     # Captures smooth non-linear trends and seasonality alongside spatial clustering.
 
-    y = MARGS.y
-    N_obs, N_areas, N_time = length(y), size(MARGS.Q_sp, 1), maximum(MARGS.time_idx)
+    y = modinputs.y
+    N_obs, N_areas, N_time = length(y), size(modinputs.Q_sp, 1), maximum(modinputs.time_idx)
 
     # --- 1. Priors ---
     sigma_y ~ Exponential(1.0); sigma_sp ~ Exponential(1.0); phi_sp ~ Beta(1, 1)
-    w_trend ~ MvNormal(zeros(size(MARGS.Z_trend, 2)), I); sigma_trend ~ Exponential(1.0)
-    w_seas ~ MvNormal(zeros(size(MARGS.Z_seas, 2)), I); sigma_seas ~ Exponential(1.0)
+    w_trend ~ MvNormal(zeros(size(modinputs.Z_trend, 2)), I); sigma_trend ~ Exponential(1.0)
+    w_seas ~ MvNormal(zeros(size(modinputs.Z_seas, 2)), I); sigma_seas ~ Exponential(1.0)
     sigma_int ~ Exponential(0.5); sigma_rw2 ~ filldist(Exponential(1.0), 4)
 
     # --- 2. Spatial Effect (BYM2) ---
-    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, MARGS.Q_sp * u_icar)
+    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, modinputs.Q_sp * u_icar)
     u_iid ~ MvNormal(zeros(N_areas), I)
     s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
 
     # --- 3. Temporal Basis (RFF Trend & Seasonality) ---
     # Projects time into a high-dimensional space for non-linear trend/periodic effects.
-    f_trend = MARGS.Z_trend * (w_trend .* sigma_trend)
-    f_seas = MARGS.Z_seas * (w_seas .* sigma_seas)
+    f_trend = modinputs.Z_trend * (w_trend .* sigma_trend)
+    f_seas = modinputs.Z_seas * (w_seas .* sigma_seas)
 
     # --- 4. Space-Time Interaction ---
     st_int_raw ~ MvNormal(zeros(N_areas * N_time), I)
     st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
 
     # --- 5. Categorical Smoothing (RW2) ---
-    beta_cov = [Vector{T}(undef, MARGS.n_cats) for _ in 1:4]
+    beta_cov = [Vector{T}(undef, modinputs.n_cats) for _ in 1:4]
     for k in 1:4
-        beta_cov[k] ~ MvNormal(zeros(MARGS.n_cats), I)
-        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (MARGS.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
+        beta_cov[k] ~ MvNormal(zeros(modinputs.n_cats), I)
+        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (modinputs.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
     end
 
     # --- 6. Likelihood ---
     for i in 1:N_obs
-        a, t = MARGS.area_idx[i], MARGS.time_idx[i]
+        a, t = modinputs.area_idx[i], modinputs.time_idx[i]
         mu = offset[i] + f_trend[t] + f_seas[t] + s_eff[a] + st_interaction[a, t]
-        for k in 1:4; mu += beta_cov[k][MARGS.cov_indices[i, k]]; end
+        for k in 1:4; mu += beta_cov[k][modinputs.cov_indices[i, k]]; end
         Turing.@addlogprob! weights[i] * logpdf(Normal(mu, sigma_y), y[i])
     end
 end
 
 
-@model function model_v3_lognormal(MARGS, ::Type{T}=Float64; offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v3_lognormal(modinputs, ::Type{T}=Float64; offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v3 Optimized: LogNormal Spatiotemporal model for positive skewed data.
     # Employs a log-link to model the median of the distribution.
 
-    y = MARGS.y
-    N_obs, N_areas, N_time = length(y), size(MARGS.Q_sp, 1), maximum(MARGS.time_idx)
+    y = modinputs.y
+    N_obs, N_areas, N_time = length(y), size(modinputs.Q_sp, 1), maximum(modinputs.time_idx)
 
     # --- 1. Priors ---
     sigma_y ~ Exponential(1.0); sigma_sp ~ Exponential(1.0); phi_sp ~ Beta(1, 1)
@@ -1200,12 +1251,12 @@ end
     sigma_int ~ Exponential(0.5); sigma_rw2 ~ filldist(Exponential(1.0), 4)
 
     # --- 2. Spatial Effect (BYM2) ---
-    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, MARGS.Q_sp * u_icar)
+    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, modinputs.Q_sp * u_icar)
     u_iid ~ MvNormal(zeros(N_areas), I)
     s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
 
     # --- 3. Temporal Effect (AR1) ---
-    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (MARGS.Q_ar1_template + (rho_tm^2) * I)
+    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (modinputs.Q_ar1_template + (rho_tm^2) * I)
     f_tm_raw ~ MvNormal(zeros(N_time), I); Turing.@addlogprob! -0.5 * dot(f_tm_raw, Q_ar1 * f_tm_raw)
     f_time = f_tm_raw .* sigma_tm
 
@@ -1214,28 +1265,28 @@ end
     st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
 
     # --- 5. Categorical Smoothing (RW2) ---
-    beta_cov = [Vector{T}(undef, MARGS.n_cats) for _ in 1:4]
+    beta_cov = [Vector{T}(undef, modinputs.n_cats) for _ in 1:4]
     for k in 1:4
-        beta_cov[k] ~ MvNormal(zeros(MARGS.n_cats), I)
-        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (MARGS.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
+        beta_cov[k] ~ MvNormal(zeros(modinputs.n_cats), I)
+        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (modinputs.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
     end
 
     # --- 6. LogNormal Likelihood ---
     for i in 1:N_obs
-        a, t = MARGS.area_idx[i], MARGS.time_idx[i]
+        a, t = modinputs.area_idx[i], modinputs.time_idx[i]
         mu = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t]
-        for k in 1:4; mu += beta_cov[k][MARGS.cov_indices[i, k]]; end
+        for k in 1:4; mu += beta_cov[k][modinputs.cov_indices[i, k]]; end
         Turing.@addlogprob! weights[i] * logpdf(LogNormal(mu, sigma_y), y[i])
     end
 end
 
 
-@model function model_v4_binomial(MARGS, ::Type{T}=Float64; trials=ones(Int, length(MARGS.y)), offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v4_binomial(modinputs, ::Type{T}=Float64; trials=ones(Int, length(modinputs.y)), offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v4 Optimized: Binomial Spatiotemporal model with Logit link.
     # Suitable for binary outcomes or proportion data across areas/time.
 
-    y = MARGS.y
-    N_obs, N_areas, N_time = length(y), size(MARGS.Q_sp, 1), maximum(MARGS.time_idx)
+    y = modinputs.y
+    N_obs, N_areas, N_time = length(y), size(modinputs.Q_sp, 1), maximum(modinputs.time_idx)
 
     # --- 1. Priors ---
     sigma_sp ~ Exponential(1.0); phi_sp ~ Beta(1, 1)
@@ -1243,11 +1294,11 @@ end
     sigma_int ~ Exponential(0.5); sigma_rw2 ~ filldist(Exponential(1.0), 4)
 
     # --- 2. Spatial Effect (BYM2) ---
-    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, MARGS.Q_sp * u_icar)
+    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, modinputs.Q_sp * u_icar)
     u_iid ~ MvNormal(zeros(N_areas), I); s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
 
     # --- 3. Temporal Effect (AR1) ---
-    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (MARGS.Q_ar1_template + (rho_tm^2) * I)
+    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (modinputs.Q_ar1_template + (rho_tm^2) * I)
     f_tm_raw ~ MvNormal(zeros(N_time), I); Turing.@addlogprob! -0.5 * dot(f_tm_raw, Q_ar1 * f_tm_raw)
     f_time = f_tm_raw .* sigma_tm
 
@@ -1255,28 +1306,28 @@ end
     st_int_raw ~ MvNormal(zeros(N_areas * N_time), I); st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
 
     # --- 5. Categorical Smoothing (RW2) ---
-    beta_cov = [Vector{T}(undef, MARGS.n_cats) for _ in 1:4]
+    beta_cov = [Vector{T}(undef, modinputs.n_cats) for _ in 1:4]
     for k in 1:4
-        beta_cov[k] ~ MvNormal(zeros(MARGS.n_cats), I)
-        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (MARGS.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
+        beta_cov[k] ~ MvNormal(zeros(modinputs.n_cats), I)
+        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (modinputs.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
     end
 
     # --- 6. Binomial Likelihood (Logit Link) ---
     for i in 1:N_obs
-        a, t = MARGS.area_idx[i], MARGS.time_idx[i]
+        a, t = modinputs.area_idx[i], modinputs.time_idx[i]
         eta = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t]
-        for k in 1:4; eta += beta_cov[k][MARGS.cov_indices[i, k]]; end
+        for k in 1:4; eta += beta_cov[k][modinputs.cov_indices[i, k]]; end
         Turing.@addlogprob! weights[i] * logpdf(BinomialLogit(trials[i], eta), y[i])
     end
 end
 
 
-@model function model_v5_poisson(MARGS, ::Type{T}=Float64; use_zi=false, offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v5_poisson(modinputs, ::Type{T}=Float64; use_zi=false, offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v5 Optimized: Poisson Spatiotemporal model with optional Zero-Inflation.
     # Uses a log-link to ensure non-negative intensity (mu).
 
-    y = MARGS.y
-    N_obs, N_areas, N_time = length(y), size(MARGS.Q_sp, 1), maximum(MARGS.time_idx)
+    y = modinputs.y
+    N_obs, N_areas, N_time = length(y), size(modinputs.Q_sp, 1), maximum(modinputs.time_idx)
 
     # --- 1. Priors ---
     sigma_sp ~ Exponential(1.0); phi_sp ~ Beta(1, 1)
@@ -1285,11 +1336,11 @@ end
     phi_zi ~ use_zi ? Beta(1, 1) : Dirac(0.0)
 
     # --- 2. Spatial Effect (BYM2) ---
-    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, MARGS.Q_sp * u_icar)
+    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, modinputs.Q_sp * u_icar)
     u_iid ~ MvNormal(zeros(N_areas), I); s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
 
     # --- 3. Temporal Effect (AR1) ---
-    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (MARGS.Q_ar1_template + (rho_tm^2) * I)
+    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (modinputs.Q_ar1_template + (rho_tm^2) * I)
     f_tm_raw ~ MvNormal(zeros(N_time), I); Turing.@addlogprob! -0.5 * dot(f_tm_raw, Q_ar1 * f_tm_raw)
     f_time = f_tm_raw .* sigma_tm
 
@@ -1297,17 +1348,17 @@ end
     st_int_raw ~ MvNormal(zeros(N_areas * N_time), I); st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
 
     # --- 5. Categorical Smoothing (RW2) ---
-    beta_cov = [Vector{T}(undef, MARGS.n_cats) for _ in 1:4]
+    beta_cov = [Vector{T}(undef, modinputs.n_cats) for _ in 1:4]
     for k in 1:4
-        beta_cov[k] ~ MvNormal(zeros(MARGS.n_cats), I)
-        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (MARGS.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
+        beta_cov[k] ~ MvNormal(zeros(modinputs.n_cats), I)
+        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (modinputs.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
     end
 
     # --- 6. Poisson Likelihood (Log Link) ---
     for i in 1:N_obs
-        a, t = MARGS.area_idx[i], MARGS.time_idx[i]
+        a, t = modinputs.area_idx[i], modinputs.time_idx[i]
         eta = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t]
-        for k in 1:4; eta += beta_cov[k][MARGS.cov_indices[i, k]]; end
+        for k in 1:4; eta += beta_cov[k][modinputs.cov_indices[i, k]]; end
         mu = exp(eta)
         if use_zi
             Turing.@addlogprob! weights[i] * (y[i] == 0 ? log(phi_zi + (1 - phi_zi) * exp(-mu)) : log(1 - phi_zi) + logpdf(Poisson(mu), y[i]))
@@ -1318,12 +1369,12 @@ end
 end
 
 
-@model function model_v6_negativebinomial(MARGS, ::Type{T}=Float64; use_zi=false, offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v6_negativebinomial(modinputs, ::Type{T}=Float64; use_zi=false, offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v6 Optimized: Negative Binomial Spatiotemporal model.
     # Suitable for over-dispersed counts, with optional zero-inflation.
 
-    y = MARGS.y
-    N_obs, N_areas, N_time = length(y), size(MARGS.Q_sp, 1), maximum(MARGS.time_idx)
+    y = modinputs.y
+    N_obs, N_areas, N_time = length(y), size(modinputs.Q_sp, 1), maximum(modinputs.time_idx)
 
     # --- 1. Priors ---
     sigma_sp ~ Exponential(1.0); phi_sp ~ Beta(1, 1)
@@ -1332,11 +1383,11 @@ end
     r_nb ~ Exponential(1.0); phi_zi ~ use_zi ? Beta(1, 1) : Dirac(0.0)
 
     # --- 2. Spatial Effect (BYM2) ---
-    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, MARGS.Q_sp * u_icar)
+    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, modinputs.Q_sp * u_icar)
     u_iid ~ MvNormal(zeros(N_areas), I); s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
 
     # --- 3. Temporal Effect (AR1) ---
-    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (MARGS.Q_ar1_template + (rho_tm^2) * I)
+    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (modinputs.Q_ar1_template + (rho_tm^2) * I)
     f_tm_raw ~ MvNormal(zeros(N_time), I); Turing.@addlogprob! -0.5 * dot(f_tm_raw, Q_ar1 * f_tm_raw)
     f_time = f_tm_raw .* sigma_tm
 
@@ -1344,17 +1395,17 @@ end
     st_int_raw ~ MvNormal(zeros(N_areas * N_time), I); st_interaction = reshape(st_int_raw .* sigma_int, N_areas, N_time)
 
     # --- 5. Categorical Smoothing (RW2) ---
-    beta_cov = [Vector{T}(undef, MARGS.n_cats) for _ in 1:4]
+    beta_cov = [Vector{T}(undef, modinputs.n_cats) for _ in 1:4]
     for k in 1:4
-        beta_cov[k] ~ MvNormal(zeros(MARGS.n_cats), I)
-        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (MARGS.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
+        beta_cov[k] ~ MvNormal(zeros(modinputs.n_cats), I)
+        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (modinputs.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
     end
 
     # --- 6. Negative Binomial Likelihood ---
     for i in 1:N_obs
-        a, t = MARGS.area_idx[i], MARGS.time_idx[i]
+        a, t = modinputs.area_idx[i], modinputs.time_idx[i]
         eta = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t]
-        for k in 1:4; eta += beta_cov[k][MARGS.cov_indices[i, k]]; end
+        for k in 1:4; eta += beta_cov[k][modinputs.cov_indices[i, k]]; end
         mu = exp(eta); p_nb = r_nb / (r_nb + mu)
         if use_zi
             Turing.@addlogprob! weights[i] * (y[i] == 0 ? log(phi_zi + (1 - phi_zi) * pdf(NegativeBinomial(r_nb, p_nb), 0)) : log(1 - phi_zi) + logpdf(NegativeBinomial(r_nb, p_nb), y[i]))
@@ -1365,11 +1416,11 @@ end
 end
 
 
-@model function model_v7_deep_gp_binomial(MARGS, ::Type{T}=Float64; trials=ones(Int, length(MARGS.y)), m1=10, m2=5, offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v7_deep_gp_binomial(modinputs, ::Type{T}=Float64; trials=ones(Int, length(modinputs.y)), m1=10, m2=5, offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v7 Optimized: Deep Gaussian Process (GP) Spatiotemporal model with Binomial likelihood.
     # Uses Random Fourier Features (RFF) to approximate non-stationary spatio-temporal interactions.
 
-    y = MARGS.y
+    y = modinputs.y
     N_obs = length(y); sigma_rw2 ~ filldist(Exponential(1.0), 4)
 
     # --- 1. Deep GP Priors ---
@@ -1379,7 +1430,7 @@ end
 
     # --- 2. Feature Matrix Construction ---
     # Input features: Spatial X, Spatial Y, and Time.
-    X = hcat([p[1] for p in MARGS.pts_raw], [p[2] for p in MARGS.pts_raw], Float64.(MARGS.time_idx))
+    X = hcat([p[1] for p in modinputs.pts_raw], [p[2] for p in modinputs.pts_raw], Float64.(modinputs.time_idx))
 
     # --- 3. Layer 1 (Hidden Warp) ---
     # Projects (x,y,t) into a hidden feature space to capture complex interactions.
@@ -1392,26 +1443,26 @@ end
     eta_gp = (convert(T, sqrt(2/m2)) .* cos.(reshape(h1, :, 1) * Om2' .+ Ph2')) * w2
 
     # --- 5. Categorical Smoothing (RW2) ---
-    beta_cov = [Vector{T}(undef, MARGS.n_cats) for _ in 1:4]
+    beta_cov = [Vector{T}(undef, modinputs.n_cats) for _ in 1:4]
     for k in 1:4
-        beta_cov[k] ~ MvNormal(zeros(MARGS.n_cats), I)
-        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (MARGS.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
+        beta_cov[k] ~ MvNormal(zeros(modinputs.n_cats), I)
+        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (modinputs.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
     end
 
     # --- 6. Likelihood (Binomial Logit Link) ---
     for i in 1:N_obs
         eta = offset[i] + eta_gp[i]
-        for k in 1:4; eta += beta_cov[k][MARGS.cov_indices[i, k]]; end
+        for k in 1:4; eta += beta_cov[k][modinputs.cov_indices[i, k]]; end
         Turing.@addlogprob! weights[i] * logpdf(BinomialLogit(trials[i], eta), y[i])
     end
 end
 
 
-@model function model_v8_deep_gp_gaussian(MARGS, ::Type{T}=Float64; m1=10, m2=5, offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v8_deep_gp_gaussian(modinputs, ::Type{T}=Float64; m1=10, m2=5, offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v8 Optimized: Refined 2-Layer Deep GP Spatiotemporal model for Gaussian data.
-    # Combines deep non-linear interaction with robust MARGSuted covariate smoothing.
+    # Combines deep non-linear interaction with robust modinputsuted covariate smoothing.
 
-    y = MARGS.y
+    y = modinputs.y
     N_obs = length(y); sigma_y ~ Exponential(1.0); sigma_rw2 ~ filldist(Exponential(1.0), 4)
 
     # --- 1. Deep GP Priors ---
@@ -1419,7 +1470,7 @@ end
     l2 ~ Gamma(2, 1); w2 ~ MvNormal(zeros(m2), I)
 
     # --- 2. Deep GP Layer 1 (Input Transformation) ---
-    X = hcat([p[1] for p in MARGS.pts_raw], [p[2] for p in MARGS.pts_raw], Float64.(MARGS.time_idx))
+    X = hcat([p[1] for p in modinputs.pts_raw], [p[2] for p in modinputs.pts_raw], Float64.(modinputs.time_idx))
     Random.seed!(42); Om1 = randn(m1, 3) ./ l1; Ph1 = rand(m1) .* convert(T, 2π)
     h1 = (convert(T, sqrt(2/m1)) .* cos.(X * Om1' .+ Ph1')) * w1
 
@@ -1428,27 +1479,27 @@ end
     eta_gp = (convert(T, sqrt(2/m2)) .* cos.(reshape(h1, :, 1) * Om2' .+ Ph2')) * w2
 
     # --- 4. Categorical Smoothing (RW2) ---
-    beta_cov = [Vector{T}(undef, MARGS.n_cats) for _ in 1:4]
+    beta_cov = [Vector{T}(undef, modinputs.n_cats) for _ in 1:4]
     for k in 1:4
-        beta_cov[k] ~ MvNormal(zeros(MARGS.n_cats), I)
-        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (MARGS.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
+        beta_cov[k] ~ MvNormal(zeros(modinputs.n_cats), I)
+        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (modinputs.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
     end
 
     # --- 5. Gaussian Likelihood ---
     for i in 1:N_obs
         mu = offset[i] + eta_gp[i]
-        for k in 1:4; mu += beta_cov[k][MARGS.cov_indices[i, k]]; end
+        for k in 1:4; mu += beta_cov[k][modinputs.cov_indices[i, k]]; end
         Turing.@addlogprob! weights[i] * logpdf(Normal(mu, sigma_y), y[i])
     end
 end
 
 
-@model function model_v9_continuous_gaussian(continuous_covs, MARGS, ::Type{T}=Float64; m_feat=5, offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v9_continuous_gaussian(continuous_covs, modinputs, ::Type{T}=Float64; m_feat=5, offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v9 Optimized: Spatiotemporal model integrating continuous covariates via RFF-Matern Kernels.
     # Merges traditional BYM2 spatial effects with flexible non-linear covariate trends.
 
-    y = MARGS.y
-    N_obs, N_areas, N_time, N_covs = length(y), size(MARGS.Q_sp, 1), maximum(MARGS.time_idx), size(continuous_covs, 2)
+    y = modinputs.y
+    N_obs, N_areas, N_time, N_covs = length(y), size(modinputs.Q_sp, 1), maximum(modinputs.time_idx), size(continuous_covs, 2)
 
     # --- 1. Priors ---
     sigma_y ~ Exponential(1.0); sigma_sp ~ Exponential(1.0); phi_sp ~ Beta(1, 1)
@@ -1456,11 +1507,11 @@ end
     sigma_int ~ Exponential(0.5); sigma_cov ~ filldist(Exponential(1.0), N_covs); lengthscale_cov ~ filldist(Gamma(2, 1), N_covs)
 
     # --- 2. Spatial Effect (BYM2) ---
-    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, MARGS.Q_sp * u_icar)
+    u_icar ~ MvNormal(zeros(N_areas), I); Turing.@addlogprob! -0.5 * dot(u_icar, modinputs.Q_sp * u_icar)
     u_iid ~ MvNormal(zeros(N_areas), I); s_eff = sigma_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
 
     # --- 3. Temporal Effect (AR1) ---
-    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (MARGS.Q_ar1_template + (rho_tm^2) * I)
+    Q_ar1 = (1.0 / (1.0 - rho_tm^2)) .* (modinputs.Q_ar1_template + (rho_tm^2) * I)
     f_tm_raw ~ MvNormal(zeros(N_time), I); Turing.@addlogprob! -0.5 * dot(f_tm_raw, Q_ar1 * f_tm_raw)
     f_time = f_tm_raw .* sigma_tm
 
@@ -1479,18 +1530,18 @@ end
 
     # --- 6. Gaussian Likelihood ---
     for i in 1:N_obs
-        a, t = MARGS.area_idx[i], MARGS.time_idx[i]
+        a, t = modinputs.area_idx[i], modinputs.time_idx[i]
         mu = offset[i] + s_eff[a] + f_time[t] + st_interaction[a, t] + f_cov_total[i]
         Turing.@addlogprob! weights[i] * logpdf(Normal(mu, sigma_y), y[i])
     end
 end
 
 
-@model function model_v10_deep_gp_3layer_gaussian(MARGS, ::Type{T}=Float64; m1=10, m2=5, m3=3, offset=MARGS.offset, weights=MARGS.weights) where {T}
+@model function model_v10_deep_gp_3layer_gaussian(modinputs, ::Type{T}=Float64; m1=10, m2=5, m3=3, offset=modinputs.offset, weights=modinputs.weights) where {T}
     # Model v10 Optimized: 3-Layer Deep GP with Gaussian likelihood.
     # Hierarchical composition of GPs for capturing extremely complex spatio-temporal dynamics.
 
-    y = MARGS.y
+    y = modinputs.y
     N_obs = length(y); sigma_y ~ Exponential(1.0); sigma_rw2 ~ filldist(Exponential(1.0), 4)
 
     # --- 1. 3-Layer Deep GP Priors ---
@@ -1499,7 +1550,7 @@ end
     l3 ~ Gamma(2, 1); w3 ~ MvNormal(zeros(m3), I)
 
     # --- 2. Layer 1 (Input Transformation) ---
-    X = hcat([p[1] for p in MARGS.pts_raw], [p[2] for p in MARGS.pts_raw], Float64.(MARGS.time_idx))
+    X = hcat([p[1] for p in modinputs.pts_raw], [p[2] for p in modinputs.pts_raw], Float64.(modinputs.time_idx))
     Random.seed!(42); Om1 = randn(m1, 3) ./ l1; Ph1 = rand(m1) .* convert(T, 2π)
     h1 = (convert(T, sqrt(2/m1)) .* cos.(X * Om1' .+ Ph1')) * w1
 
@@ -1512,16 +1563,307 @@ end
     eta_gp = (convert(T, sqrt(2/m3)) .* cos.(reshape(h2, :, 1) * Om3' .+ Ph3')) * w3
 
     # --- 5. Categorical Smoothing (RW2) ---
-    beta_cov = [Vector{T}(undef, MARGS.n_cats) for _ in 1:4]
+    beta_cov = [Vector{T}(undef, modinputs.n_cats) for _ in 1:4]
     for k in 1:4
-        beta_cov[k] ~ MvNormal(zeros(MARGS.n_cats), I)
-        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (MARGS.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
+        beta_cov[k] ~ MvNormal(zeros(modinputs.n_cats), I)
+        Turing.@addlogprob! -0.5 * dot(beta_cov[k], (modinputs.Q_rw2 ./ sigma_rw2[k]^2) * beta_cov[k])
     end
 
     # --- 6. Gaussian Likelihood ---
     for i in 1:N_obs
         mu = offset[i] + eta_gp[i]
-        for k in 1:4; mu += beta_cov[k][MARGS.cov_indices[i, k]]; end
+        for k in 1:4; mu += beta_cov[k][modinputs.cov_indices[i, k]]; end
         Turing.@addlogprob! weights[i] * logpdf(Normal(mu, sigma_y), y[i])
     end
+end
+
+
+
+function model_results_summary(filename)
+    # Description: Comprehensive post-processing using robust state loading and ST interval calculation.
+    # Inputs:
+    #   - filename: String path to the .jld2 result file.
+    
+    if !isfile(filename)
+        error("File $filename not found.")
+    end
+
+    # 1. Load state using the optimized macro
+    @load_carstm_state filename
+
+    # 2. Basic Diagnostics
+    sum_stats = summarystats(chain)
+    min_ess = minimum(sum_stats[:, :ess_bulk])
+    max_rhat = maximum(sum_stats[:, :rhat])
+
+    # 3. Reconstruct Posteriors (Denoised/Noisy ST Fields)
+    stats = reconstruct_posteriors(
+        mod, 
+        chain, 
+        pts, 
+        areal_units.assignments, 
+        time_idx, 
+        adj_matrix_numeric
+    )
+
+    # 4. Spatio-Temporal Credible Intervals
+    # Extract alpha quantiles for the ST mean field
+    st_mean = stats.st_mat_denoised.mean
+    st_low = stats.st_mat_denoised.lower
+    st_high = stats.st_mat_denoised.upper
+
+    # 5. Accuracy Metrics
+    y_pred = vec(stats.predictions.mean)
+    rmse = sqrt(mean((y_sim .- y_pred).^2))
+    mae = mean(abs.(y_sim .- y_pred))
+    
+    # Coverage Probability
+    low_bound = vec(stats.predictions.lower)
+    high_bound = vec(stats.predictions.upper)
+    coverage = mean((y_sim .>= low_bound) .& (y_sim .<= high_bound))
+
+    # 6. Visualization
+    ppc = posterior_predictive_check(mod, stats, y_sim)
+    
+    # Spatial Plot based on centroids
+    plt_sp = plot_posterior_results(stats, pts, areal_units.centroids, adj_matrix_numeric; effect=:spatial)
+
+    return (
+        summarystats = sum_stats,
+        min_ess = min_ess,
+        max_rhat = max_rhat,
+        rmse = rmse,
+        mae = mae,
+        coverage_prob = coverage,
+        st_intervals = (mean=st_mean, lower=st_low, upper=st_high),
+        ppc = ppc,
+        plt_spatial = plt_sp,
+        sigma_sp = haskey(chain, :sigma_sp) ? density(chain[:sigma_sp], title="Spatial Sigma Posterior") : nothing
+    )
+end
+
+
+function prepare_model_inputs_direct(D, W, X, log_offset, y, time_idx, nX, nAU, node1, node2; n_cat=13)
+    """
+    Synopsis: Adapts raw data to the standardized prepare_model_inputs format for CARSTM modeling.
+    """
+    # Create a vector of tuples for coordinates (placeholder since this is areal data)
+    # We'll use the centroids of a dummy grid or just zeroed tuples if specific coords aren't needed
+    # for the discrete model components.
+    pts_dummy = [(0.0, 0.0) for _ in 1:length(y)]
+
+    # The area_idx is the spatial unit identifier (1 to 56)
+    area_idx = repeat(1:nAU, 10)
+
+    # Standardize time indices
+    t_idx = Int.(time_idx)
+
+    # Use the existing robust prepare_model_inputs logic to compute scalings and bases
+    # Note: We pass n_cat which is used for the RW2 categorical smoothing priors
+    mod_data = prepare_model_inputs(
+        y, 
+        pts_dummy, 
+        area_idx, 
+        t_idx, 
+        W, 
+        n_cat
+    )
+
+    # Override/Update with Lip Cancer specific inputs
+    # We merge the log_offset (expected cases) and the actual covariate matrix X
+    return merge(mod_data, (
+        X = X, 
+        offset = log_offset, 
+        n_fixed = nX,
+        node1 = node1,
+        node2 = node2
+    ))
+    # Example usage:
+    # lip_inputs = prepare_model_inputs_direct(D, W, Xnew, log_offset_new, ynew, ti, nX, nAU, node1, node2)
+    # display(lip_inputs)
+end
+
+
+function assign_spatial_units_inferred(adjacency_matrix, nAU; iterations=50, learning_rate=0.1, buffer_dist=0.5, input_polygons = nothing)
+    """
+    Synopsis: Manually constructs a areal_units object for areal data like the Lip Cancer dataset.
+              Centroid locations are spatially inferred from connectivity using a rudimentary force-directed layout.
+    Inputs:
+    - adjacency_matrix: The adjacency matrix (W) of the areal units.
+    - nAU: Number of areal units
+    - iterations: Number of iterations for the force-directed layout.
+    - learning_rate: Step size for moving centroids in the layout algorithm.
+    - buffer_dist: Distance to buffer the convex hull when polygons are inferred.
+    - input_polygons: Optional. A vector of LibGEOS Polygons. If provided, centroids and hull are derived from these.
+    """
+
+    local final_centroids
+    local adjacency_edges_output
+    local polys_output
+    local hull_coords_output
+    local g_final # The final graph that will be in the result
+
+    if input_polygons !== nothing && !isempty(input_polygons)
+        # Case 1: Polygons are provided
+        # 1. Extract centroids from input_polygons
+        final_centroids_geoms = [LibGEOS.centroid(p) for p in input_polygons]
+        final_centroids = map(final_centroids_geoms) do g_pt
+            seq = LibGEOS.getCoordSeq(g_pt)
+            (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1))
+        end
+
+        # 2. Determine hull by dissolving all internal edges
+        united_geom = LibGEOS.unaryunion(input_polygons)
+        hull_coords_output = get_coords_from_geom(united_geom)
+
+        # 3. Determine adjacency from input_polygons (using LibGEOS.touches)
+        adjacency_edges_output = []
+        for i in 1:nAU
+            g1 = input_polygons[i]
+            for j in (i+1):nAU
+                g2 = input_polygons[j]
+                if LibGEOS.touches(g1, g2)
+                    push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                else
+                    # Fallback robust check, similar to get_voronoi_polygons_and_edges
+                    g1_buffered = LibGEOS.buffer(g1, 1e-6)
+                    if LibGEOS.intersects(g1_buffered, g2)
+                        inter = LibGEOS.intersection(g1_buffered, g2)
+                        if !LibGEOS.isEmpty(inter) && (LibGEOS.area(inter) > 1e-9 || LibGEOS.geomTypeId(inter) in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_MULTILINESTRING])
+                            push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                        end
+                    end
+                end
+            end
+        end
+
+        polys_output = [get_coords_from_geom(p) for p in input_polygons]
+
+        # Build graph from the determined adjacency edges and ensure connectivity
+        g_final = SimpleGraph(nAU)
+        centroid_map = Dict(c => i for (i, c) in enumerate(final_centroids))
+        for (c1, c2) in adjacency_edges_output
+            u_idx = get(centroid_map, c1, 0)
+            v_idx = get(centroid_map, c2, 0)
+            if u_idx > 0 && v_idx > 0 && !has_edge(g_final, u_idx, v_idx)
+                add_edge!(g_final, u_idx, v_idx)
+            end
+        end
+        g_final = ensure_connected!(g_final, final_centroids) # Ensure connectivity if necessary
+
+    else
+        # Case 2: Polygons are not provided, infer centroids and use tessellation
+        # 1. Build initial graph from adjacency_matrix for force-directed layout
+        g_initial_for_layout = SimpleGraph(adjacency_matrix)
+
+        # 2. Infer initial centroids using force-directed layout
+        side = ceil(Int, sqrt(nAU))
+        initial_centroids_fd = [(Float64(i % side), Float64(i ÷ side)) for i in 0:(nAU-1)]
+        centroids_vec = [SVector{2, Float64}(c) for c in initial_centroids_fd]
+
+        for iter in 1:iterations
+            new_centroids_vec = copy(centroids_vec)
+            for i in 1:nAU
+                neighbors_i = Graphs.neighbors(g_initial_for_layout, i)
+                if !isempty(neighbors_i)
+                    avg_neighbor_pos = sum(centroids_vec[n] for n in neighbors_i) / length(neighbors_i)
+                    new_centroids_vec[i] = centroids_vec[i] + learning_rate * (avg_neighbor_pos - centroids_vec[i])
+                end
+            end
+            centroids_vec = new_centroids_vec
+        end
+        # Centroids after force-directed layout
+        forced_layout_centroids = [(p[1], p[2]) for p in centroids_vec]
+
+        # 3. Determine hull_geom from inferred centroids for clipping
+        hull_geom = expand_hull(forced_layout_centroids, buffer_dist)
+        hull_coords_output = get_coords_from_geom(hull_geom)
+
+        # 4. Use tessellation to determine polygon coordinates and initial adjacency (based on forced_layout_centroids)
+        polys_coords_raw, _ = get_voronoi_polygons_and_edges(forced_layout_centroids, hull_geom) # Discard initial edges as they refer to old centroids
+
+        # 5. RECOMPUTE CENTROIDS from the generated (clipped) polygons and prepare for adjacency
+        final_centroids = Vector{Tuple{Float64, Float64}}(undef, length(polys_coords_raw))
+        lg_polygons_for_adjacency = Vector{Union{LibGEOS.Polygon, Nothing}}(undef, length(polys_coords_raw)) # Allow Nothing
+        polys_output = polys_coords_raw # Keep the raw coordinates for output
+
+        for (idx, poly_coord_list) in enumerate(polys_coords_raw)
+            if !isempty(poly_coord_list) && length(poly_coord_list) >= 3 # Ensure it's a valid polygon
+                # Make sure the polygon is closed for LibGEOS
+                if poly_coord_list[1] != poly_coord_list[end]
+                    push!(poly_coord_list, poly_coord_list[1])
+                end
+                lg_poly = LibGEOS.Polygon([ [Float64[p[1], p[2]] for p in poly_coord_list] ])
+                centroid_geom = LibGEOS.centroid(lg_poly)
+                seq = LibGEOS.getCoordSeq(centroid_geom)
+                final_centroids[idx] = (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1))
+                lg_polygons_for_adjacency[idx] = lg_poly
+            else
+                @warn "Invalid or empty polygon encountered in Voronoi tessellation at index $idx. Using original centroid as fallback, and skipping polygon for adjacency checks."
+                final_centroids[idx] = forced_layout_centroids[idx]
+                lg_polygons_for_adjacency[idx] = nothing # Mark as invalid for adjacency checks
+            end
+        end
+
+        # 6. Re-build adjacency based on the newly derived centroids and polygons
+        adjacency_edges_output = []
+        if !isempty(lg_polygons_for_adjacency)
+            for i in 1:length(lg_polygons_for_adjacency)
+                g1 = lg_polygons_for_adjacency[i]
+                if g1 === nothing continue end # Skip if polygon is invalid
+                for j in (i+1):length(lg_polygons_for_adjacency)
+                    g2 = lg_polygons_for_adjacency[j]
+                    if g2 === nothing continue end # Skip if polygon is invalid
+                    # Check for adjacency using LibGEOS predicates
+                    if LibGEOS.touches(g1, g2)
+                        push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                    else
+                        # Fallback: Robust check using a tiny buffer for floating-point misalignments
+                        g1_buffered = LibGEOS.buffer(g1, 1e-6)
+                        if LibGEOS.intersects(g1_buffered, g2)
+                            inter = LibGEOS.intersection(g1_buffered, g2)
+                            # Check if intersection is a line or has significant area
+                            if !LibGEOS.isEmpty(inter) && (LibGEOS.area(inter) > 1e-9 || LibGEOS.geomTypeId(inter) in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_MULTILINESTRING])
+                                push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        # 7. Build final graph from the re-derived adjacency edges and ensure connectivity
+        g_final = SimpleGraph(nAU) # nAU is the count of regions
+        centroid_map = Dict(c => i for (i, c) in enumerate(final_centroids)) # Map new centroids to indices
+        for (c1, c2) in adjacency_edges_output
+            u_idx = get(centroid_map, c1, 0)
+            v_idx = get(centroid_map, c2, 0)
+            if u_idx > 0 && v_idx > 0 && !has_edge(g_final, u_idx, v_idx)
+                add_edge!(g_final, u_idx, v_idx)
+            end
+        end
+        g_final = ensure_connected!(g_final, final_centroids)
+    end
+
+    return (
+        centroids = final_centroids,
+        adjacency_edges = adjacency_edges_output,
+        graph = g_final,
+        polygons = polys_output,
+        hull_coords = hull_coords_output
+    )
+    
+    """
+    # Generate the spatial metadata for the Lip Cancer dataset
+    areal_units = assign_spatial_units_inferred(W, nAU)
+    println("Spatial metadata created for Scottish Lip Cancer dataset.")
+    println("Number of units: ", length(areal_units.centroids))
+    println("Graph connectivity: ", is_connected(areal_units.graph))
+    
+    # Quick test run: model 2 using explicit unpacking of required fields
+    plt = plot_spatial_graph(lip_inputs.pts_raw, areal_units; title="Lip Cancer Spatial Graph", domain_boundary=lip_inputs.pts_raw)
+    display(plt)
+    
+    println("First few centroids from areal_units: ", areal_units.centroids[1:min(5, length(areal_units.centroids))])
+    """
 end

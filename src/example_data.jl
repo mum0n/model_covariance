@@ -95,38 +95,88 @@ function example_data( datatype, N=200, N_inducing=10; period=12.0, seed=42 )
 
 
   if datatype=="scottish_lip_cancer_data_spacetime"
-    # expand scottish lip cancer data by adding 3 fake time slices .. to use with spatio-temporal modelling
+    # expand scottish lip cancer data function data_scottish_lip_cancer()
+      # data source:  https://mc-stan.org/users/documentation/case-studies/icar_stan.html
 
-    D, W, X, log_offset, y, nX, nAU, node1, node2, scaling_factor = example_data("scottish_lip_cancer_data")  
-    # data and pre-computed parameters 
-    # y: the observed lip cancer case counts on a per-county basis
-    # x: an area-specific continuous covariate that represents the proportion of the population employed in agriculture, fishing, or forestry (AFF)
-    # E: the expected number of cases, used as an offset .. log_offset=log.(E),
-    # adj: a list of region ids for adjacent regions
-    # num: a list of the number of neighbors for each region
-    # node1 node2: the nodes for the adjacency matrix
-    # scaling factor: re-scaling variance to be equal to 1, using Reibler's solution
-    ynew = [y; y; y]
-    ny0 = length(y)
-    ny1 = length(ynew)
+      # Base Spatial Data for 56 Counties
+      N = 56
+      y_base = [ 9, 39, 11, 9, 15, 8, 26, 7, 6, 20, 13, 5, 3, 8, 17, 9, 2, 7, 9, 7,
+      16, 31, 11, 7, 19, 15, 7, 10, 16, 11, 5, 3, 7, 8, 11, 9, 11, 8, 6, 4,
+      10, 8, 2, 6, 19, 3, 2, 3, 28, 6, 1, 1, 1, 1, 0, 0]
+      
+      E_base = [1.4, 8.7, 3.0, 2.5, 4.3, 2.4, 8.1, 2.3, 2.0, 6.6, 4.4, 1.8, 1.1, 3.3, 7.8, 4.6,
+      1.1, 4.2, 5.5, 4.4, 10.5,22.7, 8.8, 5.6,15.5,12.5, 6.0, 9.0,14.4,10.2, 4.8, 2.9, 7.0,
+      8.5, 12.3, 10.1, 12.7, 9.4, 7.2, 5.3,  18.8,15.8, 4.3,14.6,50.7, 8.2, 5.6, 9.3, 88.7, 
+      19.6, 3.4, 3.6, 5.7, 7.0, 4.2, 1.8]
+      
+      x_base = [16,16,10,24,10,24,10, 7, 7,16, 7,16,10,24, 7,16,10, 7, 7,10,
+      7,16,10, 7, 1, 1, 7, 7,10,10, 7,24,10, 7, 7, 0,10, 1,16, 0, 
+      1,16,16, 0, 1, 7, 1, 1, 0, 1, 1, 0, 1, 1,16,10]
+      
+      adj = [ 5, 9,11,19, 7,10, 6,12, 18,20,28, 1,11,12,13,19,
+      3, 8, 2,10,13,16,17, 6, 1,11,17,19,23,29, 2, 7,16,22, 1, 5, 9,12,
+      3, 5,11, 5, 7,17,19, 31,32,35, 25,29,50, 7,10,17,21,22,29,
+      7, 9,13,16,19,29, 4,20,28,33,55,56, 1, 5, 9,13,17, 4,18,55,
+      16,29,50, 10,16, 9,29,34,36,37,39, 27,30,31,44,47,48,55,56,
+      15,26,29, 25,29,42,43, 24,31,32,55, 4,18,33,45, 9,15,16,17,21,23,25,
+      26,34,43,50, 24,38,42,44,45,56, 14,24,27,32,35,46,47, 14,27,31,35,
+      18,28,45,56, 23,29,39,40,42,43,51,52,54, 14,31,32,37,46,
+      23,37,39,41, 23,35,36,41,46, 30,42,44,49,51,54, 23,34,36,40,41,
+      34,39,41,49,52, 36,37,39,40,46,49,53, 26,30,34,38,43,51, 26,29,34,42,
+      24,30,38,48,49, 28,30,33,56, 31,35,37,41,47,53, 24,31,46,48,49,53,
+      24,44,47,49, 38,40,41,44,47,48,52,53,54, 15,21,29, 34,38,42,54,
+      34,40,49,54, 41,46,47,49, 34,38,49,51,52, 18,20,24,27,56,
+      18,24,30,33,45,55]
+              
+      num = [4, 2, 2, 3, 5, 2, 5, 1,  6,  4, 4, 3, 4, 3, 3, 6, 6, 6 ,5, 
+      3, 3, 2, 6, 8, 3, 4, 4, 4,11,  6, 7, 4, 4, 9, 5, 4, 5, 6, 5, 
+      5, 7, 6, 4, 5, 4, 6, 6, 4, 9, 3, 4, 4, 4, 5, 5, 6]
 
-    yr = repeat(1:3, inner=ny0)
-    idx = sample( [0, 0.1, 0.25, 0.5, 0.75, 0.9], ny1)
-    ti = yr .+ idx
+      # Adjacency Mapping
+      N_edges = Integer(length(adj) / 2)
+      node1, node2 = fill(0, N_edges), fill(0, N_edges)
+      i_adj, i_edge = 0, 0
+      for i in 1:N, j in 1:num[i]
+          i_adj += 1
+          if i < adj[i_adj]
+              i_edge += 1
+              node1[i_edge], node2[i_edge] = i, adj[i_adj]
+          end
+      end
+      g = Graph(Edge.(node1, node2))
+      W = adjacency_matrix(g)
+      D = Diagonal(vec(sum(W, dims=2)))
 
-    noise =  rand(ny1) .* 2.0 # fixed component
-    noise += sin.(2.0.*pi.*ti) .* 3.0 # harmonic  ; period = 1 year
-    noise += rand(ny1)  # white noise
-    ynew = ynew .+ (Integer.(floor.(abs.(noise))) )
- 
-    Xnew = [X; X; X] 
-    Xnew[:,2] = Xnew[:,2] .* rand(ny1) .* 0.1
-
-    log_offset_new = [ log_offset; log_offset; log_offset ] .+ rand(ny1) .* 0.1
-
-    return D, W, Xnew, log_offset_new, ynew, ti, nX, nAU, node1, node2, scaling_factor
-
+      # Spatio-Temporal Expansion: 10 Years
+      n_years = 10
+      N_total = N * n_years
+      
+      # 1. Random Walk Trend
+      rw_trend = cumsum(randn(n_years) .* 0.5)
+      
+      # 2. Expand Data Vectors
+      y_expanded = repeat(y_base, n_years)
+      E_expanded = repeat(E_base, n_years)
+      x_expanded = repeat(x_base, n_years)
+      time_idx = repeat(1:n_years, inner=N)
+      
+      # 3. Add Random Walk + Noise to Response
+      # Broadcast rw_trend across years
+      trend_component = repeat(rw_trend, inner=N)
+      noise = randn(N_total) .* 0.2
+      
+      # Final response: base_y + trend + noise (ensuring positive counts)
+      y_final = floor.(Int, abs.(y_expanded .+ trend_component .+ noise))
+      
+      # 4. Final covariate matrix and offsets
+      x_scaled = (x_expanded .- mean(x_expanded)) ./ std(x_expanded)
+      X = Matrix(DataFrame(Intercept=ones(N_total), AFF=x_scaled))
+      log_offset = log.(E_expanded)
+      
+      return D, W, X, log_offset, y_final, time_idx, size(X, 2), N, node1, node2
+      # D, W, Xnew, log_offset_new, ynew, ti, nX, nAU, node1, node2 = data_scottish_lip_cancer()
   end
+
  
 
   if datatype == "regression"
