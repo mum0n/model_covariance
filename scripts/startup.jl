@@ -44,7 +44,7 @@ pkgs = unique( [
     "Peaks", "KernelDensity", "DSP", "Interpolations", 
     "ADTypes",  "ForwardDiff",  
     "JLD2", "DelaunayTriangulation",
-    "PolygonOps", "GeoInterface", 
+    "PolygonOps", "GeoInterface", "DynamicHMC",
     "MCMCChains",  
     "Clustering",  
     "JLD2", "FFTW",  "HypothesisTests",
@@ -112,3 +112,6 @@ include( srcdir( "spatiotemporal_functions.jl" ))
 
 # Set a seed for reproducibility.
 Random.seed!(42)
+
+using LogExpFunctions: logistic
+

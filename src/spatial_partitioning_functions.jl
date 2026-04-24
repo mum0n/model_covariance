@@ -587,3 +587,29 @@ function get_spatial_graph(spatial_res)
     end
     return g
 end
+
+
+
+function plot_kde_simple(pts; grid_res=600, sd_extension_factor=0.25, title="Spatial Intensity (KDE)")
+    # Internal wrapper for estimate_local_kde_with_extrapolation
+    # Description: Generates a simple 2D Heatmap of spatial intensity using Kernel Density Estimation.
+    # Inputs:
+    #   - pts: Vector of (x, y) coordinate tuples.
+    #   - grid_res: Resolution of the output grid.
+    #   - sd_extension_factor: Factor to extend the bandwidth standard deviation.
+    #   - title: Title for the generated plot.
+    # Outputs:
+    #   - A Plots.Plot object (Heatmap with scatter overlay).
+    # Using a dummy time_idx of 1s since we are plotting a static slice
+    t_idx_dummy = ones(Int, length(pts))
+    x_g, y_g, intensity = estimate_local_kde_with_extrapolation(pts, t_idx_dummy, 1; grid_res=grid_res, sd_extension_factor=sd_extension_factor)
+
+    plt = Plots.heatmap(x_g, y_g, intensity',
+                  title=title,
+                  c=:viridis,
+                  aspect_ratio=:equal,
+                  xlabel="X", ylabel="Y")
+    Plots.scatter!(plt, [p[1] for p in pts], [p[2] for p in pts],
+                   markersize=2, markercolor=:white, markeralpha=0.5, label="Points")
+    return plt
+end

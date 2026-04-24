@@ -133,32 +133,7 @@ function init_params_copy( res=NaN, res0=NaN; load_from_file=false, override_mea
 
   return(init_params)
 end
-
-
-function plot_kde_simple(pts; grid_res=600, sd_extension_factor=0.25, title="Spatial Intensity (KDE)")
-    # Internal wrapper for estimate_local_kde_with_extrapolation
-    # Description: Generates a simple 2D Heatmap of spatial intensity using Kernel Density Estimation.
-    # Inputs:
-    #   - pts: Vector of (x, y) coordinate tuples.
-    #   - grid_res: Resolution of the output grid.
-    #   - sd_extension_factor: Factor to extend the bandwidth standard deviation.
-    #   - title: Title for the generated plot.
-    # Outputs:
-    #   - A Plots.Plot object (Heatmap with scatter overlay).
-    # Using a dummy time_idx of 1s since we are plotting a static slice
-    t_idx_dummy = ones(Int, length(pts))
-    x_g, y_g, intensity = estimate_local_kde_with_extrapolation(pts, t_idx_dummy, 1; grid_res=grid_res, sd_extension_factor=sd_extension_factor)
-    
-    plt = Plots.heatmap(x_g, y_g, intensity', 
-                  title=title, 
-                  c=:viridis, 
-                  aspect_ratio=:equal,
-                  xlabel="X", ylabel="Y")
-    Plots.scatter!(plt, [p[1] for p in pts], [p[2] for p in pts], 
-                   markersize=2, markercolor=:white, markeralpha=0.5, label="Points")
-    return plt
-end
-
+ 
 
 Turing.@model function pca_carstm( Y, ::Type{T}=Float64 ) where {T}
   # X, G, log_offset, y, z, auid, nData, nX, nG, nAU, node1, node2, scaling_factor 
@@ -561,126 +536,7 @@ function logpdf_gmrf(x, Q)
 end
 
 
-
-function reconstruct_posteriors(model::DynamicPPL.Model, chain::MCMCChains.Chains, pts, area_idx, time_idx, W_sym; cov_indices=nothing, class1=nothing, class2=nothing)
-    # Description: Aggregates and summarizes MCMC samples into denoised spatial, temporal, and prediction matrices.
-    # Inputs:
-    #   - model: Turing model object.
-    #   - chain: MCMC sample chain.
-    #   - pts: Observation points.
-    #   - area_idx/time_idx: Mapping of observations to spatial/temporal units.
-    #   - W_sym: Adjacency matrix.
-    #   - cov_indices/class1/class2: Categorical indices for effects.
-    # Outputs:
-    #   - NamedTuple containing summarized spatial/temporal effects, categorical effects, 
-    #     ST matrices (denoised/noisy), and predictions.
-
-    N_obs = size(pts,1); N_areas = size(W_sym, 1); N_time = maximum(time_idx)
-    family = detect_model_family(model)
-    N_samples = size(chain, 1)
-    names_ch = names(chain)
-
-    # 1. Spatial Effects
-    spatial_samples = zeros(N_areas, N_samples)
-    if "s_eff[1]" in names_ch
-        for i in 1:N_areas; spatial_samples[i, :] = vec(chain["s_eff[$i]"].data); end
-    elseif all(x -> x in names_ch, ["sigma_sp", "phi_sp"])
-        sig = vec(chain[:sigma_sp].data); phi = vec(chain[:phi_sp].data)
-        u_icar = hcat([vec(chain["u_icar[$i]"].data) for i in 1:N_areas]...)
-        u_iid = hcat([vec(chain["u_iid[$i]"].data) for i in 1:N_areas]...)
-        spatial_samples = (sig .* (sqrt.(phi) .* u_icar .+ sqrt.(1 .- phi) .* u_iid))'
-    end
-
-    # 2. Temporal Effects (GMRF or RFF)
-    temporal_samples = zeros(N_time, N_samples)
-    if "f_time[1]" in names_ch
-        for i in 1:N_time; temporal_samples[i, :] = vec(chain["f_time[$i]"].data); end
-    else
-        for i in 1:N_time
-            val = zeros(N_samples)
-            if "f_trend[$i]" in names_ch; val .+= vec(chain["f_trend[$i]"].data); end
-            if "f_seas[$i]" in names_ch; val .+= vec(chain["f_seas[$i]"].data); end
-            temporal_samples[i, :] = val
-        end
-    end
-
-    # 3. Categorical/Class Effects
-    beta_cov_summaries = []
-    beta_cov_raw = []
-    for k in 1:4
-        k_names = filter(n -> startswith(string(n), "beta_cov[$k]["), names_ch)
-        if !isempty(k_names)
-            mat = hcat([vec(chain[n].data) for n in k_names]...) # N_samples x N_levels
-            push!(beta_cov_raw, mat)
-            # Summarize (Levels x 1 x Samples)
-            push!(beta_cov_summaries, summarize_array(reshape(mat', size(mat,2), 1, N_samples)))
-        end
-    end
-
-    b1_summary = nothing
-    b1_raw = nothing
-    if "b_class1[1]" in names_ch
-        b1_raw = hcat([vec(chain["b_class1[$i]"].data) for i in 1:maximum(class1)]...)
-        b1_summary = summarize_array(reshape(b1_raw', size(b1_raw,2), 1, N_samples))
-    end
-
-    b2_summary = nothing
-    b2_raw = nothing
-    if "b_class2[1]" in names_ch
-        b2_raw = hcat([vec(chain["b_class2[$i]"].data) for i in 1:maximum(class2)]...)
-        b2_summary = summarize_array(reshape(b2_raw', size(b2_raw,2), 1, N_samples))
-    end
-
-    # 4. Parameters for noise
-    sig_y = "sigma_y" in names_ch ? vec(chain[:sigma_y].data) : zeros(N_samples)
-    r_nb = "r_nb" in names_ch ? vec(chain[:r_nb].data) : fill(2.0, N_samples)
-    phi_zi = "phi_zi" in names_ch ? vec(chain[:phi_zi].data) : zeros(N_samples)
-
-    # 5. Core Reconstruction
-    st_samples = zeros(N_areas, N_time, N_samples)
-    st_noisy_samples = zeros(N_areas, N_time, N_samples)
-    pred_samples = zeros(N_obs, N_samples)
-
-    for s in 1:N_samples
-        for a in 1:N_areas, t in 1:N_time
-            eta = spatial_samples[a, s] + temporal_samples[t, s]
-            st_samples[a, t, s] = eta
-            if family == :gaussian; st_noisy_samples[a, t, s] = eta + randn() * sig_y[s]
-            elseif family == :lognormal; st_noisy_samples[a, t, s] = rand(LogNormal(eta, sig_y[s]))
-            elseif family == :binomial; st_noisy_samples[a, t, s] = rand(Binomial(1, logistic(eta)))
-            elseif family == :poisson; st_noisy_samples[a, t, s] = rand(Poisson(exp(eta)))
-            elseif family == :negbinomial; st_noisy_samples[a, t, s] = rand(NegativeBinomial2(exp(eta), r_nb[s]))
-            elseif family == :zip; st_noisy_samples[a, t, s] = rand() < phi_zi[s] ? 0.0 : rand(Poisson(exp(eta)))
-            elseif family == :zinb; st_noisy_samples[a, t, s] = rand() < phi_zi[s] ? 0.0 : rand(NegativeBinomial2(exp(eta), r_nb[s]))
-            else st_noisy_samples[a, t, s] = eta
-            end
-        end
-
-        for i in 1:N_obs
-            eta_i = st_samples[area_idx[i], time_idx[i], s]
-            if !isempty(beta_cov_raw)
-                for k in 1:length(beta_cov_raw)
-                    eta_i += beta_cov_raw[k][s, cov_indices[i, k]]
-                end
-            end
-            if !isnothing(b1_raw); eta_i += b1_raw[s, class1[i]]; end
-            if !isnothing(b2_raw); eta_i += b2_raw[s, class2[i]]; end
-            
-            pred_samples[i, s] = family == :binomial ? logistic(eta_i) : (family in [:negbinomial, :zinb, :zip, :poisson, :lognormal] ? exp(eta_i) : eta_i)
-        end
-    end
-
-    return (spatial = summarize_array(reshape(spatial_samples, N_areas, 1, N_samples)),
-            temporal = summarize_array(reshape(temporal_samples, N_time, 1, N_samples)),
-            beta_cov = beta_cov_summaries,
-            b_class1 = b1_summary,
-            b_class2 = b2_summary,
-            st_mat_denoised = summarize_array(st_samples),
-            st_mat_noisy = summarize_array(st_noisy_samples),
-            predictions = summarize_array(reshape(pred_samples, N_obs, 1, N_samples)),
-            family = family)
-end
-
+ 
 
 
 function detect_model_family(model::DynamicPPL.Model)
@@ -743,8 +599,8 @@ function posterior_predictive_check(model::DynamicPPL.Model, stats, y_obs)
     println("Kendall τ: ", round(kendall_val, digits=4), " (p=", round(kendall_p, digits=4), ")")
 
     # 3. Density Visualization
-    plt_density = density(y_obs, label="Observed", lw=2, color=:black)
-    density!(plt_density, y_pred, label="Predicted (Denoised)", lw=2, color=:blue, ls=:dash)
+    plt_density = StatsPlots.density(y_obs, label="Observed", lw=2, color=:black)
+    StatsPlots.density!(plt_density, y_pred, label="Predicted (Denoised)", lw=2, color=:blue, ls=:dash)
     title!(plt_density, "PPC: Posterior Predictive Density ($family)")
     xlabel!(plt_density, "Value")
     ylabel!(plt_density, "Density")
@@ -758,7 +614,7 @@ function posterior_predictive_check(model::DynamicPPL.Model, stats, y_obs)
     return (rmse=rmse, pearson=(val=pearson_val, p=pearson_p), kendall=(val=kendall_val, p=kendall_p), plot_density=plt_density, plot_scatter=plt_scatter)
 end
 
-function plot_posterior_results(stats, pts, spatial_res, W; time_slice=nothing, effect=:spatial, cov_idx=1, show_pts=false)
+function plot_posterior_results(stats, pts, areal_units, W; time_slice=nothing, effect=:spatial, cov_idx=1, show_pts=false)
     # Description: Comprehensive posterior visualization for CARSTM and Deep GP models.
 
     # 1. Handle Categorical/Class Bar Plots
@@ -786,7 +642,7 @@ function plot_posterior_results(stats, pts, spatial_res, W; time_slice=nothing, 
                    fillalpha=0.2, lw=2, title="Temporal Main Effect", xlabel="Time Index", ylabel="Effect (Latent Scale)", legend=false)
 
     # 3. Handle Spatial, ST, and Deep GP Mean Fields
-    elseif effect in [:spatial, :st_predictions_denoised, :st_predictions_noisy, :residuals, :eta_gp, :hidden_layer]
+    elseif effect in [:spatial, :st_mat_denoised, :st_mat_noisy, :residuals, :eta_gp, :hidden_layer]
         plt = StatsPlots.plot(aspect_ratio=:equal, title="$effect (T=$(time_slice))", legend=true)
 
         # Determine the values to map to colors
@@ -798,9 +654,9 @@ function plot_posterior_results(stats, pts, spatial_res, W; time_slice=nothing, 
         elseif effect == :hidden_layer
             # Visualize the hidden warping (Layer 1)
             haskey(stats, :h1) ? stats.h1.mean : error("hidden layer h1 not found in stats")
-        elseif effect == :st_predictions_denoised && !isnothing(time_slice)
+        elseif effect == :st_mat_denoised && !isnothing(time_slice)
             stats.st_mat_denoised.mean[:, time_slice]
-        elseif effect == :st_predictions_noisy && !isnothing(time_slice)
+        elseif effect == :st_mat_noisy && !isnothing(time_slice)
             stats.st_mat_noisy.mean[:, time_slice]
         elseif effect == :residuals
             # Unit-level aggregate residual check using denoised mean field as base
@@ -809,8 +665,8 @@ function plot_posterior_results(stats, pts, spatial_res, W; time_slice=nothing, 
             error("Effect $effect requires specific keys in stats or time_slice index")
         end
 
-        for i in 1:length(spatial_res.polygons)
-            poly_coords = spatial_res.polygons[i]
+        for i in 1:length(areal_units.polygons)
+            poly_coords = areal_units.polygons[i]
             if length(poly_coords) > 2
                 px = [pt[1] for pt in poly_coords if !isnan(pt[1])]
                 py = [pt[2] for pt in poly_coords if !isnan(pt[2])]
@@ -839,13 +695,35 @@ function plot_posterior_results(stats, pts, spatial_res, W; time_slice=nothing, 
                 markersize=1, markercolor=:gray, alpha=0.2, label="Observations")
         end
 
-        StatsPlots.scatter!(plt, [c[1] for c in spatial_res.centroids], [c[2] for c in spatial_res.centroids], 
+        StatsPlots.scatter!(plt, [c[1] for c in areal_units.centroids], [c[2] for c in areal_units.centroids], 
             markersize=2, markercolor=:white, markerstrokecolor=:black, alpha=0.5, label="Centroids")
 
         return plt
     else
         error("Effect $effect not recognized.")
     end
+end
+
+function plot_posterior_results(stats, modinputs; time_slice=nothing, effect=:spatial, cov_idx=1, show_pts=false)
+    # Wrapper method that accepts the modinputs NamedTuple
+    # to facilitate drop-in replacement in comprehensive diagnostic functions.
+
+    # Extract necessary spatial metadata from modinputs and surrounding scope
+    # Note: spatial_res is usually available in the Main scope from the partitioning step
+    if !@isdefined(spatial_res)
+        @warn "spatial_res not found in scope. Attempting to plot using only centroids if possible."
+    end
+
+    return plot_posterior_results(
+        stats, 
+        modinputs.pts_raw, 
+        spatial_res, 
+        modinputs.Q_sp; 
+        time_slice=time_slice, 
+        effect=effect, 
+        cov_idx=cov_idx, 
+        show_pts=show_pts
+    )
 end
 
 
@@ -866,8 +744,8 @@ function plot_posterior_vs_prior(model::DynamicPPL.Model, chain::MCMCChains.Chai
     prior_samples = vec(prior_chain[param_sym].data)
 
     # 3. Visualization
-    plt = density(post_samples, label="Posterior: $param_sym", lw=3, color=:blue, fill=(0, 0.2, :blue))
-    density!(plt, prior_samples, label="Prior (sampled)", lw=2, ls=:dash, color=:red)
+    plt = StatsPlots.density(post_samples, label="Posterior: $param_sym", lw=3, color=:blue, fill=(0, 0.2, :blue))
+    StatsPlots.density!(plt, prior_samples, label="Prior (sampled)", lw=2, ls=:dash, color=:red)
 
     title!(plt, title)
     xlabel!(plt, "Value")
@@ -919,117 +797,7 @@ function NegativeBinomial2(μ, r)
     p = r / (r + μ)
     return NegativeBinomial(r, p)
 end
-
-function calculate_waic_weighted_likelihood(model::DynamicPPL.Model, chain::MCMCChains.Chains, y_obs, time_idx, area_idx, cov_matrix_indices, adj_matrix; weights=ones(length(y_obs)), offset=zeros(length(y_obs)))
-    N_obs = length(y_obs)
-    N_areas = size(adj_matrix, 1)
-    N_time = maximum(time_idx)
-    N_samples = size(chain, 1)
-
-    log_lik_mat = zeros(N_samples, N_obs)
-
-    # Determine the model family
-    family = detect_model_family(model)
-    if family != :gaussian
-        @warn "This custom WAIC function is currently optimized for Gaussian models. Results for other families might be incorrect." 
-    end
-
-    for s in 1:N_samples
-        # Extract scalar parameters for sample s
-        sigma_y_s = chain[:sigma_y].data[s]
-        sigma_sp_s = chain[:sigma_sp].data[s]
-        phi_sp_s = chain[:phi_sp].data[s]
-        sigma_tm_s = chain[:sigma_tm].data[s]
-        rho_tm_s = chain[:rho_tm].data[s]
-        sigma_int_s = chain[:sigma_int].data[s]
-
-        # Extract indexed parameters for sample s
-        u_icar_s = [chain["u_icar[" * string(i) * "]"].data[s] for i in 1:N_areas]
-        u_iid_s = [chain["u_iid[" * string(i) * "]"].data[s] for i in 1:N_areas]
-        f_tm_raw_s = [chain["f_tm_raw[" * string(i) * "]"].data[s] for i in 1:N_time]
-        st_int_raw_s = [chain["st_int_raw[" * string(i) * "]"].data[s] for i in 1:(N_areas * N_time)]
-        
-        # beta_cov parameters are more complex, ensure correct indexing if used
-        beta_cov_s = [Float64[] for _ in 1:4] # Initialize as vector of empty vectors
-        for k in 1:4
-            push!(beta_cov_s[k], [chain["beta_cov[" * string(k) * "][" * string(j) * "]"].data[s] for j in 1:13]...)
-        end
-
-        # Reconstruct effects for sample s
-        s_eff_s = sigma_sp_s .* (sqrt(phi_sp_s) .* u_icar_s .+ sqrt(1 - phi_sp_s) .* u_iid_s)
-        f_time_s = f_tm_raw_s .* sigma_tm_s
-        st_interaction_s = reshape(st_int_raw_s, N_areas, N_time) .* sigma_int_s
-
-        for i in 1:N_obs
-            a, t = area_idx[i], time_idx[i]
-            
-            # Reconstruct mu for current observation i and sample s
-            mu_i = offset[i] + s_eff_s[a] + f_time_s[t] + st_interaction_s[a, t]
-            for k in 1:4
-                mu_i += beta_cov_s[k][cov_matrix_indices[i, k]]
-            end
-
-            # Calculate log-likelihood for this observation and sample
-            if family == :gaussian
-                dist = Normal(mu_i, sigma_y_s)
-            # Add other families here if needed
-            else
-                @error "Unsupported family for custom WAIC calculation: $family"
-                return Inf
-            end
-            log_lik_mat[s, i] = weights[i] * logpdf(dist, y_obs[i])
-        end
-    end
-
-    # WAIC calculation from log_lik_mat
-    lppd = sum(logsumexp(log_lik_mat[:, i]) - log(N_samples) for i in 1:N_obs)
-    p_waic = sum(var(log_lik_mat, dims=1))
-    
-    return -2 * (lppd - p_waic)
-end
-
-
-function calculate_waic(model::DynamicPPL.Model, chain::MCMCChains.Chains)
-    # Description: Computes the Watanabe-Akaike Information Criterion (WAIC) for model comparison.
-    # Inputs:
-    #   - model/chain: Turing model and associated MCMC samples.
-    # Outputs:
-    #   - Float64 value (WAIC).
-
-    try
-        # Extract pointwise log-likelihoods using the official API
-        pointwise_ll = Turing.pointwise_loglikelihoods(model, chain)
-
-        # Get keys safely - handles LazyBundles and standard Dicts
-        ks = collect(keys(pointwise_ll))
-
-        if isempty(ks)
-            return Inf
-        end
-
-        # Initialize the likelihood matrix with the first parameter key
-        # Casting to Float64 ensures stability for sum and logsumexp
-        log_lik_mat = Float64.(copy(pointwise_ll[ks[1]]))
-
-        # Accumulate log-likelihoods if multiple variables are observed
-        for i in 2:length(ks)
-            log_lik_mat .+= pointwise_ll[ks[i]]
-        end
-
-        n_samples, n_obs = size(log_lik_mat)
-
-        # lppd: log pointwise predictive density
-        lppd = sum(logsumexp(log_lik_mat[:, i]) - log(n_samples) for i in 1:n_obs)
-
-        # p_waic: effective number of parameters
-        p_waic = sum(var(log_lik_mat, dims=1))
-
-        return -2 * (lppd - p_waic)
-    catch e
-        @warn "WAIC calculation failed: $e"
-        return Inf
-    end
-end
+  
 
 function get_rff_deep2D_basis(X, m, lengthscale)
     # Description: Generates Random Fourier Feature (RFF) basis for 2D inputs (Spatial/Temporal).
@@ -1144,6 +912,547 @@ function prepare_model_inputs(y, pts, area_idx, time_idx, W_sym, n_cat; m_trend=
         weights = ones(N_obs), offset = zeros(N_obs)
     )
 end
+
+
+function model_results_comprehensive(model::DynamicPPL.Model, chain::MCMCChains.Chains, modinputs; alpha=0.05, time_slice=1)
+    # Synopsis: Comprehensive diagnostic and visualization suite for CARSTM models.
+    # Inputs: model (Turing), chain (MCMCChains), modinputs (NamedTuple)
+
+    # 1. Basic Diagnostics
+    sum_stats = summarystats(chain)
+    min_ess = minimum(sum_stats[:, :ess_bulk])
+    max_rhat = maximum(sum_stats[:, :rhat])
+
+    # 2. Reconstruct Posteriors using the refactored logic, passing alpha for CIs
+    stats = reconstruct_posteriors(model, chain, modinputs; alpha=alpha)
+
+    # 3. Accuracy Metrics
+    y_pred = vec(stats.predictions.mean)
+    y_obs = modinputs.y
+    rmse = sqrt(mean((y_obs .- y_pred).^2))
+    mae = mean(abs.(y_obs .- y_pred))
+    corr_p = cor(y_obs, y_pred)
+
+    # 4. Coverage Probability (using CIs determined by alpha)
+    low_bound = vec(stats.predictions.lower)
+    high_bound = vec(stats.predictions.upper)
+    coverage = mean((y_obs .>= low_bound) .& (y_obs .<= high_bound))
+
+    # 5. Visualizations and Diagnostics
+    # Standard PPC (Density and Scatter)
+    ppc = posterior_predictive_check(model, stats, y_obs)
+
+    # Spatial Main Effect
+    plt_sp = plot_posterior_results(stats, modinputs; effect=:spatial)
+    title!(plt_sp, "Main Spatial Effect ($(100(1-alpha))% CI)")
+
+    # Temporal Time-Series Plot
+    plt_tm = plot_posterior_results(stats, modinputs; effect=:temporal)
+    title!(plt_tm, "Temporal Main Effect Trend")
+
+    # Denoised Predictions for specific time slice
+    plt_st_denoised = plot_posterior_results(stats, modinputs; effect=:st_mat_denoised, time_slice=time_slice)
+    title!(plt_st_denoised, "Denoised Predictions (Time: $time_slice)")
+
+    plt_st_noisy = plot_posterior_results(stats, modinputs; effect=:st_mat_noisy, time_slice=time_slice)
+    title!(plt_st_noisy, "Noisy Predictions (Time: $time_slice)")
+
+    # Calculate WAIC
+    waic_val = waic_compute(model, chain, modinputs)
+
+    return (
+        summarystats = sum_stats,
+        min_ess = min_ess,
+        max_rhat = max_rhat,
+        rmse = rmse,
+        mae = mae,
+        pearson_r = corr_p,
+        waic = waic_val,
+        coverage_prob = coverage,
+        st_intervals = (mean=stats.st_mat_denoised.mean, lower=stats.st_mat_denoised.lower, upper=stats.st_mat_denoised.upper),
+        plots = (ppc=ppc, spatial=plt_sp, temporal=plt_tm, st_denoised=plt_st_denoised, st_noisy=plt_st_noisy),
+        stats_raw = stats
+    )
+end
+
+
+function prepare_model_inputs_direct(D, W, X, log_offset, y, time_idx, nX, nAU, node1, node2; n_cat=13)
+    """
+    Synopsis: Adapts raw data to the standardized prepare_model_inputs format for CARSTM modeling.
+    """
+    # Create a vector of tuples for coordinates (placeholder since this is areal data)
+    # We'll use the centroids of a dummy grid or just zeroed tuples if specific coords aren't needed
+    # for the discrete model components.
+    pts_dummy = [(0.0, 0.0) for _ in 1:length(y)]
+
+    # The area_idx is the spatial unit identifier (1 to 56)
+    area_idx = repeat(1:nAU, 10)
+
+    # Standardize time indices
+    t_idx = Int.(time_idx)
+
+    # Use the existing robust prepare_model_inputs logic to compute scalings and bases
+    # Note: We pass n_cat which is used for the RW2 categorical smoothing priors
+    mod_data = prepare_model_inputs(
+        y, 
+        pts_dummy, 
+        area_idx, 
+        t_idx, 
+        W, 
+        n_cat
+    )
+
+    # Override/Update with Lip Cancer specific inputs
+    # We merge the log_offset (expected cases) and the actual covariate matrix X
+    return merge(mod_data, (
+        X = X, 
+        offset = log_offset, 
+        n_fixed = nX,
+        node1 = node1,
+        node2 = node2
+    ))
+    # Example usage:
+    # lip_inputs = prepare_model_inputs_direct(D, W, Xnew, log_offset_new, ynew, ti, nX, nAU, node1, node2)
+    # display(lip_inputs)
+end
+
+
+
+
+# -----------------------
+
+
+
+function assign_spatial_units_inferred(adjacency_matrix; iterations=50, learning_rate=0.1, buffer_dist=0.5, input_polygons = nothing)
+    """
+    Synopsis: Manually constructs a areal_units object for areal data like the Lip Cancer dataset.
+              Centroid locations are spatially inferred from connectivity using a rudimentary force-directed layout.
+    Inputs:
+    - adjacency_matrix: The adjacency matrix (W) of the areal units.
+    - iterations: Number of iterations for the force-directed layout.
+    - learning_rate: Step size for moving centroids in the layout algorithm.
+    - buffer_dist: Distance to buffer the convex hull when polygons are inferred.
+    - input_polygons: Optional. A vector of LibGEOS Polygons. If provided, centroids and hull are derived from these.
+    """
+
+    local final_centroids
+    local adjacency_edges_output
+    local polys_output
+    local hull_coords_output
+    local g_final # The final graph that will be in the result
+
+    nAU = size(adjacency_matrix, 1)
+
+
+    if input_polygons !== nothing && !isempty(input_polygons)
+        # Case 1: Polygons are provided
+        # 1. Extract centroids from input_polygons
+        final_centroids_geoms = [LibGEOS.centroid(p) for p in input_polygons]
+        final_centroids = map(final_centroids_geoms) do g_pt
+            seq = LibGEOS.getCoordSeq(g_pt)
+            (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1))
+        end
+
+        # 2. Determine hull by dissolving all internal edges
+        united_geom = LibGEOS.unaryunion(input_polygons)
+        hull_coords_output = get_coords_from_geom(united_geom)
+
+        # 3. Determine adjacency from input_polygons (using LibGEOS.touches)
+        adjacency_edges_output = []
+        for i in 1:nAU
+            g1 = input_polygons[i]
+            for j in (i+1):nAU
+                g2 = input_polygons[j]
+                if LibGEOS.touches(g1, g2)
+                    push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                else
+                    # Fallback robust check, similar to get_voronoi_polygons_and_edges
+                    g1_buffered = LibGEOS.buffer(g1, 1e-6)
+                    if LibGEOS.intersects(g1_buffered, g2)
+                        inter = LibGEOS.intersection(g1_buffered, g2)
+                        if !LibGEOS.isEmpty(inter) && (LibGEOS.area(inter) > 1e-9 || LibGEOS.geomTypeId(inter) in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_MULTILINESTRING])
+                            push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                        end
+                    end
+                end
+            end
+        end
+
+        polys_output = [get_coords_from_geom(p) for p in input_polygons]
+
+        # Build graph from the determined adjacency edges and ensure connectivity
+        g_final = SimpleGraph(nAU)
+        centroid_map = Dict(c => i for (i, c) in enumerate(final_centroids))
+        for (c1, c2) in adjacency_edges_output
+            u_idx = get(centroid_map, c1, 0)
+            v_idx = get(centroid_map, c2, 0)
+            if u_idx > 0 && v_idx > 0 && !has_edge(g_final, u_idx, v_idx)
+                add_edge!(g_final, u_idx, v_idx)
+            end
+        end
+        g_final = ensure_connected!(g_final, final_centroids) # Ensure connectivity if necessary
+
+    else
+        # Case 2: Polygons are not provided, infer centroids and use tessellation
+        # 1. Build initial graph from adjacency_matrix for force-directed layout
+        g_initial_for_layout = SimpleGraph(adjacency_matrix)
+
+        # 2. Infer initial centroids using force-directed layout
+        side = ceil(Int, sqrt(nAU))
+        initial_centroids_fd = [(Float64(i % side), Float64(i ÷ side)) for i in 0:(nAU-1)]
+        centroids_vec = [SVector{2, Float64}(c) for c in initial_centroids_fd]
+
+        for iter in 1:iterations
+            new_centroids_vec = copy(centroids_vec)
+            for i in 1:nAU
+                neighbors_i = Graphs.neighbors(g_initial_for_layout, i)
+                if !isempty(neighbors_i)
+                    avg_neighbor_pos = sum(centroids_vec[n] for n in neighbors_i) / length(neighbors_i)
+                    new_centroids_vec[i] = centroids_vec[i] + learning_rate * (avg_neighbor_pos - centroids_vec[i])
+                end
+            end
+            centroids_vec = new_centroids_vec
+        end
+        # Centroids after force-directed layout
+        forced_layout_centroids = [(p[1], p[2]) for p in centroids_vec]
+
+        # 3. Determine hull_geom from inferred centroids for clipping
+        hull_geom = expand_hull(forced_layout_centroids, buffer_dist)
+        hull_coords_output = get_coords_from_geom(hull_geom)
+
+        # 4. Use tessellation to determine polygon coordinates and initial adjacency (based on forced_layout_centroids)
+        polys_coords_raw, _ = get_voronoi_polygons_and_edges(forced_layout_centroids, hull_geom) # Discard initial edges as they refer to old centroids
+
+        # 5. RECOMPUTE CENTROIDS from the generated (clipped) polygons and prepare for adjacency
+        final_centroids = Vector{Tuple{Float64, Float64}}(undef, length(polys_coords_raw))
+        lg_polygons_for_adjacency = Vector{Union{LibGEOS.Polygon, Nothing}}(undef, length(polys_coords_raw)) # Allow Nothing
+        polys_output = polys_coords_raw # Keep the raw coordinates for output
+
+        for (idx, poly_coord_list) in enumerate(polys_coords_raw)
+            if !isempty(poly_coord_list) && length(poly_coord_list) >= 3 # Ensure it's a valid polygon
+                # Make sure the polygon is closed for LibGEOS
+                if poly_coord_list[1] != poly_coord_list[end]
+                    push!(poly_coord_list, poly_coord_list[1])
+                end
+                lg_poly = LibGEOS.Polygon([ [Float64[p[1], p[2]] for p in poly_coord_list] ])
+                centroid_geom = LibGEOS.centroid(lg_poly)
+                seq = LibGEOS.getCoordSeq(centroid_geom)
+                final_centroids[idx] = (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1))
+                lg_polygons_for_adjacency[idx] = lg_poly
+            else
+                @warn "Invalid or empty polygon encountered in Voronoi tessellation at index $idx. Using original centroid as fallback, and skipping polygon for adjacency checks."
+                final_centroids[idx] = forced_layout_centroids[idx]
+                lg_polygons_for_adjacency[idx] = nothing # Mark as invalid for adjacency checks
+            end
+        end
+
+        # 6. Re-build adjacency based on the newly derived centroids and polygons
+        adjacency_edges_output = []
+        if !isempty(lg_polygons_for_adjacency)
+            for i in 1:length(lg_polygons_for_adjacency)
+                g1 = lg_polygons_for_adjacency[i]
+                if g1 === nothing continue end # Skip if polygon is invalid
+                for j in (i+1):length(lg_polygons_for_adjacency)
+                    g2 = lg_polygons_for_adjacency[j]
+                    if g2 === nothing continue end # Skip if polygon is invalid
+                    # Check for adjacency using LibGEOS predicates
+                    if LibGEOS.touches(g1, g2)
+                        push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                    else
+                        # Fallback: Robust check using a tiny buffer for floating-point misalignments
+                        g1_buffered = LibGEOS.buffer(g1, 1e-6)
+                        if LibGEOS.intersects(g1_buffered, g2)
+                            inter = LibGEOS.intersection(g1_buffered, g2)
+                            # Check if intersection is a line or has significant area
+                            if !LibGEOS.isEmpty(inter) && (LibGEOS.area(inter) > 1e-9 || LibGEOS.geomTypeId(inter) in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_MULTILINESTRING])
+                                push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        # 7. Build final graph from the re-derived adjacency edges and ensure connectivity
+        g_final = SimpleGraph(nAU) # nAU is the count of regions
+        centroid_map = Dict(c => i for (i, c) in enumerate(final_centroids)) # Map new centroids to indices
+        for (c1, c2) in adjacency_edges_output
+            u_idx = get(centroid_map, c1, 0)
+            v_idx = get(centroid_map, c2, 0)
+            if u_idx > 0 && v_idx > 0 && !has_edge(g_final, u_idx, v_idx)
+                add_edge!(g_final, u_idx, v_idx)
+            end
+        end
+        g_final = ensure_connected!(g_final, final_centroids)
+    end
+
+    return (
+        centroids = final_centroids,
+        adjacency_edges = adjacency_edges_output,
+        graph = g_final,
+        polygons = polys_output,
+        hull_coords = hull_coords_output
+    )
+    
+    """
+    # Generate the spatial metadata for dataset when only W is known
+        areal_units = assign_spatial_units_inferred(W, nAU)
+        println("Spatial metadata created for Scottish Lip Cancer dataset.")
+        println("Number of units: ", length(areal_units.centroids))
+        println("Graph connectivity: ", is_connected(areal_units.graph))
+        
+        # Quick test run: model 2 using explicit unpacking of required fields
+        plt = plot_spatial_graph(lip_inputs.pts_raw, areal_units; title="Lip Cancer Spatial Graph", domain_boundary=lip_inputs.pts_raw)
+        display(plt)
+        
+        println("First few centroids from areal_units: ", areal_units.centroids[1:min(5, length(areal_units.centroids))])
+    """
+end
+
+
+function waic_compute(model::DynamicPPL.Model, chain::MCMCChains.Chains, modinputs; use_weights=true)
+    """
+    Consolidated WAIC calculation function.
+    1. Attempts native Turing pointwise log-likelihood extraction.
+    2. Falls back to manual reconstruction if native fails.
+    3. Automatically detects model type (AR1, RFF, Deep GP) and likelihood family.
+    """
+    N_obs = length(modinputs.y)
+    N_samples = size(chain, 1)
+    family = detect_model_family(model)
+    weights = use_weights ? modinputs.weights : ones(N_obs)
+    chain_names = names(chain)
+    model_type = identify_model_type(chain)
+
+    # Strategy 1: Native Turing extraction
+    try
+        pointwise_ll = Turing.pointwise_loglikelihoods(model, chain)
+        ks = collect(keys(pointwise_ll))
+        if !isempty(ks)
+            log_lik_mat = Float64.(copy(pointwise_ll[ks[1]]))
+            for i in 2:length(ks)
+                log_lik_mat .+= pointwise_ll[ks[i]]
+            end
+            if use_weights
+                for i in 1:N_obs; log_lik_mat[:, i] .*= weights[i]; end
+            end
+            lppd = sum(logsumexp(log_lik_mat[:, i]) - log(N_samples) for i in 1:N_obs)
+            p_waic = sum(var(log_lik_mat, dims=1))
+            return -2 * (lppd - p_waic)
+        end
+    catch e
+        @info "Native pointwise LL failed for $(model.f), attempting manual reconstruction..."
+    end
+
+    # Strategy 2: Manual Reconstruction Fallback
+    log_lik_mat = zeros(N_samples, N_obs)
+    N_areas = size(modinputs.Q_sp, 1)
+    N_time = maximum(modinputs.time_idx)
+
+    for s in 1:N_samples
+        # Reconstruct Spatial Effect
+        sig_sp = :sigma_sp in chain_names ? chain[:sigma_sp].data[s] : 0.0
+        phi_sp = :phi_sp in chain_names ? chain[:phi_sp].data[s] : 0.5
+        u_icar = [chain[Symbol("u_icar[$i]")].data[s] for i in 1:N_areas]
+        u_iid = [chain[Symbol("u_iid[$i]")].data[s] for i in 1:N_areas]
+        s_eff = sig_sp .* (sqrt(phi_sp) .* u_icar .+ sqrt(1 - phi_sp) .* u_iid)
+
+        # Reconstruct Temporal Effect based on detected Model Type
+        f_time = zeros(N_time)
+        if model_type == :ar1
+            sig_tm = chain[:sigma_tm].data[s]
+            f_time = [chain[Symbol("f_tm_raw[$i]")].data[s] for i in 1:N_time] .* sig_tm
+        elseif model_type == :rff
+            w_tr = [chain[Symbol("w_trend[$i]")].data[s] for i in 1:size(modinputs.Z_trend, 2)]
+            w_se = [chain[Symbol("w_seas[$i]")].data[s] for i in 1:size(modinputs.Z_seas, 2)]
+            f_time = modinputs.Z_trend * (w_tr .* chain[:sigma_trend].data[s]) + modinputs.Z_seas * (w_se .* chain[:sigma_seas].data[s])
+        end
+
+        # Likelihood calculation
+        for i in 1:N_obs
+            a, t = modinputs.area_idx[i], modinputs.time_idx[i]
+            eta = modinputs.offset[i] + s_eff[a] + f_time[t]
+            
+            # Add categorical covariate effects if present
+            for k in 1:4
+                if Symbol("beta_cov[$k][1]") in chain_names
+                    eta += chain[Symbol("beta_cov[$k][$(modinputs.cov_indices[i,k])]")].data[s]
+                end
+            end
+
+            ll = if family == :gaussian
+                logpdf(Normal(eta, chain[:sigma_y].data[s]), modinputs.y[i])
+            elseif family == :poisson
+                logpdf(Poisson(exp(eta)), modinputs.y[i])
+            elseif family == :binomial
+                logpdf(BinomialLogit(1, eta), modinputs.y[i])
+            elseif family == :lognormal
+                logpdf(LogNormal(eta, chain[:sigma_y].data[s]), modinputs.y[i])
+            else
+                0.0
+            end
+            log_lik_mat[s, i] = weights[i] * ll
+        end
+    end
+
+    lppd = sum(logsumexp(log_lik_mat[:, i]) - log(N_samples) for i in 1:N_obs)
+    p_waic = sum(var(log_lik_mat, dims=1))
+    return -2 * (lppd - p_waic)
+end
+
+function identify_model_type(chain::MCMCChains.Chains)
+    """
+    Synopsis: Infers the model architecture by inspecting parameter names in the MCMC chain.
+    Returns: Symbol (:ar1, :rff, :deep_gp, or :unknown)
+    """
+    vns = string.(names(chain))
+    
+    if any(occursin.(r"w1\[", vns)) && any(occursin.(r"l1", vns))
+        return :deep_gp
+    elseif any(occursin.(r"w_trend\[", vns)) || any(occursin.(r"Z_trend", vns))
+        return :rff
+    elseif any(occursin.(r"f_tm_raw\[", vns)) || any(occursin.(r"rho_tm", vns))
+        return :ar1
+    else
+        return :unknown
+    end
+end
+
+
+
+
+function get_params_vector(chain, base_name, len)
+    # Helper to extract and format MCMC data for a vector parameter with correct index sorting
+    # Convert symbols to strings for regex matching
+    names_ch = string.(names(chain))
+    regex = Regex("^$base_name\\[(\\d+)\\]")
+    matched_names = filter(n -> occursin(regex, n), names_ch)
+    
+    if isempty(matched_names)
+        # Fallback for scalar/missing params
+        return zeros(size(chain, 1), len)
+    end
+    
+    # Sort matched names by the integer index to ensure order
+    sort!(matched_names, by = n -> parse(Int, match(regex, n).captures[1]))
+    return hcat([vec(chain[Symbol(n)].data) for n in matched_names]...)
+end
+ 
+
+function reconstruct_posteriors(model::DynamicPPL.Model, chain::MCMCChains.Chains, modinputs; alpha=0.05)
+    # Exhaustive Posterior Reconstruction for CARSTM Suite (GMRF, RFF & Deep GP)
+
+    N_obs = length(modinputs.y)
+    N_areas = size(modinputs.Q_sp, 1)
+    N_time = maximum(modinputs.time_idx)
+    N_samples = size(chain, 1)
+    family = detect_model_family(model)
+    names_ch = names(chain)  # Returns Symbols
+
+    # 1. Summarize Scalar Parameters (Variances, mixing, lengthscales)
+    param_patterns = [r"sigma_", r"phi_", r"rho_", r"r_nb", r"l1", r"l2", r"l3"]
+    # FIX: Convert symbol to string for occursin
+    target_params = filter(n -> any(occursin.(param_patterns, string(n))), names_ch)
+    parameters = Dict(Symbol(p) => summarize_array(reshape(vec(chain[Symbol(p)].data), 1, 1, N_samples)) for p in target_params)
+
+    # 2. Recover Spatial Component (BYM2)
+    spatial_samples = zeros(N_areas, N_samples)
+    if :sigma_sp in names_ch && :phi_sp in names_ch
+        sig_sp = vec(chain[:sigma_sp].data)
+        phi_sp = vec(chain[:phi_sp].data)
+        u_icar = get_params_vector(chain, "u_icar", N_areas)
+        u_iid = get_params_vector(chain, "u_iid", N_areas)
+        for s in 1:N_samples
+            spatial_samples[:, s] = sig_sp[s] .* (sqrt(phi_sp[s]) .* u_icar[s, :] .+ sqrt(1 - phi_sp[s]) .* u_iid[s, :])
+        end
+    end
+
+    # 3. Recover Temporal Component (AR1 or RFF Trend/Seasonal)
+    temporal_samples = zeros(N_time, N_samples)
+    if any(occursin.("f_tm_raw", string.(names_ch)))
+        sig_tm = :sigma_tm in names_ch ? vec(chain[:sigma_tm].data) : ones(N_samples)
+        f_tm_raw = get_params_vector(chain, "f_tm_raw", N_time)
+        for s in 1:N_samples
+            temporal_samples[:, s] = f_tm_raw[s, :] .* sig_tm[s]
+        end
+    elseif any(occursin.("w_trend", string.(names_ch)))
+        # RFF Reconstruction
+        m_trend = size(modinputs.Z_trend, 2)
+        m_seas = size(modinputs.Z_seas, 2)
+        w_tr = get_params_vector(chain, "w_trend", m_trend)
+        w_se = get_params_vector(chain, "w_seas", m_seas)
+        sig_tr = :sigma_trend in names_ch ? vec(chain[:sigma_trend].data) : ones(N_samples)
+        sig_se = :sigma_seas in names_ch ? vec(chain[:sigma_seas].data) : ones(N_samples)
+        for s in 1:N_samples
+            temporal_samples[:, s] = modinputs.Z_trend * (w_tr[s, :] .* sig_tr[s]) + modinputs.Z_seas * (w_se[s, :] .* sig_se[s])
+        end
+    end
+
+    # 4. Recover Deep GP Latent Field (if present)
+    gp_latent_samples = zeros(N_obs, N_samples)
+    if any(occursin.("eta_gp", string.(names_ch)))
+        gp_latent_samples = get_params_vector(chain, "eta_gp", N_obs)'
+    end
+
+    # 5. Recover Interaction (Noise Field)
+    st_noise_samples = zeros(N_areas, N_time, N_samples)
+    if any(occursin.("st_int_raw", string.(names_ch)))
+        sig_int = :sigma_int in names_ch ? vec(chain[:sigma_int].data) : ones(N_samples)
+        st_raw = get_params_vector(chain, "st_int_raw", N_areas * N_time)
+        for s in 1:N_samples
+            st_noise_samples[:, :, s] = reshape(st_raw[s, :] .* sig_int[s], N_areas, N_time)
+        end
+    end
+
+    # 6. Recover Categorical Covariate Effects (RW2/beta_cov and b_class)
+    beta_cov_summaries = []
+    for k in 1:size(modinputs.cov_indices, 2)
+        raw_samples = get_params_vector(chain, "beta_cov[" * string(k) * "]", modinputs.n_cats)
+        summary_k = summarize_array(reshape(raw_samples', modinputs.n_cats, 1, N_samples))
+        push!(beta_cov_summaries, summary_k)
+    end
+
+    # 7. Prediction Synthesis
+    st_denoised = zeros(N_areas, N_time, N_samples)
+    st_noisy = zeros(N_areas, N_time, N_samples)
+    pred_samples = zeros(N_obs, N_samples)
+
+    for s in 1:N_samples
+        st_denoised[:, :, s] = spatial_samples[:, s] .+ temporal_samples[:, s]'
+        st_noisy[:, :, s] = st_denoised[:, :, s] .+ st_noise_samples[:, :, s]
+
+        for i in 1:N_obs
+            a, t = modinputs.area_idx[i], modinputs.time_idx[i]
+            eta = modinputs.offset[i] + st_noisy[a, t, s] + gp_latent_samples[i, s]
+
+            for k in 1:length(beta_cov_summaries)
+                eta += beta_cov_summaries[k].mean[modinputs.cov_indices[i, k]]
+            end
+
+            if family == :poisson || family == :negbinomial; pred_samples[i, s] = exp(eta)
+            elseif family == :binomial; pred_samples[i, s] = 1.0 / (1.0 + exp(-eta))
+            else; pred_samples[i, s] = eta; end
+        end
+    end
+
+    return (
+        spatial = summarize_array(reshape(spatial_samples, N_areas, 1, N_samples)),
+        temporal = summarize_array(reshape(temporal_samples, N_time, 1, N_samples)),
+        st_mat_denoised = summarize_array(st_denoised),
+        st_mat_noisy = summarize_array(st_noisy),
+        beta_cov = beta_cov_summaries,
+        parameters = parameters,
+        predictions = summarize_array(reshape(pred_samples, N_obs, 1, N_samples)),
+        family = family
+    )
+end
+
+
+
+
+
+# -----------------------
+
 
 
 
@@ -1577,293 +1886,3 @@ end
     end
 end
 
-
-
-function model_results_summary(filename)
-    # Description: Comprehensive post-processing using robust state loading and ST interval calculation.
-    # Inputs:
-    #   - filename: String path to the .jld2 result file.
-    
-    if !isfile(filename)
-        error("File $filename not found.")
-    end
-
-    # 1. Load state using the optimized macro
-    @load_carstm_state filename
-
-    # 2. Basic Diagnostics
-    sum_stats = summarystats(chain)
-    min_ess = minimum(sum_stats[:, :ess_bulk])
-    max_rhat = maximum(sum_stats[:, :rhat])
-
-    # 3. Reconstruct Posteriors (Denoised/Noisy ST Fields)
-    stats = reconstruct_posteriors(
-        mod, 
-        chain, 
-        pts, 
-        areal_units.assignments, 
-        time_idx, 
-        adj_matrix_numeric
-    )
-
-    # 4. Spatio-Temporal Credible Intervals
-    # Extract alpha quantiles for the ST mean field
-    st_mean = stats.st_mat_denoised.mean
-    st_low = stats.st_mat_denoised.lower
-    st_high = stats.st_mat_denoised.upper
-
-    # 5. Accuracy Metrics
-    y_pred = vec(stats.predictions.mean)
-    rmse = sqrt(mean((y_sim .- y_pred).^2))
-    mae = mean(abs.(y_sim .- y_pred))
-    
-    # Coverage Probability
-    low_bound = vec(stats.predictions.lower)
-    high_bound = vec(stats.predictions.upper)
-    coverage = mean((y_sim .>= low_bound) .& (y_sim .<= high_bound))
-
-    # 6. Visualization
-    ppc = posterior_predictive_check(mod, stats, y_sim)
-    
-    # Spatial Plot based on centroids
-    plt_sp = plot_posterior_results(stats, pts, areal_units.centroids, adj_matrix_numeric; effect=:spatial)
-
-    return (
-        summarystats = sum_stats,
-        min_ess = min_ess,
-        max_rhat = max_rhat,
-        rmse = rmse,
-        mae = mae,
-        coverage_prob = coverage,
-        st_intervals = (mean=st_mean, lower=st_low, upper=st_high),
-        ppc = ppc,
-        plt_spatial = plt_sp,
-        sigma_sp = haskey(chain, :sigma_sp) ? density(chain[:sigma_sp], title="Spatial Sigma Posterior") : nothing
-    )
-end
-
-
-function prepare_model_inputs_direct(D, W, X, log_offset, y, time_idx, nX, nAU, node1, node2; n_cat=13)
-    """
-    Synopsis: Adapts raw data to the standardized prepare_model_inputs format for CARSTM modeling.
-    """
-    # Create a vector of tuples for coordinates (placeholder since this is areal data)
-    # We'll use the centroids of a dummy grid or just zeroed tuples if specific coords aren't needed
-    # for the discrete model components.
-    pts_dummy = [(0.0, 0.0) for _ in 1:length(y)]
-
-    # The area_idx is the spatial unit identifier (1 to 56)
-    area_idx = repeat(1:nAU, 10)
-
-    # Standardize time indices
-    t_idx = Int.(time_idx)
-
-    # Use the existing robust prepare_model_inputs logic to compute scalings and bases
-    # Note: We pass n_cat which is used for the RW2 categorical smoothing priors
-    mod_data = prepare_model_inputs(
-        y, 
-        pts_dummy, 
-        area_idx, 
-        t_idx, 
-        W, 
-        n_cat
-    )
-
-    # Override/Update with Lip Cancer specific inputs
-    # We merge the log_offset (expected cases) and the actual covariate matrix X
-    return merge(mod_data, (
-        X = X, 
-        offset = log_offset, 
-        n_fixed = nX,
-        node1 = node1,
-        node2 = node2
-    ))
-    # Example usage:
-    # lip_inputs = prepare_model_inputs_direct(D, W, Xnew, log_offset_new, ynew, ti, nX, nAU, node1, node2)
-    # display(lip_inputs)
-end
-
-
-function assign_spatial_units_inferred(adjacency_matrix, nAU; iterations=50, learning_rate=0.1, buffer_dist=0.5, input_polygons = nothing)
-    """
-    Synopsis: Manually constructs a areal_units object for areal data like the Lip Cancer dataset.
-              Centroid locations are spatially inferred from connectivity using a rudimentary force-directed layout.
-    Inputs:
-    - adjacency_matrix: The adjacency matrix (W) of the areal units.
-    - nAU: Number of areal units
-    - iterations: Number of iterations for the force-directed layout.
-    - learning_rate: Step size for moving centroids in the layout algorithm.
-    - buffer_dist: Distance to buffer the convex hull when polygons are inferred.
-    - input_polygons: Optional. A vector of LibGEOS Polygons. If provided, centroids and hull are derived from these.
-    """
-
-    local final_centroids
-    local adjacency_edges_output
-    local polys_output
-    local hull_coords_output
-    local g_final # The final graph that will be in the result
-
-    if input_polygons !== nothing && !isempty(input_polygons)
-        # Case 1: Polygons are provided
-        # 1. Extract centroids from input_polygons
-        final_centroids_geoms = [LibGEOS.centroid(p) for p in input_polygons]
-        final_centroids = map(final_centroids_geoms) do g_pt
-            seq = LibGEOS.getCoordSeq(g_pt)
-            (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1))
-        end
-
-        # 2. Determine hull by dissolving all internal edges
-        united_geom = LibGEOS.unaryunion(input_polygons)
-        hull_coords_output = get_coords_from_geom(united_geom)
-
-        # 3. Determine adjacency from input_polygons (using LibGEOS.touches)
-        adjacency_edges_output = []
-        for i in 1:nAU
-            g1 = input_polygons[i]
-            for j in (i+1):nAU
-                g2 = input_polygons[j]
-                if LibGEOS.touches(g1, g2)
-                    push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
-                else
-                    # Fallback robust check, similar to get_voronoi_polygons_and_edges
-                    g1_buffered = LibGEOS.buffer(g1, 1e-6)
-                    if LibGEOS.intersects(g1_buffered, g2)
-                        inter = LibGEOS.intersection(g1_buffered, g2)
-                        if !LibGEOS.isEmpty(inter) && (LibGEOS.area(inter) > 1e-9 || LibGEOS.geomTypeId(inter) in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_MULTILINESTRING])
-                            push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
-                        end
-                    end
-                end
-            end
-        end
-
-        polys_output = [get_coords_from_geom(p) for p in input_polygons]
-
-        # Build graph from the determined adjacency edges and ensure connectivity
-        g_final = SimpleGraph(nAU)
-        centroid_map = Dict(c => i for (i, c) in enumerate(final_centroids))
-        for (c1, c2) in adjacency_edges_output
-            u_idx = get(centroid_map, c1, 0)
-            v_idx = get(centroid_map, c2, 0)
-            if u_idx > 0 && v_idx > 0 && !has_edge(g_final, u_idx, v_idx)
-                add_edge!(g_final, u_idx, v_idx)
-            end
-        end
-        g_final = ensure_connected!(g_final, final_centroids) # Ensure connectivity if necessary
-
-    else
-        # Case 2: Polygons are not provided, infer centroids and use tessellation
-        # 1. Build initial graph from adjacency_matrix for force-directed layout
-        g_initial_for_layout = SimpleGraph(adjacency_matrix)
-
-        # 2. Infer initial centroids using force-directed layout
-        side = ceil(Int, sqrt(nAU))
-        initial_centroids_fd = [(Float64(i % side), Float64(i ÷ side)) for i in 0:(nAU-1)]
-        centroids_vec = [SVector{2, Float64}(c) for c in initial_centroids_fd]
-
-        for iter in 1:iterations
-            new_centroids_vec = copy(centroids_vec)
-            for i in 1:nAU
-                neighbors_i = Graphs.neighbors(g_initial_for_layout, i)
-                if !isempty(neighbors_i)
-                    avg_neighbor_pos = sum(centroids_vec[n] for n in neighbors_i) / length(neighbors_i)
-                    new_centroids_vec[i] = centroids_vec[i] + learning_rate * (avg_neighbor_pos - centroids_vec[i])
-                end
-            end
-            centroids_vec = new_centroids_vec
-        end
-        # Centroids after force-directed layout
-        forced_layout_centroids = [(p[1], p[2]) for p in centroids_vec]
-
-        # 3. Determine hull_geom from inferred centroids for clipping
-        hull_geom = expand_hull(forced_layout_centroids, buffer_dist)
-        hull_coords_output = get_coords_from_geom(hull_geom)
-
-        # 4. Use tessellation to determine polygon coordinates and initial adjacency (based on forced_layout_centroids)
-        polys_coords_raw, _ = get_voronoi_polygons_and_edges(forced_layout_centroids, hull_geom) # Discard initial edges as they refer to old centroids
-
-        # 5. RECOMPUTE CENTROIDS from the generated (clipped) polygons and prepare for adjacency
-        final_centroids = Vector{Tuple{Float64, Float64}}(undef, length(polys_coords_raw))
-        lg_polygons_for_adjacency = Vector{Union{LibGEOS.Polygon, Nothing}}(undef, length(polys_coords_raw)) # Allow Nothing
-        polys_output = polys_coords_raw # Keep the raw coordinates for output
-
-        for (idx, poly_coord_list) in enumerate(polys_coords_raw)
-            if !isempty(poly_coord_list) && length(poly_coord_list) >= 3 # Ensure it's a valid polygon
-                # Make sure the polygon is closed for LibGEOS
-                if poly_coord_list[1] != poly_coord_list[end]
-                    push!(poly_coord_list, poly_coord_list[1])
-                end
-                lg_poly = LibGEOS.Polygon([ [Float64[p[1], p[2]] for p in poly_coord_list] ])
-                centroid_geom = LibGEOS.centroid(lg_poly)
-                seq = LibGEOS.getCoordSeq(centroid_geom)
-                final_centroids[idx] = (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1))
-                lg_polygons_for_adjacency[idx] = lg_poly
-            else
-                @warn "Invalid or empty polygon encountered in Voronoi tessellation at index $idx. Using original centroid as fallback, and skipping polygon for adjacency checks."
-                final_centroids[idx] = forced_layout_centroids[idx]
-                lg_polygons_for_adjacency[idx] = nothing # Mark as invalid for adjacency checks
-            end
-        end
-
-        # 6. Re-build adjacency based on the newly derived centroids and polygons
-        adjacency_edges_output = []
-        if !isempty(lg_polygons_for_adjacency)
-            for i in 1:length(lg_polygons_for_adjacency)
-                g1 = lg_polygons_for_adjacency[i]
-                if g1 === nothing continue end # Skip if polygon is invalid
-                for j in (i+1):length(lg_polygons_for_adjacency)
-                    g2 = lg_polygons_for_adjacency[j]
-                    if g2 === nothing continue end # Skip if polygon is invalid
-                    # Check for adjacency using LibGEOS predicates
-                    if LibGEOS.touches(g1, g2)
-                        push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
-                    else
-                        # Fallback: Robust check using a tiny buffer for floating-point misalignments
-                        g1_buffered = LibGEOS.buffer(g1, 1e-6)
-                        if LibGEOS.intersects(g1_buffered, g2)
-                            inter = LibGEOS.intersection(g1_buffered, g2)
-                            # Check if intersection is a line or has significant area
-                            if !LibGEOS.isEmpty(inter) && (LibGEOS.area(inter) > 1e-9 || LibGEOS.geomTypeId(inter) in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_MULTILINESTRING])
-                                push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        # 7. Build final graph from the re-derived adjacency edges and ensure connectivity
-        g_final = SimpleGraph(nAU) # nAU is the count of regions
-        centroid_map = Dict(c => i for (i, c) in enumerate(final_centroids)) # Map new centroids to indices
-        for (c1, c2) in adjacency_edges_output
-            u_idx = get(centroid_map, c1, 0)
-            v_idx = get(centroid_map, c2, 0)
-            if u_idx > 0 && v_idx > 0 && !has_edge(g_final, u_idx, v_idx)
-                add_edge!(g_final, u_idx, v_idx)
-            end
-        end
-        g_final = ensure_connected!(g_final, final_centroids)
-    end
-
-    return (
-        centroids = final_centroids,
-        adjacency_edges = adjacency_edges_output,
-        graph = g_final,
-        polygons = polys_output,
-        hull_coords = hull_coords_output
-    )
-    
-    """
-    # Generate the spatial metadata for the Lip Cancer dataset
-    areal_units = assign_spatial_units_inferred(W, nAU)
-    println("Spatial metadata created for Scottish Lip Cancer dataset.")
-    println("Number of units: ", length(areal_units.centroids))
-    println("Graph connectivity: ", is_connected(areal_units.graph))
-    
-    # Quick test run: model 2 using explicit unpacking of required fields
-    plt = plot_spatial_graph(lip_inputs.pts_raw, areal_units; title="Lip Cancer Spatial Graph", domain_boundary=lip_inputs.pts_raw)
-    display(plt)
-    
-    println("First few centroids from areal_units: ", areal_units.centroids[1:min(5, length(areal_units.centroids))])
-    """
-end
