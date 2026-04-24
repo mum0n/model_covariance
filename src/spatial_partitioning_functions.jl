@@ -1,53 +1,3 @@
-function expand_hull_v0(pts, buffer_dist)
-    """
-    Synopsis: Computes the convex hull of points and expands it by a buffer distance.
-    Inputs:
-    - pts: Vector of (x, y) tuples.
-    - buffer_dist: Distance to buffer the convex hull.
-    Outputs:
-    - A LibGEOS Polygon geometry representing the buffered convex hull.
-    """
-    if isempty(pts) return LibGEOS.Polygon([[ (0.0,0.0), (0.0,0.0), (0.0,0.0), (0.0,0.0) ]]) end
-    points_geom = LibGEOS.MultiPoint([(p[1], p[2]) for p in pts])
-    hull = LibGEOS.convexhull(points_geom)
-    buffered_hull = LibGEOS.buffer(hull, buffer_dist)
-    return buffered_hull
-end
-
-
-function get_coords_from_geom_v0(geom)
-    """
-    Synopsis: Extracts coordinates from various LibGEOS geometry types.
-    Inputs:
-    - geom: A LibGEOS geometry object.
-    Outputs:
-    - A vector of (x, y) coordinates.
-    """
-    coords = []
-    if LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_POINT
-        push!(coords, (LibGEOS.getX(geom), LibGEOS.getY(geom)))
-    elseif LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_LINESTRING || LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_LINEARRING
-        for i in 1:LibGEOS.getNumPoints(geom)
-            push!(coords, (LibGEOS.getX(geom, i), LibGEOS.getY(geom, i)))
-        end
-    elseif LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_POLYGON
-        exterior = LibGEOS.getExteriorRing(geom)
-        for i in 1:LibGEOS.getNumPoints(exterior)
-            push!(coords, (LibGEOS.getX(exterior, i), LibGEOS.getY(exterior, i)))
-        end
-    elseif LibGEOS.geomTypeId(geom) == LibGEOS.GEOS_MULTIPOLYGON
-        for i in 1:LibGEOS.getNumGeometries(geom)
-            poly = LibGEOS.getGeometryN(geom, i)
-            exterior = LibGEOS.getExteriorRing(poly)
-            for j in 1:LibGEOS.getNumPoints(exterior)
-                push!(coords, (LibGEOS.getX(exterior, j), LibGEOS.getY(exterior, j)))
-            end
-            if i < LibGEOS.getNumGeometries(geom) push!(coords, (NaN, NaN)) end # Separator for plotting
-        end
-    end
-    return coords
-end
-
 
 
 function expand_hull(pts, buffer_dist)
@@ -68,6 +18,200 @@ function expand_hull(pts, buffer_dist)
     return buffered_hull
 end
 
+
+
+function get_kde_seeds(pts, target_u)
+    # Basic KDE-based seeding using StatsBase weights based on local density
+    if isempty(pts) return [] end
+    n = length(pts)
+    dists = [sum((p1 .- p2).^2) for p1 in pts, p2 in pts]
+    # Inverse of mean distance as a density proxy
+    weights = 1.0 ./ (mean(dists, dims=2)[:] .+ 1e-6)
+    idx = sample(1:n, Weights(weights), min(target_u, n), replace=false)
+    return pts[idx]
+end
+
+ 
+
+
+function assign_spatial_units_inferred(adjacency_matrix; iterations=50, learning_rate=0.1, buffer_dist=0.5, input_polygons = nothing)
+    """
+    Synopsis: Manually constructs a spatial_res object for areal data like the Lip Cancer dataset.
+              Centroid locations are spatially inferred from connectivity using a rudimentary force-directed layout.
+    Inputs:
+    - adjacency_matrix: The adjacency matrix (W) of the areal units.
+    - iterations: Number of iterations for the force-directed layout.
+    - learning_rate: Step size for moving centroids in the layout algorithm.
+    - buffer_dist: Distance to buffer the convex hull when polygons are inferred.
+    - input_polygons: Optional. A vector of LibGEOS Polygons. If provided, centroids and hull are derived from these.
+    """
+    nAU = size(adjacency_matrix, 1)
+
+    local final_centroids
+    local adjacency_edges_output
+    local polys_output
+    local hull_coords_output
+    local g_final # The final graph that will be in the result
+
+    if input_polygons !== nothing && !isempty(input_polygons)
+        # Case 1: Polygons are provided
+        # 1. Extract centroids from input_polygons
+        final_centroids_geoms = [LibGEOS.centroid(p) for p in input_polygons]
+        final_centroids = map(final_centroids_geoms) do g_pt
+            seq = LibGEOS.getCoordSeq(g_pt)
+            (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1))
+        end
+
+        # 2. Determine hull by dissolving all internal edges
+        united_geom = LibGEOS.unaryunion(input_polygons)
+        hull_coords_output = get_coords_from_geom(united_geom)
+
+        # 3. Determine adjacency from input_polygons (using LibGEOS.touches)
+        adjacency_edges_output = []
+        for i in 1:nAU
+            g1 = input_polygons[i]
+            for j in (i+1):nAU
+                g2 = input_polygons[j]
+                if LibGEOS.touches(g1, g2)
+                    push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                else
+                    # Fallback robust check, similar to get_voronoi_polygons_and_edges
+                    g1_buffered = LibGEOS.buffer(g1, 1e-6)
+                    if LibGEOS.intersects(g1_buffered, g2)
+                        inter = LibGEOS.intersection(g1_buffered, g2)
+                        if !LibGEOS.isEmpty(inter) && (LibGEOS.area(inter) > 1e-9 || LibGEOS.geomTypeId(inter) in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_MULTILINESTRING])
+                            push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                        end
+                    end
+                end
+            end
+        end
+
+        polys_output = [get_coords_from_geom(p) for p in input_polygons]
+
+        # Build graph from the determined adjacency edges and ensure connectivity
+        g_final = SimpleGraph(nAU)
+        centroid_map = Dict(c => i for (i, c) in enumerate(final_centroids))
+        for (c1, c2) in adjacency_edges_output
+            u_idx = get(centroid_map, c1, 0)
+            v_idx = get(centroid_map, c2, 0)
+            if u_idx > 0 && v_idx > 0 && !has_edge(g_final, u_idx, v_idx)
+                add_edge!(g_final, u_idx, v_idx)
+            end
+        end
+        g_final = ensure_connected!(g_final, final_centroids)
+
+    else
+        # Case 2: Polygons are not provided, infer centroids and use tessellation
+        # 1. Build initial graph from adjacency_matrix for force-directed layout
+        g_initial_for_layout = SimpleGraph(adjacency_matrix)
+
+        # 2. Infer initial centroids using force-directed layout
+        side = ceil(Int, sqrt(nAU))
+        initial_centroids_fd = [(Float64(i % side), Float64(i ÷ side)) for i in 0:(nAU-1)]
+        centroids_vec = [SVector{2, Float64}(c) for c in initial_centroids_fd]
+
+        for iter in 1:iterations
+            new_centroids_vec = copy(centroids_vec)
+            for i in 1:nAU
+                neighbors_i = Graphs.neighbors(g_initial_for_layout, i)
+                if !isempty(neighbors_i)
+                    avg_neighbor_pos = sum(centroids_vec[n] for n in neighbors_i) / length(neighbors_i)
+                    new_centroids_vec[i] = centroids_vec[i] + learning_rate * (avg_neighbor_pos - centroids_vec[i])
+                end
+            end
+            centroids_vec = new_centroids_vec
+        end
+        forced_layout_centroids = [(p[1], p[2]) for p in centroids_vec]
+
+        # 3. Determine hull_geom from inferred centroids for clipping
+        hull_geom = expand_hull(forced_layout_centroids, buffer_dist)
+        hull_coords_output = get_coords_from_geom(hull_geom)
+
+        # 4. Use tessellation to determine polygon coordinates and initial adjacency
+        polys_coords_raw, _ = get_voronoi_polygons_and_edges(forced_layout_centroids, hull_geom)
+
+        # 5. RECOMPUTE CENTROIDS from the generated (clipped) polygons
+        final_centroids = Vector{Tuple{Float64, Float64}}(undef, length(polys_coords_raw))
+        lg_polygons_for_adjacency = Vector{Union{LibGEOS.Polygon, Nothing}}(undef, length(polys_coords_raw))
+        polys_output = polys_coords_raw
+
+        for (idx, poly_coord_list) in enumerate(polys_coords_raw)
+            if !isempty(poly_coord_list) && length(poly_coord_list) >= 3
+                if poly_coord_list[1] != poly_coord_list[end]
+                    push!(poly_coord_list, poly_coord_list[1])
+                end
+                lg_poly = LibGEOS.Polygon([ [Float64[p[1], p[2]] for p in poly_coord_list] ])
+                centroid_geom = LibGEOS.centroid(lg_poly)
+                seq = LibGEOS.getCoordSeq(centroid_geom)
+                final_centroids[idx] = (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1))
+                lg_polygons_for_adjacency[idx] = lg_poly
+            else
+                @warn "Invalid or empty polygon at index $idx. Fallback used."
+                final_centroids[idx] = forced_layout_centroids[idx]
+                lg_polygons_for_adjacency[idx] = nothing
+            end
+        end
+
+        # 6. Re-build adjacency
+        adjacency_edges_output = []
+        if !isempty(lg_polygons_for_adjacency)
+            for i in 1:length(lg_polygons_for_adjacency)
+                g1 = lg_polygons_for_adjacency[i]
+                if g1 === nothing continue end
+                for j in (i+1):length(lg_polygons_for_adjacency)
+                    g2 = lg_polygons_for_adjacency[j]
+                    if g2 === nothing continue end
+                    if LibGEOS.touches(g1, g2)
+                        push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                    else
+                        g1_buffered = LibGEOS.buffer(g1, 1e-6)
+                        if LibGEOS.intersects(g1_buffered, g2)
+                            inter = LibGEOS.intersection(g1_buffered, g2)
+                            if !LibGEOS.isEmpty(inter) && (LibGEOS.area(inter) > 1e-9 || LibGEOS.geomTypeId(inter) in [LibGEOS.GEOS_LINESTRING, LibGEOS.GEOS_MULTILINESTRING])
+                                push!(adjacency_edges_output, (final_centroids[i], final_centroids[j]))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        # 7. Build final graph
+        g_final = SimpleGraph(nAU)
+        centroid_map = Dict(c => i for (i, c) in enumerate(final_centroids))
+        for (c1, c2) in adjacency_edges_output
+            u_idx = get(centroid_map, c1, 0)
+            v_idx = get(centroid_map, c2, 0)
+            if u_idx > 0 && v_idx > 0 && !has_edge(g_final, u_idx, v_idx)
+                add_edge!(g_final, u_idx, v_idx)
+            end
+        end
+        g_final = ensure_connected!(g_final, final_centroids)
+    end
+
+    return (
+        centroids = final_centroids,
+        adjacency_edges = adjacency_edges_output,
+        graph = g_final,
+        polygons = polys_output,
+        hull_coords = hull_coords_output
+    )
+end
+
+function get_polygon_area(poly_coords)
+    # Calculates the area of a polygon using the Shoelace formula.
+    valid_pts = [p for p in poly_coords if !isnan(p[1])]
+    if length(valid_pts) > 1 && valid_pts[1] == valid_pts[end]
+        pop!(valid_pts)
+    end
+    if length(valid_pts) < 3 return 0.0 end
+    x = [p[1] for p in valid_pts]
+    y = [p[2] for p in valid_pts]
+    return 0.5 * abs(dot(x, circshift(y, 1)) - dot(y, circshift(x, 1)))
+end
+
+ 
 function get_coords_from_geom(geom)
     """
     Synopsis: Extracts coordinates from various LibGEOS geometry types.
@@ -118,150 +262,6 @@ function get_coords_from_geom(geom)
         @warn "Coordinate extraction failed for type $type_id: $e"
     end
     return coords
-end
-
-
-function get_bvt_centroids(pts, n_target, min_u, tol)
-    """
-    Synopsis: Binary Vector Tree partitioning. Recursively splits along the axis of maximum variance.
-    Inputs:
-    - n_target: Hard maximum number of units.
-    - min_u: Minimum required units.
-    - tol: Tolerance for density CV stabilization.
-    """
-    regions = [pts]
-    prev_cv = Inf
-    while length(regions) < n_target
-        v_idx = argmax([length(r) > 1 ? max(std([p[1] for p in r]), std([p[2] for p in r])) : 0.0 for r in regions])
-        if length(regions[v_idx]) < 2 break end
-        target_r = regions[v_idx]
-        xs, ys = [p[1] for p in target_r], [p[2] for p in target_r]
-        if std(xs) > std(ys)
-            med = median(xs)
-            r1, r2 = filter(p -> p[1] <= med, target_r), filter(p -> p[1] > med, target_r)
-        else
-            med = median(ys)
-            r1, r2 = filter(p -> p[2] <= med, target_r), filter(p -> p[2] > med, target_r)
-        end
-        if isempty(r1) || isempty(r2) break end
-
-        splice!(regions, v_idx, [r1, r2])
-        counts = length.(regions)
-        curr_cv = std(counts) / (mean(counts) + 1e-9)
-        if length(regions) >= min_u && abs(prev_cv - curr_cv) < (tol * 0.1) break end
-        prev_cv = curr_cv
-    end
-    return [(mean(p[1] for p in r), mean(p[2] for p in r)) for r in regions]
-end
-
-function get_qvt_centroids(pts, n_target, min_u, tol)
-    """
-    Synopsis: Quadrant Voronoi Tessellation. Recursively divides space into four quadrants.
-    """
-    regions = [pts]
-    prev_cv = Inf
-    while length(regions) < n_target
-        v_idx = argmax([length(r) for r in regions])
-        if length(regions[v_idx]) < 2 break end
-        target_r = splice!(regions, v_idx)
-        mx, my = mean(p[1] for p in target_r), mean(p[2] for p in target_r)
-        qs = [filter(p -> p[1] <= mx && p[2] <= my, target_r),
-              filter(p -> p[1] > mx && p[2] <= my, target_r),
-              filter(p -> p[1] <= mx && p[2] > my, target_r),
-              filter(p -> p[1] > mx && p[2] > my, target_r)]
-
-        for q in qs
-            if !isempty(q)
-                push!(regions, q)
-                if length(regions) >= n_target break end
-            end
-        end
-
-        counts = length.(regions)
-        curr_cv = std(counts) / (mean(counts) + 1e-9)
-        if length(regions) >= min_u && abs(prev_cv - curr_cv) < (tol * 0.1) break end
-        prev_cv = curr_cv
-        if length(regions) >= n_target break end
-    end
-    return [(mean(p[1] for p in r), mean(p[2] for p in r)) for r in regions]
-end
-
-
-
-function assign_spatial_units(pts, area_method; seeding=:kde, kwargs...)
-    """
-    assign_spatial_units(pts, area_method; seeding=:kde, kwargs...)
-
-    Description: High-level wrapper for spatial partitioning with temporal and density constraints.
-
-    Inputs:
-    - area_method: :cvt (Iterative), :bvt (Recursive), :qvt (Quadrant), :avt (Agglomerative).
-    - target_units: Goal for CVT/AVT.
-    - max_units: Hard cap for BVT/QVT and CVT expansion.
-    - min_time_slices: Minimum unique time indices required per unit.
-    """
-    max_u = get(kwargs, :max_units, 50)
-    target_u = get(kwargs, :target_units, 20)
-    min_u_req = get(kwargs, :min_units, 2)
-    buffer_dist_val = get(kwargs, :buffer_dist, 0.5)
-    tol = get(kwargs, :tol, 1e-1)
-    min_ts_req = get(kwargs, :min_time_slices, 1)
-    t_idx = get(kwargs, :time_idx, ones(Int, length(pts)))
-
-    u_pts = unique(pts)
-    hull_geom = expand_hull(u_pts, buffer_dist_val)
-    hull_coords = get_coords_from_geom(hull_geom)
-
-    local c
-    if area_method == :bvt
-        c = get_bvt_centroids(u_pts, max_u, min_u_req, tol)
-    elseif area_method == :qvt
-        c = get_qvt_centroids(u_pts, max_u, min_u_req, tol)
-    elseif area_method == :avt
-        c_init = u_pts[sample(1:length(u_pts), min(target_u, length(u_pts)), replace=false)]
-        c = get_avt_centroids(c_init, pts, hull_coords, hull_geom; min_pts=get(kwargs, :min_pts, 5), min_units=min_u_req, tol=tol)
-    elseif area_method == :cvt
-        curr_target = target_u
-        best_c = []
-        for retry in 1:3
-            c_iter = u_pts[sample(1:length(u_pts), min(curr_target, length(u_pts)), replace=false)]
-            prev_cv = Inf
-            for i in 1:50
-                assign = [argmin([sum((p .- sj).^2) for sj in c_iter]) for p in pts]
-                for k in 1:length(c_iter)
-                    idx = findall(==(k), assign)
-                    if !isempty(idx) c_iter[k] = (mean(p[1] for p in pts[idx]), mean(p[2] for p in pts[idx])) end
-                end
-                counts = [count(==(k), assign) for k in 1:length(c_iter)]
-                current_cv = std(counts) / (mean(counts) + 1e-9)
-                if abs(prev_cv - current_cv) < tol break end
-                prev_cv = current_cv
-            end
-            best_c = c_iter
-            counts = [count(==(k), [argmin([sum((p .- sj).^2) for sj in c_iter]) for p in pts]) for k in 1:length(c_iter)]
-            if (std(counts)/mean(counts)) > tol * 2 && curr_target < max_u
-                curr_target = min(max_u, floor(Int, curr_target * 1.2))
-            else
-                break
-            end
-        end
-        c = best_c
-    end
-
-    while length(c) > min_u_req
-        assigns = [argmin([sum((p .- sj) .^ 2) for sj in c]) for p in pts]
-        ts_counts = [length(unique(t_idx[findall(==(i), assigns)])) for i in 1:length(c)]
-        violators = findall(count -> count < min_ts_req, ts_counts)
-        if isempty(violators) break end
-        target_idx = violators[argmin(ts_counts[violators])]
-        deleteat!(c, target_idx)
-    end
-
-    final_assignments = [argmin([sum((p .- sj) .^ 2) for sj in c]) for p in pts]
-    polys_coords, v_edges_output = get_voronoi_polygons_and_edges(c, hull_geom)
-    res = (centroids=c, assignments=final_assignments, polygons=polys_coords, adjacency_edges=v_edges_output, hull_coords=hull_coords)
-    g = ensure_connected!(SimpleGraph(length(c)), c)
-    return merge(res, (graph=g,))
 end
 
 
@@ -326,6 +326,237 @@ function get_voronoi_polygons_and_edges(centroids, hull_geom)
 
     return final_coords, v_edges
 end
+ function assign_spatial_units(input_data, area_method; seeding=:kde, kwargs...)
+    pts = input_data
+    u_pts = unique(pts)
+    n_pts_raw = length(pts)
+    target_u = get(kwargs, :target_units, 10)
+    min_total_u = get(kwargs, :min_total_arealunits, 1)
+    min_ts_req = get(kwargs, :min_time_slices, 1)
+    min_pts_val = get(kwargs, :min_points, 1)
+    max_pts_val = get(kwargs, :max_points, n_pts_raw)
+    min_area_val = get(kwargs, :min_area, 0.0)
+    max_area_val = get(kwargs, :max_area, Inf)
+    cv_min_val = get(kwargs, :cv_min, 1.0)
+    buffer_dist = get(kwargs, :buffer_dist, 0.5)
+    t_idx = get(kwargs, :time_idx, ones(Int, n_pts_raw))
+    tol = get(kwargs, :tolerance, 0.1)
+
+    hull_geom = expand_hull(pts, buffer_dist)
+
+    local c_mid
+    if area_method == :cvt
+        c_mid = get_cvt_centroids(pts, hull_geom, target_u, tol; cv_min=cv_min_val)
+    elseif area_method == :kvt
+        c_mid = get_kvt_centroids(pts, t_idx, target_u, min_total_u, min_ts_req, min_pts_val, max_pts_val, tol; cv_min=cv_min_val)
+    elseif area_method == :bvt
+        c_mid = get_bvt_centroids(u_pts, t_idx, target_u, min_total_u, min_ts_req, min_pts_val, max_pts_val, tol; cv_min=cv_min_val)
+    elseif area_method == :qvt
+        c_mid = get_qvt_centroids(u_pts, t_idx, target_u, min_total_u, min_ts_req, min_pts_val, max_pts_val, tol; cv_min=cv_min_val)
+    elseif area_method == :avt
+        c_mid = get_avt_centroids(u_pts, pts, t_idx; min_u=min_total_u, min_ts=min_ts_req, min_pts=min_pts_val, cv_min=cv_min_val, tol=tol)
+    else
+        error("Unknown method: $area_method")
+    end
+
+    polys_coords, v_edges = get_voronoi_polygons_and_edges(c_mid, hull_geom)
+
+    final_centroids = Tuple{Float64, Float64}[]
+    lg_polys = []
+    for p_coords in polys_coords
+        if p_coords[1] != p_coords[end]; push!(p_coords, p_coords[1]); end
+        lg_p = LibGEOS.Polygon([[[p[1], p[2]] for p in p_coords]])
+        push!(lg_polys, lg_p)
+        cent_g = LibGEOS.centroid(lg_p)
+        seq = LibGEOS.getCoordSeq(cent_g)
+        push!(final_centroids, (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1)))
+    end
+
+    new_assignments = [argmin([sum((p .- sj) .^ 2) for sj in final_centroids]) for p in pts]
+    n_units = length(final_centroids)
+    g = SimpleGraph(n_units)
+    for i in 1:n_units, j in (i+1):n_units
+        if LibGEOS.touches(lg_polys[i], lg_polys[j]); add_edge!(g, i, j); end
+    end
+    g = ensure_connected!(g, final_centroids)
+
+    return (centroids = final_centroids, assignments = new_assignments, polygons = polys_coords, adjacency_edges = v_edges, graph = g, hull_coords = get_coords_from_geom(hull_geom))
+end
+
+
+function get_qvt_centroids(pts, t_idx, n_target, min_u, min_ts, min_pts, max_pts, tol; cv_min=1.0)
+    # Quadtree-style splitting: 4-way split per iteration based on median x/y
+    data = collect(zip(pts, t_idx))
+    regions = [data]
+    prev_cv = Inf
+
+    while length(regions) < n_target
+        # Choose the most 'unbalanced' or largest region to split
+        v_idx = argmax([length(r) > max_pts ? length(r) * 1e6 : length(r) for r in regions])
+        target = regions[v_idx]
+        if length(target) < 4 break end
+
+        xs, ys = [p[1][1] for p in target], [p[1][2] for p in target]
+        mx, my = median(xs), median(ys)
+
+        r1 = filter(p -> p[1][1] <= mx && p[1][2] <= my, target)
+        r2 = filter(p -> p[1][1] > mx  && p[1][2] <= my, target)
+        r3 = filter(p -> p[1][1] <= mx && p[1][2] > my,  target)
+        r4 = filter(p -> p[1][1] > mx  && p[1][2] > my,  target)
+
+        # Only proceed if we actually achieve a split to prevent stagnation
+        valid_splits = filter(r -> !isempty(r), [r1, r2, r3, r4])
+        if length(valid_splits) < 2 break end
+
+        splice!(regions, v_idx, valid_splits)
+
+        # Balancing check
+        counts = length.(regions)
+        ts_counts = [length(unique([p[2] for p in r])) for r in regions]
+        curr_cv = std(counts) / (mean(counts) + 1e-9)
+
+        if length(regions) >= min_u && (curr_cv <= cv_min || abs(prev_cv - curr_cv) < (tol * 0.1)) && all(ts_counts .>= min_ts) break end
+        prev_cv = curr_cv
+    end
+    return [(mean(p[1][1] for p in r), mean(p[1][2] for p in r)) for r in regions]
+end
+
+
+function get_kvt_centroids(pts, t_idx, n_target, min_u, min_ts, min_pts, max_pts, tol; cv_min=1.0)
+    u_pts_map = unique(pts)
+    n_pts = length(u_pts_map)
+    if n_pts == 0 return [] end
+    idx_init = StatsBase.sample(1:n_pts, min(Int(n_target), n_pts); replace=false)
+    c_iter = [u_pts_map[i] for i in idx_init]
+    data = collect(zip(pts, t_idx))
+    damping = 0.7
+
+    for iter in 1:100
+        old_centroids = copy(c_iter)
+        assigns = [argmin([sum((p[1] .- sj).^2) for sj in c_iter]) for p in data]
+        for k in 1:length(c_iter)
+            idx = findall(==(k), assigns)
+            if !isempty(idx) 
+                new_center = (mean(data[j][1][1] for j in idx), mean(data[j][1][2] for j in idx))
+                c_iter[k] = ((1.0 - damping) * old_centroids[k][1] + damping * new_center[1], (1.0 - damping) * old_centroids[k][2] + damping * new_center[2])
+            end
+        end
+        counts = [count(==(k), assigns) for k in 1:length(c_iter)]
+        if (std(counts)/(mean(counts)+1e-9)) < cv_min break end
+        damping *= 0.99
+    end
+    return c_iter
+end
+
+function get_cvt_centroids(pts, hull_geom, n_target, tol; cv_min=1.0, max_iter=100)
+    u_pts = unique(pts)
+    idx = StatsBase.sample(1:length(u_pts), min(n_target, length(u_pts)), replace=false)
+    curr_centroids = [u_pts[i] for i in idx]
+
+    for iter in 1:max_iter
+        polys, _ = get_voronoi_polygons_and_edges(curr_centroids, hull_geom)
+        new_centroids = Tuple{Float64, Float64}[]
+        max_shift = 0.0
+
+        for (i, poly_coords) in enumerate(polys)
+            if length(poly_coords) > 2
+                temp_poly = LibGEOS.Polygon([[[p[1], p[2]] for p in poly_coords]])
+                cent_geom = LibGEOS.centroid(temp_poly)
+                seq = LibGEOS.getCoordSeq(cent_geom)
+                new_c = (LibGEOS.getX(seq, 1), LibGEOS.getY(seq, 1))
+                shift = sqrt(sum((new_c .- curr_centroids[i]).^2))
+                max_shift = max(max_shift, shift)
+                push!(new_centroids, new_c)
+            else
+                push!(new_centroids, curr_centroids[i])
+            end
+        end
+        
+        # Optional: Balanced termination check
+        assigns = [argmin([sum((p .- sj).^2) for sj in new_centroids]) for p in pts]
+        counts = [count(==(k), assigns) for k in 1:length(new_centroids)]
+        cv = std(counts) / (mean(counts) + 1e-9)
+        
+        curr_centroids = new_centroids
+        if max_shift < tol || cv <= cv_min break end
+    end
+    return curr_centroids
+end
+
+function get_bvt_centroids(pts, t_idx, n_target, min_u, min_ts, min_pts, max_pts, tol; cv_min=1.0)
+    data = collect(zip(pts, t_idx))
+    regions = [data]
+    prev_cv = Inf
+    while length(regions) < n_target
+        v_idx = argmax([length(r) > max_pts ? length(r) * 1e6 : (length(r) > 1 ? max(std([p[1][1] for p in r]), std([p[1][2] for p in r])) : 0.0) for r in regions])
+        if length(regions[v_idx]) < 2 break end
+        target = regions[v_idx]
+        xs, ys = [p[1][1] for p in target], [p[1][2] for p in target]
+        dim = std(xs) > std(ys) ? 1 : 2
+        med = median(dim == 1 ? xs : ys)
+        mask = [p[1][dim] <= med for p in target]
+        r1, r2 = target[mask], target[.!mask]
+        if isempty(r1) || isempty(r2) break end
+        splice!(regions, v_idx, [r1, r2])
+        counts = length.(regions)
+        ts_counts = [length(unique([p[2] for p in r])) for r in regions]
+        curr_cv = std(counts) / (mean(counts) + 1e-9)
+        
+        if length(regions) >= min_u && (curr_cv <= cv_min || abs(prev_cv - curr_cv) < (tol * 0.1)) && all(ts_counts .>= min_ts) break end
+        prev_cv = curr_cv
+    end
+    return [(mean(p[1][1] for p in r), mean(p[1][2] for p in r)) for r in regions]
+end
+ 
+ 
+ function get_avt_centroids(c_init, pts, t_idx; min_u=1, min_ts=1, min_pts=1, min_area=0.0, tol=0.1, cv_min=1.0)
+    # Enhanced AVT: Includes CV logic and cv_min threshold for termination
+    data = collect(zip(pts, t_idx))
+    if isempty(c_init) || isempty(data) return c_init end
+
+    curr_centroids = [SVector{2, Float64}(c) for c in c_init]
+    prev_cv = Inf
+
+    while length(curr_centroids) > min_u
+        cluster_map = [Int[] for _ in 1:length(curr_centroids)]
+        for (i, d) in enumerate(data)
+            dist_sq = [sum((d[1] .- c) .^ 2) for c in curr_centroids]
+            push!(cluster_map[argmin(dist_sq)], i)
+        end
+
+        counts = length.(cluster_map)
+        ts_counts = [length(unique([data[idx][2] for idx in cluster_map[k]])) for k in 1:length(curr_centroids)]
+        curr_cv = std(counts) / (mean(counts) + 1e-9)
+
+        violators = findall(k -> counts[k] < min_pts || ts_counts[k] < min_ts, 1:length(curr_centroids))
+
+        # Stopping criteria: No violations AND (reached target min_u OR CV meets cv_min OR stabilized)
+        if isempty(violators) && (length(curr_centroids) <= min_u || curr_cv <= cv_min || abs(prev_cv - curr_cv) < (tol * 0.1))
+            break
+        end
+
+        prev_cv = curr_cv
+        target_idx = !isempty(violators) ? violators[argmin(counts[violators])] : argmin(counts)
+        deleteat!(curr_centroids, target_idx)
+    end
+
+    final_cluster_map = [Int[] for _ in 1:length(curr_centroids)]
+    for (i, d) in enumerate(data)
+        dist_sq = [sum((d[1] .- c) .^ 2) for c in curr_centroids]
+        push!(final_cluster_map[argmin(dist_sq)], i)
+    end
+
+    final_c = Tuple{Float64, Float64}[]
+    for idx in 1:length(curr_centroids)
+        idxs = final_cluster_map[idx]
+        if !isempty(idxs)
+            push!(final_c, (mean(data[j][1][1] for j in idxs), mean(data[j][1][2] for j in idxs)))
+        else
+            push!(final_c, Tuple(curr_centroids[idx]))
+        end
+    end
+    return final_c
+end
 
 
 function check_connectivity(g)
@@ -341,119 +572,74 @@ function check_connectivity(g)
 end
 
 
-
 function ensure_connected!(g, centroids)
-    """
-    Synopsis: Force-connects disconnected graph components using nearest-neighbor edges.
-    Inputs:
-    - g: SimpleGraph (modified in-place).
-    - centroids: Vector of (x, y) tuples.
-    Outputs:
-    - The modified connected SimpleGraph.
-    """
-    comps = connected_components(g)
-    while length(comps) > 1
-        # Take the first component and find the closest node in any other component
-        c1 = comps[1]
-        others = vcat(comps[2:end]...)
-        
-        min_dist = Inf
+    # Ensures the spatial graph is connected by adding edges between the nearest 
+    # components based on the provided centroid coordinates.
+    while !is_connected(g)
+        comps = connected_components(g)
+        best_dist = Inf
         best_pair = (0, 0)
         
-        for i in c1
-            for j in others
-                d = sum((centroids[i] .- centroids[j]).^2)
-                if d < min_dist
-                    min_dist = d
-                    best_pair = (i, j)
+        # Find the two closest nodes belonging to different components
+        for i in 1:length(comps), j in (i+1):length(comps)
+            for u in comps[i], v in comps[j]
+                d = sum((centroids[u] .- centroids[v]).^2)
+                if d < best_dist
+                    best_dist = d
+                    best_pair = (u, v)
                 end
             end
         end
         
-        if best_pair[1] > 0
+        if best_pair != (0, 0)
             add_edge!(g, best_pair[1], best_pair[2])
+        else
+            break
         end
-        
-        # Re-calculate components after adding the edge
-        comps = connected_components(g)
     end
     return g
 end
 
 
-
-function get_avt_centroids(c_init, pts, hull_coords, hull_geom; min_pts=5, min_units=2, tol=1e-4)
-    """
-    Synopsis: Agglomerative Voronoi Tessellation that strictly enforces min_pts.
-    """
-    centroids = copy(c_init)
+ 
+function plot_spatial_graph(pts, au; title="Spatial Partitioning", domain_boundary=nothing)
+    # 1. Base Plot with Polygons
+    plt = Plots.plot(aspect_ratio=:equal, title=title, legend=false)
     
-    while length(centroids) > min_units
-        assignments = [argmin([sum((p .- sj) .^ 2) for sj in centroids]) for p in pts]
-        counts = [count(==(i), assignments) for i in 1:length(centroids)]
-        
-        # Identify units below the point threshold
-        violators = findall(c -> c < min_pts, counts)
-        if isempty(violators)
-            break # All units satisfy min_pts
-        end
-
-        # Merge the unit with the fewest points into its nearest neighbor
-        target_idx = violators[argmin(counts[violators])]
-        
-        dists = [i == target_idx ? Inf : sum((centroids[target_idx] .- centroids[i]).^2) for i in 1:length(centroids)]
-        merge_with = argmin(dists)
-        
-        if dists[merge_with] == Inf break end
-
-        # Update centroid of the merged unit to be the weighted mean of both
-        total_pts = counts[target_idx] + counts[merge_with]
-        if total_pts > 0
-            new_c = ( (centroids[target_idx][1]*counts[target_idx] + centroids[merge_with][1]*counts[merge_with])/total_pts,
-                      (centroids[target_idx][2]*counts[target_idx] + centroids[merge_with][2]*counts[merge_with])/total_pts )
-            centroids[merge_with] = new_c
-        end
-
-        deleteat!(centroids, target_idx)
-    end
-
-    return centroids
-end
-
-
-
-function plot_spatial_graph(pts, spatial_res; title="Spatial Partitioning", domain_boundary=[])
-    """
-    Inputs:
-    - pts: Data points.
-    - spatial_res: Result containing polygons, centroids, and edges.
-
-    Outputs:
-    - A Plots.Plot object.
-    """
-    p = Plots.plot(aspect_ratio=:equal, title=title, legend=false)
-    if !isempty(domain_boundary)
-        bx = [pt[1] for pt in domain_boundary if !isnan(pt[1])]
-        by = [pt[2] for pt in domain_boundary if !isnan(pt[2])]
-        if !isempty(bx) && (bx[1], by[1]) != (bx[end], by[end])
-            push!(bx, bx[1]); push!(by, by[1])
-        end
-        Plots.plot!(p, bx, by, color=:black, lw=2)
-    end
-    for poly_coords in spatial_res.polygons
+    # Plot Polygons
+    for poly_coords in au.polygons
         if length(poly_coords) > 2
-            px, py = [pt[1] for pt in poly_coords if !isnan(pt[1])], [pt[2] for pt in poly_coords if !isnan(pt[1])]
-            if !isempty(px); push!(px, px[1]); push!(py, py[1]); Plots.plot!(p, px, py, seriestype=:shape, fillalpha=0.3, linecolor=:white, lw=0.5); end
+            px = [p[1] for p in poly_coords if !isnan(p[1])]
+            py = [p[2] for p in poly_coords if !isnan(p[2])]
+            if !isempty(px) && (px[1], py[1]) != (px[end], py[end])
+                push!(px, px[1]); push!(py, py[1])
+            end
+            Plots.plot!(plt, px, py, seriestype=:shape, fillalpha=0.1, linecolor=:black, lw=0.5)
         end
     end
-    for edge in spatial_res.adjacency_edges
-        p1, p2 = edge
-        Plots.plot!(p, [p1[1], p2[1]], [p1[2], p2[2]], color=:red, lw=1.5, alpha=0.6)
+
+    # 2. Plot Adjacency Graph Edges (Using au.centroids directly for nodes)
+    for edge in Graphs.edges(au.graph)
+        u, v = src(edge), dst(edge)
+        p1, p2 = au.centroids[u], au.centroids[v]
+        Plots.plot!(plt, [p1[1], p2[1]], [p1[2], p2[2]], color=:red, lw=1.5, alpha=0.6)
     end
-    Plots.scatter!(p, [pt[1] for pt in pts], [pt[2] for pt in pts], markersize=1, markercolor=:gray, alpha=0.3)
-    Plots.scatter!(p, [pt[1] for pt in spatial_res.centroids], [pt[2] for pt in spatial_res.centroids], markersize=4, markercolor=:blue, markerstrokecolor=:white)
-    return p
+
+    # 3. Plot Centroids and Raw Points
+    Plots.scatter!(plt, [p[1] for p in pts], [p[2] for p in pts], 
+        markersize=1, color=:gray, alpha=0.3, label="Points")
+    Plots.scatter!(plt, [c[1] for c in au.centroids], [c[2] for c in au.centroids], 
+        markersize=4, color=:blue, markerstrokecolor=:white, label="Centroids")
+
+    if !isnothing(domain_boundary)
+        bx = [p[1] for p in domain_boundary if !isnan(p[1])]
+        by = [p[2] for p in domain_boundary if !isnan(p[2])]
+        Plots.plot!(plt, bx, by, color=:black, lw=2, ls=:dash)
+    end
+
+    return plt
 end
+
 
 
 
@@ -525,18 +711,21 @@ function estimate_local_kde_with_extrapolation(pts, time_idx, target_ts; grid_re
     return x_grid, y_grid, intensity
 end
 
-
 function calculate_metrics(spatial_res, pts)
     # Description: Calculates density metrics (mean, SD, CV) across the partitioned spatial units.
-    # Inputs:
-    #   - spatial_res: Partitioning results containing polygons and assignments.
-    #   - pts: The data points being analyzed.
-    # Outputs:
-    #   - NamedTuple: (mean_density, sd_density, cv_density).
+    # Dynamically adjusted to the number of polygons returned.
 
     roll(v, k) = v[mod1.(1:length(v), length(v) .- k)]
 
-    n_units = length(spatial_res.centroids)
+    # Use the number of final polygons as the reference for units
+    n_units = length(spatial_res.polygons)
+    
+    # If no polygons were created, return NaN metrics
+    if n_units == 0
+        return (mean_density = NaN, sd_density = NaN, cv_density = NaN)
+    end
+
+    # Count assignments for the units that actually have polygons
     counts = [count(==(i), spatial_res.assignments) for i in 1:n_units]
 
     areas = Float64[]
@@ -560,14 +749,16 @@ function calculate_metrics(spatial_res, pts)
         end
     end
 
-    densities = counts ./ areas
+    # Ensure counts and areas are the same length
+    len = min(length(counts), length(areas))
+    densities = counts[1:len] ./ areas[1:len]
+    
     return (
         mean_density = mean(densities),
         sd_density = std(densities),
-        cv_density = std(densities) / mean(densities)
+        cv_density = std(densities) / (mean(densities) + 1e-9)
     )
 end
-
  
 
 function get_spatial_graph(spatial_res)

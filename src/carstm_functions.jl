@@ -614,6 +614,7 @@ function posterior_predictive_check(model::DynamicPPL.Model, stats, y_obs)
     return (rmse=rmse, pearson=(val=pearson_val, p=pearson_p), kendall=(val=kendall_val, p=kendall_p), plot_density=plt_density, plot_scatter=plt_scatter)
 end
 
+
 function plot_posterior_results(stats, pts, areal_units, W; time_slice=nothing, effect=:spatial, cov_idx=1, show_pts=false)
     # Description: Comprehensive posterior visualization for CARSTM and Deep GP models.
 
@@ -621,15 +622,15 @@ function plot_posterior_results(stats, pts, areal_units, W; time_slice=nothing, 
     if effect == :beta_cov
         b_stats = stats.beta_cov[cov_idx]
         n_levels = size(b_stats.mean, 1)
-        return StatsPlots.bar(1:n_levels, b_stats.mean[:,1], 
+        return StatsPlots.bar(1:n_levels, b_stats.mean[:,1],
                   yerror=(b_stats.mean[:,1] .- b_stats.lower[:,1], b_stats.upper[:,1] .- b_stats.mean[:,1]),
                   title="Covariate $cov_idx Effects", xlabel="Level", ylabel="Effect Size", legend=false)
-    
+
     elseif effect == :b_class1 || effect == :b_class2
         b_stats = effect == :b_class1 ? stats.b_class1 : stats.b_class2
         if isnothing(b_stats); error("Effect $effect not found in stats"); end
         n_levels = size(b_stats.mean, 1)
-        return StatsPlots.bar(1:n_levels, b_stats.mean[:,1], 
+        return StatsPlots.bar(1:n_levels, b_stats.mean[:,1],
                   yerror=(b_stats.mean[:,1] .- b_stats.lower[:,1], b_stats.upper[:,1] .- b_stats.mean[:,1]),
                   title="$effect Levels", xlabel="Class Index", ylabel="Effect Size", legend=false)
 
@@ -637,8 +638,8 @@ function plot_posterior_results(stats, pts, areal_units, W; time_slice=nothing, 
     elseif effect == :temporal
         t_stats = stats.temporal
         n_times = length(t_stats.mean)
-        return StatsPlots.plot(1:n_times, t_stats.mean, 
-                   ribbon=(t_stats.mean .- t_stats.lower, t_stats.upper .- t_stats.mean), 
+        return StatsPlots.plot(1:n_times, t_stats.mean,
+                   ribbon=(t_stats.mean .- t_stats.lower, t_stats.upper .- t_stats.mean),
                    fillalpha=0.2, lw=2, title="Temporal Main Effect", xlabel="Time Index", ylabel="Effect (Latent Scale)", legend=false)
 
     # 3. Handle Spatial, ST, and Deep GP Mean Fields
@@ -649,40 +650,40 @@ function plot_posterior_results(stats, pts, areal_units, W; time_slice=nothing, 
         values = if effect == :spatial
             stats.spatial.mean
         elseif effect == :eta_gp
-            # Visualize the final latent field from Deep GP layers
             haskey(stats, :eta_gp) ? stats.eta_gp.mean : error("eta_gp not found in stats")
         elseif effect == :hidden_layer
-            # Visualize the hidden warping (Layer 1)
             haskey(stats, :h1) ? stats.h1.mean : error("hidden layer h1 not found in stats")
         elseif effect == :st_mat_denoised && !isnothing(time_slice)
             stats.st_mat_denoised.mean[:, time_slice]
         elseif effect == :st_mat_noisy && !isnothing(time_slice)
             stats.st_mat_noisy.mean[:, time_slice]
         elseif effect == :residuals
-            # Unit-level aggregate residual check using denoised mean field as base
             stats.st_mat_noisy.mean[:, isnothing(time_slice) ? 1 : time_slice]
         else
             error("Effect $effect requires specific keys in stats or time_slice index")
         end
 
-        for i in 1:length(areal_units.polygons)
+        # SAFETY FIX: Plot only as many polygons as we have results for to avoid BoundsError
+        n_to_plot = min(length(areal_units.polygons), length(values))
+
+        for i in 1:n_to_plot
             poly_coords = areal_units.polygons[i]
             if length(poly_coords) > 2
                 px = [pt[1] for pt in poly_coords if !isnan(pt[1])]
                 py = [pt[2] for pt in poly_coords if !isnan(pt[2])]
-                
+
                 if !isempty(px)
                     if (px[1], py[1]) != (px[end], py[end])
                         push!(px, px[1]); push!(py, py[1])
                     end
-                    
+
                     val = values[i]
-                    StatsPlots.plot!(plt, px, py, 
-                        seriestype=:shape, 
-                        fill_z=val, 
-                        c=:RdYlBu, 
-                        linecolor=:black, 
-                        linewidth=0.5, 
+                    StatsPlots.plot!(plt, px, py,
+                        seriestype=:shape,
+                        fill_z=val,
+                        c=:RdYlBu,
+                        linecolor=:black,
+                        linewidth=0.5,
                         fillalpha=0.8,
                         legend=false
                     )
@@ -691,11 +692,11 @@ function plot_posterior_results(stats, pts, areal_units, W; time_slice=nothing, 
         end
 
         if show_pts
-            StatsPlots.scatter!(plt, [p[1] for p in pts], [p[2] for p in pts], 
+            StatsPlots.scatter!(plt, [p[1] for p in pts], [p[2] for p in pts],
                 markersize=1, markercolor=:gray, alpha=0.2, label="Observations")
         end
 
-        StatsPlots.scatter!(plt, [c[1] for c in areal_units.centroids], [c[2] for c in areal_units.centroids], 
+        StatsPlots.scatter!(plt, [c[1] for c in areal_units.centroids], [c[2] for c in areal_units.centroids],
             markersize=2, markercolor=:white, markerstrokecolor=:black, alpha=0.5, label="Centroids")
 
         return plt
@@ -703,6 +704,7 @@ function plot_posterior_results(stats, pts, areal_units, W; time_slice=nothing, 
         error("Effect $effect not recognized.")
     end
 end
+
 
 function plot_posterior_results(stats, modinputs; time_slice=nothing, effect=:spatial, cov_idx=1, show_pts=false)
     # Wrapper method that accepts the modinputs NamedTuple

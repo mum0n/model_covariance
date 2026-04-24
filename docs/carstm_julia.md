@@ -221,124 +221,84 @@ include( joinpath( project_directory, "src", "carstm_functions.jl" ) )
 ```{julia}
 
 # Data Generation
-n_pts = 100
-n_time = 15
+n_pts = 1000
+n_time = 30
  
 (pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
   generate_sim_data(n_pts, n_time; rndseed=42);
 
 
-# Use an existing time slice for demonstration
-target_ts = 5 # Example time slice
+plot_kde_simple(pts, sd_extension_factor=0.25, title="Spatial Intensity (KDE)")
+ 
+# Define constraints for benchmarking
+ntot = size(pts, 1) 
 
-x_grid_kde, y_grid_kde, intensity_kde = estimate_local_kde_with_extrapolation(pts, time_idx, target_ts; grid_res=100, sd_extension_factor=1.0)
+# Ensure these are Integers to avoid MethodError in StatsBase.sample
+target_units = Int(floor(ntot / 50))
+min_points = 1
+max_points = Int(floor(ntot / 50))
+min_total_arealunits = target_units / 5
+max_total_arealunits = target_units * 5
+min_time_slices = 5
+min_area = 0.01
+max_area = 5
+cv_min=1
+buffer_dist = 0.8
+tolerance = 0.1
 
-# Filter points for the target time slice for plotting
-filtered_pts_for_plot = pts[findall(==(target_ts), time_idx)]
+test_configs = [ :cvt, :kvt, :qvt, :bvt, :avt ]
 
-# Create a heatmap of the KDE intensity
-p_kde = Plots.heatmap(x_grid_kde, y_grid_kde, intensity_kde';
-                      colorbar_title="Intensity",
-                      title="Local KDE for Time Slice $target_ts",
-                      xlabel="X Coordinate", ylabel="Y Coordinate",
-                      aspect_ratio=:equal,
-                      c=:viridis)
+results = []
+plots = []
 
-# Overlay the actual points for that time slice
-Plots.scatter!(p_kde, [p[1] for p in filtered_pts_for_plot], [p[2] for p in filtered_pts_for_plot];
-               marker=:circle, markersize=3, markeralpha=0.6, markercolor=:white, label="Points in TS $target_ts")
+for m in test_configs
+    println("Testing method: $m")
+    local au
+    try
+        au = assign_spatial_units( pts, m;
+            target_units = target_units,
+            min_total_arealunits=min_total_arealunits,
+            max_total_arealunits=max_total_arealunits,
+            min_time_slices = min_time_slices,
+            time_idx = time_idx,
+            buffer_dist=buffer_dist,
+            tolerance=tolerance,
+            cv_min=cv_min,
+            min_points=min_points,
+            max_points=max_points,
+            min_area=min_area,
+            max_area=max_area)
 
-display(p_kde)
+        met = calculate_metrics(au, pts)
+        push!(results, (
+          method=m,
+          units=length(au.centroids),
+          mean_dens=met.mean_density,
+          sd_dens=met.sd_density,
+          cv_dens=met.cv_density
+        ))
 
-
-
-# Define common constraints
-common_min_area_points = 2.0
-common_max_area_points = 30.0
-min_total_units_benchmark = 5
-max_total_units_benchmark = 15
-tolerance = 1e-1 
-
-# Final verification run with robust BVT/Quadtree and cleaned AVT adjacency
-test_configs_expanded = [
-    (:cvt, 8), 
-    (:qvt, 6),
-    (:bvt, 10),
-    (:avt, 20)
-]
-
-results_expanded = []
-plots_expanded = []
-
-for (m, max_u) in test_configs_expanded
-    local areal_units
-    areal_units = assign_spatial_units(pts, m;
-        max_total_arealunits=max_u,
-        buffer_dist=0.8,
-        min_pts=15)
-
-    push!(results_expanded, (method=m, requested_max=max_u, actual_units=length(areal_units.centroids)))
-
-    p = plot_spatial_graph(pts, areal_units; title="Method: $m", domain_boundary=areal_units.hull_coords)
-    push!(plots_expanded, p)
+        p = plot_spatial_graph(pts, au; title="Method: $m", domain_boundary=au.hull_coords)
+        push!(plots, p)
+    catch e
+        @error "Method $m failed: $e"
+    end
 end
 
-display(DataFrame(results_expanded))
-display(Plots.plot(plots_expanded..., layout=(3, 2), size=(900, 1000)))
-
-
-
-benchmark_results = []
-for (m, max_u) in test_configs_expanded
-    res = assign_spatial_units(pts, m; max_total_arealunits=max_u, buffer_dist=0.8, min_pts=15)
-    met = calculate_metrics(res, pts)
-    push!(benchmark_results, (method=m, units=length(res.centroids), mean_dens=met.mean_density, sd_dens=met.sd_density, cv_dens=met.cv_density))
+if !isempty(results)
+    display(DataFrame(results))
+    display(Plots.plot(plots..., layout=(3, 2), size=(600, 800)))
 end
-
-display(DataFrame(benchmark_results))
-
-
 ```
 
+Conclusion: All methods seem reasonable, but AVT seems to have lowest density and SD and CV.. approaches a Poisson distribution best.
 
  
 
-
-## Example 0: Simulated data
+ 
 
 ```{julia}
-
-# Data 
-n_pts = 100
-n_time = 15
-
-(pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
-  generate_sim_data(n_pts, n_time; rndseed=42)
-
-plot_kde_simple(pts, sd_extension_factor=1.0, title="Spatial Intensity (KDE)")
-
-# Define common constraints
-common_min_area_points = 2.0
-common_max_area_points = 30.0
-min_total_units = 5
-max_total_units = 15
-min_pts = 3
-tolerance = 1e-1
-
-# Ensure we are using the simulation data generated earlier
-area_method = :avt  # avt, cvt, or bvt, qvt
-areal_units = assign_spatial_units(pts, area_method;
-        max_total=max_total_units,
-        buffer_dist=0.8,  # fraction of mean distances
-        min_pts=min_pts)
-
-actual_units=length(areal_units.centroids)
-
-plt = plot_spatial_graph(pts, areal_units; title="Method: $area_method", domain_boundary=areal_units.hull_coords)
-
-display(plt)
-   
-
+ 
 # classify locations and adjacency
 g_v1 = get_spatial_graph(areal_units)
 W_sym = Float64.( Graphs.adjacency_matrix(g_v1) )
@@ -353,11 +313,7 @@ class1_sim = rand(1:13, length(y_binary)); # A categorical variable with 13 leve
 class2_sim = rand(1:2, length(y_binary)) ; # A categorical variable with 2 levels
 weights_sim = ones(Float64, length(y_binary)); # Assign equal weight to all observations
   
-
-# Pre-compute static features outside of Turing models:
-using BenchmarkTools
-
-# Configuration
+ 
 n_bench_iters = 500
 bench_results = Dict{String, Float64}()
 
@@ -367,19 +323,9 @@ modinputs = prepare_model_inputs(y_sim, pts, area_idx, time_idx, W_sym, n_catego
 cont_covs_dummy = randn(length(y_sim), 2)
 
 # Ensure count data is strictly non-negative integers for count models
-y_counts = abs.(Int.(round.(modinputs.y)))
-precomp_counts = merge(modinputs, (y = y_counts,))
-using BenchmarkTools
-
-# Configuration
-n_bench_iters = 50
-bench_results = Dict{String, Float64}()
-
-# Ensure count data is strictly non-negative integers for count models
-y_counts = abs.(Int.(round.(modinputs.y)))
-precomp_counts = merge(modinputs, (y = y_counts,))
-
-println("Starting Suite Benchmark (MH, $n_bench_iters iterations)...\n")
+y_counts = abs.(Int.(round.(modinputs.y))) * 100
+precomp_counts = merge(modinputs, (y = y_counts,)) 
+ 
 
 # Define the full model set with corrected data inputs for count families
 models_to_bench = Dict(
