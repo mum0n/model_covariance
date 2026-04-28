@@ -615,9 +615,13 @@ function posterior_predictive_check(model::DynamicPPL.Model, stats, y_obs)
 end
 
 
-function plot_posterior_results(stats, pts, areal_units, W; time_slice=nothing, effect=:spatial, cov_idx=1, show_pts=false)
+function plot_posterior_results(stats, modinputs=nothing, areal_units=nothing; pts=nothing, time_slice=nothing, effect=:spatial, cov_idx=1, show_pts=false)
     # Description: Comprehensive posterior visualization for CARSTM and Deep GP models.
 
+    if !isnothing(modinputs)
+        pts = modinputs.pts_raw
+    end
+ 
     # 1. Handle Categorical/Class Bar Plots
     if effect == :beta_cov
         b_stats = stats.beta_cov[cov_idx]
@@ -706,27 +710,6 @@ function plot_posterior_results(stats, pts, areal_units, W; time_slice=nothing, 
 end
 
 
-function plot_posterior_results(stats, modinputs; time_slice=nothing, effect=:spatial, cov_idx=1, show_pts=false)
-    # Wrapper method that accepts the modinputs NamedTuple
-    # to facilitate drop-in replacement in comprehensive diagnostic functions.
-
-    # Extract necessary spatial metadata from modinputs and surrounding scope
-    # Note: spatial_res is usually available in the Main scope from the partitioning step
-    if !@isdefined(spatial_res)
-        @warn "spatial_res not found in scope. Attempting to plot using only centroids if possible."
-    end
-
-    return plot_posterior_results(
-        stats, 
-        modinputs.pts_raw, 
-        spatial_res, 
-        modinputs.Q_sp; 
-        time_slice=time_slice, 
-        effect=effect, 
-        cov_idx=cov_idx, 
-        show_pts=show_pts
-    )
-end
 
 
 function plot_posterior_vs_prior(model::DynamicPPL.Model, chain::MCMCChains.Chains, param_sym::Symbol; n_prior_samples=1000, title="Posterior vs Prior")
@@ -916,7 +899,7 @@ function prepare_model_inputs(y, pts, area_idx, time_idx, W_sym, n_cat; m_trend=
 end
 
 
-function model_results_comprehensive(model::DynamicPPL.Model, chain::MCMCChains.Chains, modinputs; alpha=0.05, time_slice=1)
+function model_results_comprehensive(model, chain, modinputs, areal_units; alpha=0.05, time_slice=1)
     # Synopsis: Comprehensive diagnostic and visualization suite for CARSTM models.
     # Inputs: model (Turing), chain (MCMCChains), modinputs (NamedTuple)
 
@@ -945,18 +928,18 @@ function model_results_comprehensive(model::DynamicPPL.Model, chain::MCMCChains.
     ppc = posterior_predictive_check(model, stats, y_obs)
 
     # Spatial Main Effect
-    plt_sp = plot_posterior_results(stats, modinputs; effect=:spatial)
+    plt_sp = plot_posterior_results(stats, modinputs, areal_units; effect=:spatial)
     title!(plt_sp, "Main Spatial Effect ($(100(1-alpha))% CI)")
 
     # Temporal Time-Series Plot
-    plt_tm = plot_posterior_results(stats, modinputs; effect=:temporal)
+    plt_tm = plot_posterior_results(stats, modinputs, areal_units; effect=:temporal)
     title!(plt_tm, "Temporal Main Effect Trend")
 
     # Denoised Predictions for specific time slice
-    plt_st_denoised = plot_posterior_results(stats, modinputs; effect=:st_mat_denoised, time_slice=time_slice)
+    plt_st_denoised = plot_posterior_results(stats, modinputs, areal_units; effect=:st_mat_denoised, time_slice=time_slice)
     title!(plt_st_denoised, "Denoised Predictions (Time: $time_slice)")
 
-    plt_st_noisy = plot_posterior_results(stats, modinputs; effect=:st_mat_noisy, time_slice=time_slice)
+    plt_st_noisy = plot_posterior_results(stats, modinputs, areal_units; effect=:st_mat_noisy, time_slice=time_slice)
     title!(plt_st_noisy, "Noisy Predictions (Time: $time_slice)")
 
     # Calculate WAIC
@@ -976,50 +959,7 @@ function model_results_comprehensive(model::DynamicPPL.Model, chain::MCMCChains.
         stats_raw = stats
     )
 end
-
-
-function prepare_model_inputs_direct(D, W, X, log_offset, y, time_idx, nX, nAU, node1, node2; n_cat=13)
-    """
-    Synopsis: Adapts raw data to the standardized prepare_model_inputs format for CARSTM modeling.
-    """
-    # Create a vector of tuples for coordinates (placeholder since this is areal data)
-    # We'll use the centroids of a dummy grid or just zeroed tuples if specific coords aren't needed
-    # for the discrete model components.
-    pts_dummy = [(0.0, 0.0) for _ in 1:length(y)]
-
-    # The area_idx is the spatial unit identifier (1 to 56)
-    area_idx = repeat(1:nAU, 10)
-
-    # Standardize time indices
-    t_idx = Int.(time_idx)
-
-    # Use the existing robust prepare_model_inputs logic to compute scalings and bases
-    # Note: We pass n_cat which is used for the RW2 categorical smoothing priors
-    mod_data = prepare_model_inputs(
-        y, 
-        pts_dummy, 
-        area_idx, 
-        t_idx, 
-        W, 
-        n_cat
-    )
-
-    # Override/Update with Lip Cancer specific inputs
-    # We merge the log_offset (expected cases) and the actual covariate matrix X
-    return merge(mod_data, (
-        X = X, 
-        offset = log_offset, 
-        n_fixed = nX,
-        node1 = node1,
-        node2 = node2
-    ))
-    # Example usage:
-    # lip_inputs = prepare_model_inputs_direct(D, W, Xnew, log_offset_new, ynew, ti, nX, nAU, node1, node2)
-    # display(lip_inputs)
-end
-
-
-
+ 
 
 # -----------------------
 

@@ -166,31 +166,30 @@ For production-grade point estimates, we may utilize ADVI (Automatic Differentia
 ```{julia}
  
 # For Areal Units
+using Pkg
 pkgs_au = ["Random", "Statistics", "LinearAlgebra", "DataFrames",
-       "StatsBase", "SparseArrays", "Plots", "StatsPlots", 
+       "StatsBase", "SparseArrays", "Plots", "StatsPlots", "StaticArrays",
         "JLD2", "LibGEOS", "Graphs", "DelaunayTriangulation" ]
- 
+Pkg.add(pkgs_au)
+for pk in pkgs_au; @eval using $(Symbol(pk)); end
+
 
 # For CARSTM 
+using Pkg
 pkgs_carstm = ["Random",   "Distributions", "Statistics", "MCMCChains", "DataFrames",
         "LinearAlgebra", "Clustering", "StatsBase", "HypothesisTests",
         "JLD2", "FFTW",  "SparseArrays", "StaticArrays", "FillArrays",
          "Bijectors", "DynamicPPL", "AdvancedVI", "Optimisers", "PosteriorStats",  "Turing" ]
- 
+Pkg.add(pkgs_carstm)
+for pk in pkgs_carstm;  @eval using $(Symbol(pk)) end
 
-pkgs = unique( vcat( pkgs_au, pkgs_carstm ))
 
-using Pkg
-Pkg.add(pkgs)
-Pkg.precompile()
+
+# Pkg.precompile()
 # Pkg.instantiate()
 # Pkg.gc()
 
-for pk in pkgs
-  @eval using $(Symbol(pk))
-end
 
-# using Pkg
 # Pinning LibGEOS to the latest available package version to resolve API inconsistencies
 # Pkg.add(name="LibGEOS", version="0.9.7")
 # Pkg.precompile()
@@ -210,6 +209,7 @@ end
 
 include( joinpath( project_directory, "src", "spatial_partitioning_functions.jl" ) )   
 include( joinpath( project_directory, "src", "carstm_functions.jl" ) )    
+include( joinpath( project_directory, "src", "example_data.jl" ) )   
 
  
 
@@ -221,7 +221,7 @@ include( joinpath( project_directory, "src", "carstm_functions.jl" ) )
 ```{julia}
 
 # Data Generation
-n_pts = 1000
+n_pts = 100
 n_time = 30
  
 (pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
@@ -231,20 +231,21 @@ n_time = 30
 plot_kde_simple(pts, sd_extension_factor=0.25, title="Spatial Intensity (KDE)")
  
 # Define constraints for benchmarking
+# Ensure these are Integers to avoid MethodError in StatsBase.sample
 ntot = size(pts, 1) 
 
-# Ensure these are Integers to avoid MethodError in StatsBase.sample
-target_units = Int(floor(ntot / 50))
-min_points = 1
-max_points = Int(floor(ntot / 50))
-min_total_arealunits = target_units / 5
-max_total_arealunits = target_units * 5
 min_time_slices = 5
-min_area = 0.01
-max_area = 5
-cv_min=1
+target_density = 20 # number per areal unit 
+target_units = Int(floor( ntot / target_density ))
+min_total_arealunits = target_units / 10
+max_total_arealunits = target_units * 10
+min_points = 1
+max_points = Int(floor(ntot / min_total_arealunits ))
+min_area = 0.5
+max_area = 9
+cv_min = 1
 buffer_dist = 0.8
-tolerance = 0.1
+tolerance = 0.01
 
 test_configs = [ :cvt, :kvt, :qvt, :bvt, :avt ]
 
@@ -275,7 +276,8 @@ for m in test_configs
           units=length(au.centroids),
           mean_dens=met.mean_density,
           sd_dens=met.sd_density,
-          cv_dens=met.cv_density
+          cv_dens=met.cv_density,
+          termination=au.termination_reason
         ))
 
         p = plot_spatial_graph(pts, au; title="Method: $m", domain_boundary=au.hull_coords)
@@ -289,12 +291,69 @@ if !isempty(results)
     display(DataFrame(results))
     display(Plots.plot(plots..., layout=(3, 2), size=(600, 800)))
 end
+
+
 ```
 
 Conclusion: All methods seem reasonable, but AVT seems to have lowest density and SD and CV.. approaches a Poisson distribution best.
 
- 
 
+### Scottish lip cancer data 
+
+
+```{julia} 
+
+# Scottish cancer data (exactly as given)
+data = example_data("scottish_lip_cancer_data_spacetime");
+  
+# .. no positional information so we "infer" it from the adjacency network and "assign" an areal unit to it:
+au = assign_spatial_units( data.W )
+pts =  repeat(au.centroids, data.n_years)  # this is a simple expansion
+
+  println("Number of units: ", length(au.centroids))
+  println("Graph connectivity: ", is_connected(au.graph))
+  
+  # approximate "map":
+  plt = plot_spatial_graph(au.centroids, au; title="Lip Cancer Inferred Map and Topology", domain_boundary=au.hull_coords)
+  display(plt)
+ 
+# prepapre model inputs  
+# Note: We pass n_cat which is used for the RW2 categorical smoothing priors
+ncats = 13 # dummy variable
+modinputs = prepare_model_inputs(data.y, pts, data.area_idx, data.time_idx, data.W, ncats )
+
+mod = model_v5_poisson(modinputs; use_zi=false)  # zi=false mean no zero-inflation (default)
+
+# Define the Gibbs sampler tailored for Poisson
+optimal_gibbs_poisson = Gibbs(
+    (:u_icar, :u_iid, :f_tm_raw, :st_int_raw) => ESS(),
+    (:beta_cov) => NUTS(500, 0.65),
+    (:sigma_sp, :phi_sp, :sigma_tm, :rho_tm, :sigma_int, :sigma_rw2, :phi_zi) => MH()
+)
+
+chain = sample(mod, optimal_gibbs_poisson, 200; progress=true)
+
+using LogExpFunctions: logistic
+using LogExpFunctions: logsumexp
+
+results = model_results_comprehensive(mod, chain, modinputs, au)
+
+println("WAIC: ", round(results.waic, digits=2))
+println("RMSE: ", round(results.rmse, digits=4))
+println("Pearson R: ", round(results.pearson_r, digits=4))
+
+# 4. Display visual diagnostics
+display(results.plots.ppc.plot_scatter)
+display(results.plots.temporal)
+
+display(results.plots.spatial)
+display(results.plots.st_denoised)
+display(results.plots.st_noisy)
+
+
+
+
+```
  
 
 ```{julia}
