@@ -208,10 +208,79 @@ end
 
 
 include( joinpath( project_directory, "src", "spatial_partitioning_functions.jl" ) )   
-include( joinpath( project_directory, "src", "carstm_functions.jl" ) )    
-include( joinpath( project_directory, "src", "example_data.jl" ) )   
-
+include( joinpath( project_directory, "src", "carstm_functions.jl" ) )     
  
+
+```
+ 
+### Scottish lip cancer data 
+
+First we begin with a classic data set, the [Scottish Lip Cancer data](https://mc-stan.org/users/documentation/case-studies/icar_stan.html) which has been a standard to test upon. There are 56 areal units. We do not have access to the map positional data, but we do have the adjacency information from which we can infer approximate spatial topology:  
+  
+```{julia}  
+data = scottish_lip_cancer_data_spacetime();
+
+display(keys(data))
+display(Dict(k => size(v) for (k, v) in pairs(data) if k != :au))
+
+au = data.au ;
+
+  println("Number of units: ", length(au.centroids))
+  println("Graph connectivity: ", is_connected(au.graph))
+  
+  # approximate "map":
+  plt = plot_spatial_graph( au; title="Lip Cancer Inferred Map and Topology", domain_boundary=au.hull_coords)
+  display(plt)
+```
+
+In the data Tuple, we have counts (y) of cancer incidence and population size in each area is used as offsets (log_offset) in a simple Poisson model.  We also simulate a 10-"year" temporal process simulated as a random walk with magnitude 0.5 and a covariate effect (X: an area-specific continuous covariate that represents the proportion of the population employed in agriculture, fishing, or forestry). An overall random uniform observation error of magnitude 0.2 is added with a count then taken as the overall, rounded integer value.
+
+We reformat this data further with 'prepare_model_inputs()' to create structured inputs for the model. 
+ 
+```{julia}
+ 
+# prepapre model inputs  
+# Note: We pass n_cat which is used for the RW2 categorical smoothing priors
+ncats = 13 # dummy variable
+modinputs = prepare_model_inputs(data.y, pts, data.area_idx, data.time_idx, data.W, ncats )
+
+mod = model_v5_poisson(modinputs; use_zi=false)  # zi=false mean no zero-inflation (default)
+
+```
+
+Once defined, 
+
+```{julia}
+
+# Define the Gibbs sampler tailored for Poisson
+optimal_gibbs_poisson = Gibbs(
+    (:u_icar, :u_iid, :f_tm_raw, :st_int_raw) => ESS(),
+    (:beta_cov) => NUTS(500, 0.65),
+    (:sigma_sp, :phi_sp, :sigma_tm, :rho_tm, :sigma_int, :sigma_rw2, :phi_zi) => MH()
+)
+
+chain = sample(mod, optimal_gibbs_poisson, 200; progress=true)
+
+# required for waic computation:
+using LogExpFunctions: logistic
+using LogExpFunctions: logsumexp
+
+results = model_results_comprehensive(mod, chain, modinputs, au)
+
+println("WAIC: ", round(results.waic, digits=2))
+println("RMSE: ", round(results.rmse, digits=4))
+println("Pearson R: ", round(results.pearson_r, digits=4))
+
+# 4. Display visual diagnostics
+display(results.plots.ppc.plot_scatter)
+display(results.plots.temporal)
+
+display(results.plots.spatial)
+display(results.plots.st_denoised)
+display(results.plots.st_noisy)
+
+
+
 
 ```
 
@@ -224,9 +293,13 @@ include( joinpath( project_directory, "src", "example_data.jl" ) )
 n_pts = 100
 n_time = 30
  
-(pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) =
-  generate_sim_data(n_pts, n_time; rndseed=42);
+data = generate_sim_data(n_pts, n_time; rndseed=42);
+keys(data)
+pairs(data)
+Dict(k => size(v) for (k, v) in pairs(data))
 
+# extract quantities:
+(; pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) = data
 
 plot_kde_simple(pts, sd_extension_factor=0.25, title="Spatial Intensity (KDE)")
  
@@ -245,7 +318,7 @@ min_area = 0.5
 max_area = 9
 cv_min = 1
 buffer_dist = 0.8
-tolerance = 0.01
+tolerance = 0.05
 
 test_configs = [ :cvt, :kvt, :qvt, :bvt, :avt ]
 
@@ -270,7 +343,7 @@ for m in test_configs
             min_area=min_area,
             max_area=max_area)
 
-        met = calculate_metrics(au, pts)
+        met = calculate_metrics(au)
         push!(results, (
           method=m,
           units=length(au.centroids),
@@ -280,7 +353,7 @@ for m in test_configs
           termination=au.termination_reason
         ))
 
-        p = plot_spatial_graph(pts, au; title="Method: $m", domain_boundary=au.hull_coords)
+        p = plot_spatial_graph( au; title="Method: $m", domain_boundary=au.hull_coords)
         push!(plots, p)
     catch e
         @error "Method $m failed: $e"
@@ -298,93 +371,59 @@ end
 Conclusion: All methods seem reasonable, but AVT seems to have lowest density and SD and CV.. approaches a Poisson distribution best.
 
 
-### Scottish lip cancer data 
-
-
-```{julia} 
-
-# Scottish cancer data (exactly as given)
-data = example_data("scottish_lip_cancer_data_spacetime");
-  
-# .. no positional information so we "infer" it from the adjacency network and "assign" an areal unit to it:
-au = assign_spatial_units( data.W )
-pts =  repeat(au.centroids, data.n_years)  # this is a simple expansion
-
-  println("Number of units: ", length(au.centroids))
-  println("Graph connectivity: ", is_connected(au.graph))
-  
-  # approximate "map":
-  plt = plot_spatial_graph(au.centroids, au; title="Lip Cancer Inferred Map and Topology", domain_boundary=au.hull_coords)
-  display(plt)
- 
-# prepapre model inputs  
-# Note: We pass n_cat which is used for the RW2 categorical smoothing priors
-ncats = 13 # dummy variable
-modinputs = prepare_model_inputs(data.y, pts, data.area_idx, data.time_idx, data.W, ncats )
-
-mod = model_v5_poisson(modinputs; use_zi=false)  # zi=false mean no zero-inflation (default)
-
-# Define the Gibbs sampler tailored for Poisson
-optimal_gibbs_poisson = Gibbs(
-    (:u_icar, :u_iid, :f_tm_raw, :st_int_raw) => ESS(),
-    (:beta_cov) => NUTS(500, 0.65),
-    (:sigma_sp, :phi_sp, :sigma_tm, :rho_tm, :sigma_int, :sigma_rw2, :phi_zi) => MH()
-)
-
-chain = sample(mod, optimal_gibbs_poisson, 200; progress=true)
-
-using LogExpFunctions: logistic
-using LogExpFunctions: logsumexp
-
-results = model_results_comprehensive(mod, chain, modinputs, au)
-
-println("WAIC: ", round(results.waic, digits=2))
-println("RMSE: ", round(results.rmse, digits=4))
-println("Pearson R: ", round(results.pearson_r, digits=4))
-
-# 4. Display visual diagnostics
-display(results.plots.ppc.plot_scatter)
-display(results.plots.temporal)
-
-display(results.plots.spatial)
-display(results.plots.st_denoised)
-display(results.plots.st_noisy)
-
-
-
-
-```
- 
+### Simulated data 
 
 ```{julia}
+n_pts = 100
+n_time = 30
  
-# classify locations and adjacency
-g_v1 = get_spatial_graph(areal_units)
-W_sym = Float64.( Graphs.adjacency_matrix(g_v1) )
+data = generate_sim_data(n_pts, n_time; rndseed=42);
 
-area_idx = areal_units.assignments ; 
+(; pts, y_sim, y_binary, time_idx, weights, trials, cov_indices) = data
+ntot = size(pts, 1) 
 
-# Ensure cov_indices is correctly shaped as an N_obs x 4 matrix
-cov_indices_mat = hcat(cov_indices, cov_indices, cov_indices, cov_indices)
+min_time_slices = 5
+target_density = 20 # number per areal unit 
+target_units = Int(floor( ntot / target_density ))
+min_total_arealunits = target_units / 10
+max_total_arealunits = target_units * 10
+min_points = 1
+max_points = Int(floor(ntot / min_total_arealunits ))
+min_area = 0.5
+max_area = 9
+cv_min = 1
+buffer_dist = 0.8
+tolerance = 0.05
+method = :avt
 
-trials_sim = ones(Int, length(y_binary)); # For binary outcome, 1 trial per observation
-class1_sim = rand(1:13, length(y_binary)); # A categorical variable with 13 levels
-class2_sim = rand(1:2, length(y_binary)) ; # A categorical variable with 2 levels
-weights_sim = ones(Float64, length(y_binary)); # Assign equal weight to all observations
-  
+au = assign_spatial_units( pts, method;
+  target_units = target_units,
+  min_total_arealunits=min_total_arealunits,
+  max_total_arealunits=max_total_arealunits,
+  min_time_slices = min_time_slices,
+  time_idx = time_idx,
+  buffer_dist=buffer_dist,
+  tolerance=tolerance,
+  cv_min=cv_min,
+  min_points=min_points,
+  max_points=max_points,
+  min_area=min_area,
+  max_area=max_area)
+
+
+p = plot_spatial_graph( au; title="Method: $method", domain_boundary=au.hull_coords)
+
  
-n_bench_iters = 500
-bench_results = Dict{String, Float64}()
+```
 
-# 1. Setup shared precomputations
+### Model variations 
+
+
+```{julia}
+
+# Setup shared precomputations
 n_categories = 13
-modinputs = prepare_model_inputs(y_sim, pts, area_idx, time_idx, W_sym, n_categories)
-cont_covs_dummy = randn(length(y_sim), 2)
-
-# Ensure count data is strictly non-negative integers for count models
-y_counts = abs.(Int.(round.(modinputs.y))) * 100
-precomp_counts = merge(modinputs, (y = y_counts,)) 
- 
+modinputs = prepare_model_inputs(y_sim, pts, au.assignments, time_idx, W_sym, n_categories)
 
 # Define the full model set with corrected data inputs for count families
 models_to_bench = Dict(
@@ -399,6 +438,9 @@ models_to_bench = Dict(
     "v9_continuous_gaussian" => () -> model_v9_continuous_gaussian(cont_covs_dummy, modinputs),
     "v10_deep_gp_3layer"  => () -> model_v10_deep_gp_3layer_gaussian(modinputs)
 )
+
+n_bench_iters = 500
+bench_results = Dict{String, Float64}()
 
 for m_key in sort(collect(keys(models_to_bench)))
     print("Benchmarking $m_key... ")
