@@ -878,45 +878,42 @@ end
 
 
 
-function generate_sim_data(n_pts, n_time; rndseed=42 )
+
+function generate_sim_data(n_pts, n_time; rndseed=42)
+    # Generates synthetic data across discrete and continuous frameworks.
+    # Maintained existing structure; appended nested/joint variables (u, z).
     Random.seed!(rndseed)
     unique_pts = [(rand() * 10, rand() * 10) for _ in 1:n_pts]
-
-    # Repeat the unique points for each time slice to match n_total observations
     pts_full_dataset = repeat(unique_pts, n_time)
-
-    n_total = n_pts * n_time # This is now consistent with pts_full_dataset
+    n_total = n_pts * n_time
     time_idx = repeat(1:n_time, inner=n_pts)
     weights = ones(n_total)
     trials = ones(Int, n_total)
     cov_indices = rand(1:3, n_total)
-
     spatial_effect = [sin(p[1]/2) + cos(p[2]/2) for p in unique_pts]
     spatial_effect_long = repeat(spatial_effect, n_time)
-
     temporal_effect = sin.(time_idx)
-    y_sim  = 1.5 .* spatial_effect_long + 1.0 .* temporal_effect + randn(n_total) * 0.5
-    y_binary = y_sim  .> (mean(y_sim) + 0.5)
+    y_sim = 1.5 .* spatial_effect_long + 1.0 .* temporal_effect + randn(n_total) * 0.5
+    y_binary = y_sim .> (mean(y_sim) + 0.5)
     y_counts = abs.(Int.(round.(y_sim))) * 100
-
     cov_continuous = randn(length(y_sim), 3)
- 
-    # Ensure cov_indices is correctly shaped as an N_obs x 4 matrix
     cov_indices_mat = hcat(cov_indices, cov_indices, cov_indices, cov_indices)
-
-    trials_sim = ones(Int, length(y_binary)); # For binary outcome, 1 trial per observation
-    class1_sim = rand(1:13, length(y_binary)); # A categorical variable with 13 levels
-    class2_sim = rand(1:2, length(y_binary)) ; # A categorical variable with 2 levels
-    weights_sim = ones(Float64, length(y_binary)); # Assign equal weight to all observations
-    
+    trials_sim = ones(Int, length(y_binary))
+    class1_sim = rand(1:13, length(y_binary))
+    class2_sim = rand(1:2, length(y_binary))
+    weights_sim = ones(Float64, length(y_binary))
+    # New GP suite variables
+    z_obs = randn(n_total)
+    u_obs = randn(n_total, 3)
     return (
-        pts=pts_full_dataset, y_sim=y_sim, y_binary=y_binary, y_counts=y_counts, 
-        time_idx=time_idx, weights=weights, trials=trials, 
+        pts=pts_full_dataset, y_sim=y_sim, y_binary=y_binary, y_counts=y_counts,
+        time_idx=time_idx, weights=weights, trials=trials,
         cov_indices=cov_indices, cov_continuous=cov_continuous, cov_indices_mat=cov_indices_mat,
-        trials_sim=trials_sim, class1_sim=class1_sim, class2_sim=class2_sim, weights_sim=weights_sim
+        trials_sim=trials_sim, class1_sim=class1_sim, class2_sim=class2_sim, weights_sim=weights_sim,
+        z_obs=z_obs, u_obs=u_obs
     )
-
 end
+
 
 
 function estimate_local_kde_with_extrapolation(pts, time_idx, target_ts; grid_res=600, sd_extension_factor=0.25)
